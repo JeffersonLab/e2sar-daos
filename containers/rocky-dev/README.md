@@ -1,62 +1,89 @@
 
 ## The container for e2sar-daos development
 
+A Rocky Linux 9 image with everything needed to build and unit-test e2sar-daos:
+
+| Component | Source | Location in image |
+|---|---|---|
+| E2SAR (+ bundled gRPC, protobuf, Boost) | [E2SAR release RPM](https://github.com/JeffersonLab/E2SAR/releases) | `/usr/local` |
+| DAOS client + headers (`daos-client`, `daos-devel`) | [packages.daos.io](https://packages.daos.io) v2.6 / EL9 | `/usr/include`, `/usr/lib64` |
+| gcc/g++, meson, ninja, gdb | Rocky BaseOS / CRB / EPEL | system |
+
+**The e2sar-daos source is not in the image.** Mount the repo into the container at `/work`.
+
+There is **no DAOS server** in the image, and `daos_agent` is not running. Anything that needs to
+connect to a real pool still has to run on a testbed. Compiling, linking and the header/version unit
+tests all work.
+
+Because DAOS and E2SAR only ship `x86_64` packages, the image is always `linux/amd64`. On Apple
+Silicon Macs it runs under emulation, so expect it to be slower than native.
+
 ---
 
-This container is for developing [E2SAR](https://github.com/JeffersonLab/E2SAR) on **RHEL Rocky** systems. **E2SAR itself is not included in the container, but can be mounted to it.** The conainer provides all the building dependecies for E2SAR.
+### Build arguments
 
----
+| Arg | Default | Notes |
+|---|---|---|
+| `ROCKY_VERSION` | `9.6` | Must match an E2SAR release, e.g. `9.0`, `9.5` or `9.6` |
+| `E2SAR_VERSION` | `0.4.0rc1` | From the release tag `E2SAR-<ver>-main-rocky-<rocky_ver>` |
+| `DAOS_VERSION` | `2.6` | Must have an `EL9` repo on packages.daos.io |
 
-Build the container with different stages.
+### Networks that intercept TLS (JLab)
+
+The JLab border firewall re-signs HTTPS traffic with the JLab CA. Without that CA, `dnf` and `curl`
+inside the build fail with `SSL certificate problem: self-signed certificate in certificate chain`.
+Any `*.crt` or `*.pem` file in [`certs/`](./certs/) is trusted during the build. These files are
+git-ignored.
+
+On a Mac, export the JLab CAs from the keychain:
 
 ```bash
-podman build --target builder -t <tag-base:builder> .  # the first stage, install grpc & boost
-podman build --target e2sar-env -t <tag:meson> .  # the 2nd stage, dependecies needed for compiling and building E2SAR
-podman build -t <tag:final> .  
+cd containers/rocky-dev
+for cn in JLabCA JLABICA8-JLabGPCA; do
+    security find-certificate -c "$cn" -p /Library/Keychains/System.keychain > certs/$cn.crt
+done
 ```
 
-### Steps to compile E2SAR with the container
-1. Prepare the submodules (mainly the `udplbd` submodule) of E2SAR.
+Off-site, leave `certs/` empty.
+
+---
+
+### Testing on a Mac (Apple Silicon or Intel)
+
+Prerequisite: a Docker engine such as Docker Desktop, Rancher Desktop (`moby` engine) or colima,
+with amd64 emulation turned on. Rosetta is the faster option. Check it with:
+
+```bash
+docker run --rm --platform linux/amd64 rockylinux/rockylinux:9.6 uname -m   # -> x86_64
+```
+
+1. Build the image. This takes a few minutes, mostly downloading the ~165 MB E2SAR RPM.
 
     ```bash
-    cd E2SAR   # E2SAR root directory
-    # List the current commits for the submodules
-    git submodule status
-    312acacc80a874a11a6b8af0f0819f32d513c546 docs (heads/main)
-    5712d107ec5b2aa8fe32e57acbc3acdbe175925f udplbd (v0.3.2)  # the desired commit
-    7a530a6de8396c170faa83135595325da8da0918 wiki (heads/master)
-    ```
-    Cloning the `udplbd` project with `git submodule update --init --recursive` may not be successful even we are granted to access the private GitHub repo. Just go to the subdir `udplbd` and clone with the HTTPS url and then checkout to the specific commit.
-
-    ``` bash
-    cd udplbd
-    rm -rf .git
-    git clone https://github.com/esnet/udplbd.git . # clone to current dir. You need to have access to the udplbd project.
-    git checkout 5712d107ec5b2aa8fe32e57acbc3acdbe175925f # commit SHA copied from the above
-    cd ..
+    cd containers/rocky-dev
+    docker build --platform linux/amd64 -t e2sar-daos:dev .
     ```
 
-2. Run this image with `podman`.
+2. Build and test e2sar-daos inside the container. Run this from the repo root:
 
     ```bash
-    # Native OS
-    cd E2SAR  # the E2SAR root dir
-    podman run -it -v ${PWD}:/app -w /app --network host <image_id>
+    # One-shot: configure, compile, run the unit tests
+    docker run --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev \
+        bash -c "meson setup build && meson compile -C build && meson test -C build --suite unit -v"
+
+    # Or open an interactive shell and run the same commands yourself
+    docker run -it --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev
     ```
 
-3. Compile and install the `E2SAR` project.
-    ```bash
-    # Inside the container
-    meson setup --wipe build
-    # Replace all the "c++11" with "c++17" in file build/build.ninja using `sed` command or whatever.
-    ninja -C build
-    ```
+    The `build/` directory is created in your checkout and reused by later runs. Use `meson setup --wipe build` for a clean reconfigure.
+    It holds Linux binaries and cannot run on macOS.
 
-    If compiling is successful, try to install the `e2sar` library.
+### Using podman (JLab testbeds)
 
-    ```bash
-    cd build
-    meson test --list  # list the tests
-    meson test --suite unit  # unit tests
-    meson install  # install to /usr/local
-    ```
+The same commands work with `podman` in place of `docker`. On an x86_64 Linux host, `--platform` is
+not needed. Add `--network host` if the code has to reach DAOS services on the host network.
+
+```bash
+podman build -t e2sar-daos:dev containers/rocky-dev
+podman run -it --rm --network host -v "$PWD":/work e2sar-daos:dev
+```
