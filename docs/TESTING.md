@@ -4,7 +4,7 @@ There are two test suites:
 
 | Suite | Test | Needs |
 |---|---|---|
-| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2 | DAOS headers and libraries, no DAOS server |
+| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking that `e2sar_daos_recv`/`e2sar_daos_read` use | DAOS headers and libraries, no DAOS server |
 | `integration` | `DAOSKVTest`: writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and compares SHA-256 digests | A reachable DAOS pool and container, plus `openssl-devel` at build time |
 
 `DAOSKVTest` reads the pool and container from `DAOS_POOL` and `DAOS_CONT` (defaults `sc26` and `kv-test`).
@@ -17,6 +17,8 @@ What each environment can check:
 | [Mac (no DAOS)](#1-mac-without-daos) | in the Docker container | yes | no |
 | [ebpf2201 / ebpf2203](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel) | natively | yes | yes |
 | [Slurm TB nodes](#3-slurm-tb-nodes-daos-pool-but-no-daos-devel) | in a podman container (or on ebpf220x) | yes | yes |
+
+The applications (`e2sar_daos_recv`, `e2sar_daos_read`) are tested end to end by hand. See [section 4](#4-applications-end-to-end-on-ebpf2203).
 
 ---
 
@@ -43,7 +45,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work e2sar-daos:dev \
 Check that:
 - `meson setup` does **not** print `libcrypto (openssl-devel) not found, skipping DAOSKVTest`, so the KV test is at least compiled.
 - `meson compile` links both `daos_test` and `daos_kv_test`.
-- `--suite unit` reports `Ok: 1`.
+- `--suite unit` reports `Ok: 2`.
 
 If `meson setup` fails with `Could not generate cargs for e2sar` or `Package 're2' ... not found`, the image was built from an older Dockerfile. Rebuild it.
 
@@ -260,3 +262,121 @@ At run time, `daos_kv_test` only needs `libdaos`, `libdfs`, `libgurt` and `libcr
 It doesn't link E2SAR, and the Boost test framework is header-only here.
 This works when the node's DAOS client minor version matches ebpf2201's.
 A Rocky 9 build normally runs on AlmaLinux 9, but check `ldd build/tests/daos/daos_kv_test` on the node first.
+
+---
+
+## 4. Applications end to end on ebpf2203
+
+This checks the full path from EVIO files back to EVIO files:
+
+```
+EVIO files ─ e2sar_ft -s ─UDP─▶ e2sar_daos_recv ─async KV puts─▶ sc26/e2sar-test ─▶ e2sar_daos_read -o ─▶ .evio files ─▶ viewer
+```
+
+It runs on one host over loopback, with no load balancer or control plane. Then it repeats with the sender on ebpf2201.
+Build first as in [section 2](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel).
+`meson setup` must not print `skipping e2sar_daos_read`.
+The test uses a dedicated container, `e2sar-test`, so it can be removed afterwards. `e2sar_daos_recv` creates it.
+
+### Setup (both terminals)
+
+```bash
+cd e2sar-daos
+E2SAR_BIN=$E2SAR_ROOT/usr/local/bin        # where e2sar_ft is; adjust to your E2SAR install
+# if a binary can't find libe2sar.so:
+# export LD_LIBRARY_PATH=$E2SAR_ROOT/usr/local/lib64:$E2SAR_ROOT/usr/local/lib
+
+# Without a control plane only data= matters. The sender uses data port 19522.
+export EJFAT_URI='ejfat://useless@127.0.0.1:18347/lb/1?data=127.0.0.1&sync=127.0.0.1:19020'
+export PREFIX=test_$(date +%s)              # same value in both terminals
+```
+
+Source files: a few EVIO files under 2 GiB (e.g. `EC5_EC6_cosmics_may19_short.evio`, `frames_thread0_file0000.part000.evio`), plus one random file. The random file's size is not a multiple of the 1 MiB chunk, and it should come back as `not EVIO`.
+```bash
+SRC=/tmp/$USER/e2sar_src && mkdir -p $SRC && rm -f $SRC/*
+cp /path/to/*.evio $SRC/
+head -c 3500K /dev/urandom > $SRC/random_3500K.bin
+sha256sum $SRC/* | tee /tmp/$USER/src.sha256
+```
+
+### Run
+
+**Terminal 1, receiver:**
+```bash
+./build/bin/e2sar_daos_recv --ip 127.0.0.1 --port 19522 \
+    --pool sc26 --cont e2sar-test --prefix $PREFIX --verbose
+```
+On the first run it prints `DAOS pool/container: sc26/e2sar-test (created)`, then a progress line every second.
+
+**Terminal 2, sender:**
+```bash
+$E2SAR_BIN/e2sar_ft -s --ip 127.0.0.1 --rate 1 $SRC/*
+```
+The receiver prints one `committed <PREFIX>/<evt>/4321 (<bytes> bytes)` line per file. 4321 is `e2sar_ft`'s default data id.
+When every file is in, press Ctrl-C in terminal 1.
+The final stats should show `Events committed` equal to the number of files, `Events failed: 0` and `Lost in reassembly: 0`.
+
+### Verify and retrieve as EVIO
+
+```bash
+# List: one row per file, chunks = ceil(size / 1 MiB)
+./build/bin/e2sar_daos_read --cont e2sar-test --prefix $PREFIX
+
+# Read back, check, and restore as <PREFIX>_<evt>_4321.evio
+OUT=/tmp/$USER/e2sar_out && mkdir -p $OUT
+./build/bin/e2sar_daos_read --cont e2sar-test --prefix $PREFIX --fetch -o $OUT | tee /tmp/$USER/daos.sha256
+```
+Each line reads like `<sha256>  test_..._0_4321.evio  (93456789 bytes, 90 chunks, EVIO v6 big-endian)`.
+The EVIO files should say `EVIO v6`, and the random file `not EVIO`.
+
+```bash
+# Same set of digests as the source files
+diff <(cut -d' ' -f1 /tmp/$USER/src.sha256 | sort) \
+     <(grep -E '^[0-9a-f]{64} ' /tmp/$USER/daos.sha256 | cut -d' ' -f1 | sort) && echo PASS
+```
+
+The restored files don't keep their original names (E2SAR carries no file name), only event numbers.
+`e2sar_ft` numbers them in the order it queued the files. Match them by digest: `sha256sum $OUT/*` against `/tmp/$USER/src.sha256`.
+
+**Open in the viewer.** Run evio-interactive-view on ebpf2203 and tunnel to it from your laptop:
+```bash
+# on ebpf2203, in evio-interactive-view with its venv active
+python serve.py $OUT --no-browser
+# on the laptop
+ssh -L 8765:localhost:8765 ebpf2203     # then open http://localhost:8765
+```
+Or copy the files to the laptop (`scp 'ebpf2203:/tmp/<user>/e2sar_out/*.evio' .`) and open them there.
+
+### Across hosts (the real setup)
+
+Sender on ebpf2201, receiver and DAOS on ebpf2203. Use the ebpf2203 data-plane IP in both the URI and `--ip`:
+```bash
+# both hosts
+export EJFAT_URI='ejfat://useless@127.0.0.1:18347/lb/1?data=<ebpf2203 ip>&sync=<ebpf2203 ip>:19020'
+# ebpf2203
+./build/bin/e2sar_daos_recv --ip <ebpf2203 ip> --port 19522 --pool sc26 --cont e2sar-test --prefix $PREFIX
+# ebpf2201
+$E2SAR_BIN/e2sar_ft -s --ip <ebpf2201 ip> --rate 5 $SRC/*
+```
+Then verify on ebpf2203 as above. Firewalls between the two hosts must let UDP 19522 through.
+
+**Variations worth running:**
+- Throughput and back-pressure: larger EVIO files, `--rate 10`, and `--deq 2 --inflight 128` on the receiver. Watch `enqueue loss` in the progress line.
+- Single-value events: `--chunk 0` on the receiver. The listing then shows 1 chunk per event.
+
+### Clean up
+
+```bash
+daos cont destroy sc26 e2sar-test
+rm -rf /tmp/$USER/e2sar_src /tmp/$USER/e2sar_out /tmp/$USER/*.sha256
+```
+
+### Common failures
+
+| Symptom | Likely cause |
+|---|---|
+| receiver shows nothing, sender says frames were sent | port mismatch: the receiver needs `--port 19522`, or put `data=<ip>:<port>` in the URI. Across hosts, also check the firewall |
+| `Lost in reassembly` > 0 | UDP drops. Lower the sender `--rate`, or raise `-b` and `net.core.rmem_max` |
+| `daos_cont_create_with_label ... DER_NO_PERM` | your user can't create containers in `sc26`. Ask for pool ACL `w`, or create it with `daos cont create sc26 e2sar-test` |
+| `e2sar_daos_read` lists 0 events | wrong `--prefix`/`--cont`/`--oid`, or the receiver was killed before commit (look for *Incomplete*) |
+| viewer refuses a file | the viewer only takes files < 2 GiB. Split the source with `evio_split.py` before sending |

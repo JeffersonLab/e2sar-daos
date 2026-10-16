@@ -1,9 +1,14 @@
 # The DAOS interface for E2SAR
-A C++ wrapper for DAOS client header files to fit into the E2SAR data streaming use cases.
+A C++ library and applications for storing E2SAR data streams in [DAOS](https://docs.daos.io).
+
+- `libe2sar-daos` ([include/e2sar_daos/](./include/e2sar_daos/)) provides RAII handles for the DAOS runtime, pool, container (created if missing) and KV object, plus `AsyncKVWriter`, which issues non-blocking `daos_kv_put`s on a DAOS event queue with a bounded number in flight.
+- [Applications](./bin/README.md):
+    - `e2sar_daos_recv` receives events from `e2sar_ft` on another node and writes them to DAOS.
+    - `e2sar_daos_read` lists the stored events, verifies them and reads them back.
 
 - Refer to [containers](./containers/rocky-dev/) for the Rocky 9 + DAOS 2.6 development environment. It runs on JLab testbeds and on Macs.
 - Unit testing is turned on by default in [meson_options.txt](./meson_options.txt).
-- Installing library files are turned off at the moment in the top-level [meson.build](./meson.build).
+- `meson install -C build` installs the library, headers and the two applications under the configured prefix (default `/usr/local`).
 
 ## Build
 
