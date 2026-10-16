@@ -1,7 +1,7 @@
 # The DAOS interface for E2SAR
 A C++ wrapper for DAOS client header files to fit into the E2SAR data streaming use cases.
 
-- Refer to [containers](./containers/rocky-dev/) for the development environment on JLab testbeds.
+- Refer to [containers](./containers/rocky-dev/) for the Rocky 9 + DAOS 2.6 development environment. It runs on JLab testbeds and on Macs.
 - Unit testing is turned on by default in [meson_options.txt](./meson_options.txt).
 - Installing library files are turned off at the moment in the top-level [meson.build](./meson.build).
 
@@ -54,3 +54,17 @@ meson configure build | grep -A1 buildtest
 meson test -C build -v
 meson test -C build --suite daos
 ```
+
+### Or build in a container (Mac or Linux)
+
+```bash
+# From the repo root. On JLab networks, first add the JLab CA certs to
+# containers/rocky-dev/certs/ (see containers/rocky-dev/README.md).
+docker build --platform linux/amd64 -t e2sar-daos:dev containers/rocky-dev
+
+docker run --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev \
+    bash -c "meson setup --wipe build && meson compile -C build && meson test -C build --suite unit -v"
+```
+
+On a Mac the container runs as `linux/amd64` under emulation, because DAOS and E2SAR only ship x86_64 packages.
+There is no DAOS server in the container, so it covers compiling, linking and unit tests only.

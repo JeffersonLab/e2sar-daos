@@ -34,5 +34,13 @@
 # Tar files
 *.tar.gz
 
+# certs
+containers/rocky-dev/certs/*.crt
+containers/rocky-dev/certs/*.pem
+
 # build
 build/
+
+# Local CA certificates for container builds
+containers/rocky-dev/certs/*.crt
+containers/rocky-dev/certs/*.pem
