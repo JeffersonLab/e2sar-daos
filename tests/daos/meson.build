@@ -21,7 +21,8 @@ if libcrypto_dep.found()
     daos_env.set('DAOS_POOL', get_option('daos_pool'))
     daos_env.set('DAOS_CONT', get_option('daos_cont'))
 
-    test('DAOSKVTest', daos_kv_test, env: daos_env, suite: ['daos', 'integration'])
+    test('DAOSKVTest', daos_kv_test, env: daos_env, args: ['--log_level=message'],
+        suite: ['daos', 'integration'])
 else
     message('libcrypto (openssl-devel) not found, skipping DAOSKVTest')
 endif
