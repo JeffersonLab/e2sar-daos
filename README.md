@@ -71,6 +71,9 @@ There is no DAOS server in the container, so it covers compiling, linking and un
 
 ### Integration test against a live DAOS system
 
+See [docs/TESTING.md](docs/TESTING.md) for testing on a Mac, on ebpf2201/ebpf2203, and on Slurm TB nodes.
+
+
 `DAOSKVTest` (suite `integration`) writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and checks the SHA-256 of each. It needs `openssl-devel` and access to a DAOS system (e.g. the JLab testbeds), with the pool and container already created:
 ```bash
 daos cont create sc26 kv-test          # once; the pool is created by an admin
