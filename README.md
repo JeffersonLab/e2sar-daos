@@ -68,3 +68,19 @@ docker run --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev \
 
 On a Mac the container runs as `linux/amd64` under emulation, because DAOS and E2SAR only ship x86_64 packages.
 There is no DAOS server in the container, so it covers compiling, linking and unit tests only.
+
+### Integration test against a live DAOS system
+
+See [docs/TESTING.md](docs/TESTING.md) for testing on a Mac, on ebpf2201/ebpf2203, and on Slurm TB nodes.
+
+
+`DAOSKVTest` (suite `integration`) writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and checks the SHA-256 of each. It needs `openssl-devel` and access to a DAOS system (e.g. the JLab testbeds), with the pool and container already created:
+```bash
+daos cont create sc26 kv-test          # once; the pool is created by an admin
+```
+The pool and container default to `sc26` and `kv-test`. `meson test` passes them to the test as `DAOS_POOL` and `DAOS_CONT`:
+```bash
+meson test -C build --suite integration -v
+meson configure build -Ddaos_pool=mypool -Ddaos_cont=mycont   # use another pool/container
+DAOS_POOL=mypool DAOS_CONT=mycont ./build/tests/daos/daos_kv_test --log_level=message   # run directly
+```
