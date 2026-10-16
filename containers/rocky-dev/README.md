@@ -69,13 +69,13 @@ docker run --rm --platform linux/amd64 rockylinux/rockylinux:9.6 uname -m   # ->
     ```bash
     # One-shot: configure, compile, run the unit tests
     docker run --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev \
-        bash -c "meson setup --wipe build && meson compile -C build && meson test -C build --suite unit -v"
+        bash -c "meson setup build && meson compile -C build && meson test -C build --suite unit -v"
 
     # Or open an interactive shell and run the same commands yourself
     docker run -it --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev
     ```
 
-    The `build/` directory is created in your checkout, so later runs can skip `--wipe`.
+    The `build/` directory is created in your checkout and reused by later runs. Use `meson setup --wipe build` for a clean reconfigure.
     It holds Linux binaries and cannot run on macOS.
 
 ### Using podman (JLab testbeds)

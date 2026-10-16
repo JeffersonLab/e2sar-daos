@@ -36,6 +36,9 @@ RUN dnf -y install dnf-plugins-core epel-release && \
         make \
         which \
         pkgconf-pkg-config \
+        openssl-devel \
+        re2-devel \
+        zlib-devel \
         meson \
         ninja-build && \
     dnf clean all && \

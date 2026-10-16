@@ -63,7 +63,7 @@ meson test -C build --suite daos
 docker build --platform linux/amd64 -t e2sar-daos:dev containers/rocky-dev
 
 docker run --rm --platform linux/amd64 -v "$PWD":/work e2sar-daos:dev \
-    bash -c "meson setup --wipe build && meson compile -C build && meson test -C build --suite unit -v"
+    bash -c "meson setup build && meson compile -C build && meson test -C build --suite unit -v"
 ```
 
 On a Mac the container runs as `linux/amd64` under emulation, because DAOS and E2SAR only ship x86_64 packages.
