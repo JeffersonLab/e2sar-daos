@@ -16,7 +16,7 @@ What each environment can check:
 |---|---|---|---|
 | [Mac (no DAOS)](#1-mac-without-daos) | in the Docker container | yes | no |
 | [ebpf2201 / ebpf2203](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel) | natively | yes | yes |
-| [Slurm TB nodes](#3-slurm-tb-nodes-daos-pool-but-no-daos-devel) | on ebpf220x, or in the container | yes | yes |
+| [Slurm TB nodes](#3-slurm-tb-nodes-daos-pool-but-no-daos-devel) | in a podman container (or on ebpf220x) | yes | yes |
 
 ---
 
@@ -111,65 +111,152 @@ DAOS_POOL=mypool DAOS_CONT=mycont ./build/tests/daos/daos_kv_test --log_level=me
 
 ## 3. Slurm TB nodes (DAOS pool but no daos-devel)
 
-The TB compute nodes can reach pool `sc26` (DAOS client and `daos_agent` installed) but don't have `daos-devel`, so they can't **build** this project.
-The top-level `meson.build` looks for DAOS headers in `/usr/include` only.
-Build somewhere else and run on the node.
-The test binaries only need these shared libraries at run time:
+The TB compute nodes run AlmaLinux 9.8 with the DAOS client and `daos_agent`, and can reach pool `sc26`.
+They don't have `daos-devel`, so the project can't be built on the host: the top-level `meson.build` looks for DAOS headers in `/usr/include`.
+Instead, build and run inside the Rocky 9 dev image with **podman**.
+The image has its own DAOS 2.6 client and headers.
+The container talks to the real DAOS system through the node's `daos_agent` socket and the node's network.
 
-```bash
-ldd build/tests/daos/daos_kv_test | grep -E 'daos|dfs|crypto'
-# libdaos.so.2, libdfs.so, libcrypto.so.3 — all present on a node with daos-client
+```
+ TB node (AlmaLinux 9.8)
+ ┌───────────────────────────────────────────────────────┐
+ │  daos_agent ── /var/run/daos_agent/daos_agent.sock    │
+ │       ▲                                                │
+ │       │ bind mount                                     │
+ │  ┌────┴─────────────────────────────┐                  │
+ │  │ podman: e2sar-daos:dev (Rocky 9) │  --network host  │──► DAOS engines (sc26)
+ │  │ daos_kv_test + libdaos 2.6       │                  │
+ │  └──────────────────────────────────┘                  │
+ └───────────────────────────────────────────────────────┘
 ```
 
-`DAOSKVTest` does not link E2SAR, and the Boost test framework is compiled in from headers, so neither needs to be installed on the node.
+The Rocky 9 userspace runs fine on the AlmaLinux 9 kernel.
+On the nodes it runs natively on x86_64, with no emulation.
 
-### Option A (recommended): build on ebpf220x, run with srun
-
-This works when ebpf220x and the TB nodes run the same OS (Rocky 9) and DAOS 2.6 client, and share a filesystem (e.g. `$HOME` or `/work`).
-Check both with `cat /etc/rocky-release; rpm -q daos-client` on each side.
+### Prerequisites on a TB node
 
 ```bash
-# On ebpf2201: build in a directory the TB nodes can see
-cd /path/on/shared/fs/e2sar-daos
-meson setup build && meson compile -C build
+srun -p <tb-partition> -N1 --pty bash      # interactive shell on a TB node
 
-# Submit to a TB node. Adjust partition/account to the testbed's Slurm setup.
-srun -p <tb-partition> -N1 -n1 --time=00:05:00 \
-    env DAOS_POOL=sc26 DAOS_CONT=kv-test \
+podman --version
+systemctl is-active daos_agent             # active
+ls -l /var/run/daos_agent/                 # daos_agent.sock is here
+grep runtime_dir /etc/daos/daos_agent.yml  # if set, use that directory instead of /var/run/daos_agent below
+rpm -q daos-client                         # 2.6.x; keep the container's DAOS minor version (2.6) the same
+daos pool query sc26                       # the host can reach the pool as your user
+```
+
+Rootless podman keeps its image store in `~/.local/share/containers` by default.
+On an NFS home directory that often fails with overlay or permission errors.
+If so, use node-local storage for this session:
+```bash
+export CONTAINERS_STORAGE_CONF=$HOME/.config/containers/storage-tb.conf
+mkdir -p $(dirname $CONTAINERS_STORAGE_CONF) /tmp/$USER/containers
+cat > $CONTAINERS_STORAGE_CONF <<CONF
+[storage]
+driver = "overlay"
+graphroot = "/tmp/$USER/containers/storage"
+runroot = "/tmp/$USER/containers/run"
+CONF
+```
+Node-local storage is wiped with the node's `/tmp`, so the image has to be loaded again (next step) on each node you use.
+
+### Get the image onto the node
+
+Pick one:
+
+```bash
+# (a) Build it on the node from the repo's Dockerfile (needs internet access from the node)
+podman build -t e2sar-daos:dev containers/rocky-dev
+
+# (b) Build once elsewhere, save it to the shared filesystem, load it on each node
+#     On the Mac or ebpf220x:
+docker save e2sar-daos:dev | gzip > /path/on/shared/fs/e2sar-daos-dev.tar.gz     # or: podman save
+#     On the TB node:
+podman load -i /path/on/shared/fs/e2sar-daos-dev.tar.gz
+podman images e2sar-daos
+```
+
+With (a) on JLab networks, put the JLab CA certs in `containers/rocky-dev/certs/` first, as for Docker.
+
+### Build and test inside the container
+
+Run from the repository root on the shared filesystem.
+Use a separate build directory (`build-podman`), because a build directory configured on the host or in another container has different paths and libraries.
+
+```bash
+cd /path/on/shared/fs/e2sar-daos
+
+podman run --rm \
+    --network host \
+    --userns keep-id \
+    --security-opt label=disable \
+    -v "$PWD":/work -w /work \
+    -v /var/run/daos_agent:/var/run/daos_agent \
+    -e DAOS_POOL=sc26 -e DAOS_CONT=kv-test \
+    e2sar-daos:dev \
+    bash -c "meson setup build-podman && meson compile -C build-podman && \
+             meson test -C build-podman --suite unit -v && \
+             meson test -C build-podman --suite integration -v"
+```
+
+What each flag is for:
+
+| Flag | Why |
+|---|---|
+| `--network host` | the DAOS client connects straight to the engines; it needs the node's interfaces, the same ones `daos_agent` reports |
+| `-v /var/run/daos_agent:/var/run/daos_agent` | `daos_init()` finds the agent through this socket |
+| `--userns keep-id` | the test runs as your own uid, so `daos_agent` checks the pool ACL against your user, and files in `build-podman/` are owned by you |
+| `--security-opt label=disable` | SELinux would otherwise block the bind mounts. Don't use `:z` on the agent socket, because it relabels the host directory |
+| `-e DAOS_POOL/DAOS_CONT` | only matters when running `daos_kv_test` directly; `meson test` sets them from the meson options |
+
+The result looks the same as on ebpf220x (see [section 2](#build-and-test)): 5 matching `put`/`get` SHA-256 pairs and `Ok: 1`.
+
+If the DAOS fabric uses InfiniBand (`verbs` or `ucx` provider) rather than TCP, the container also needs the RDMA devices and unlimited locked memory:
+```bash
+    --device /dev/infiniband --ulimit memlock=-1:-1 \
+```
+Check the provider with `grep -i provider /etc/daos/daos_agent.yml` or `daos_agent net-scan` on the node.
+
+### Run as a batch job
+
+`build-podman/` is on the shared filesystem, so once it's built you can run only the test from `sbatch`:
+
+```bash
+#!/bin/bash
+#SBATCH -p <tb-partition>
+#SBATCH -N 1
+#SBATCH -t 00:10:00
+#SBATCH -o daos_kv_test_%j.log
+
+cd /path/on/shared/fs/e2sar-daos
+podman run --rm --network host --userns keep-id --security-opt label=disable \
+    -v "$PWD":/work -w /work \
+    -v /var/run/daos_agent:/var/run/daos_agent \
+    -e DAOS_POOL=sc26 -e DAOS_CONT=kv-test \
+    e2sar-daos:dev ./build-podman/tests/daos/daos_kv_test --log_level=message
+```
+
+With node-local image storage, add the `CONTAINERS_STORAGE_CONF` export and `podman load` before `podman run`.
+
+### Common failures in podman
+
+| Message | Likely cause |
+|---|---|
+| `daos_init failed: ... (is daos_agent running?)` | socket not mounted, or the node's agent uses a different `runtime_dir` |
+| `daos_pool_connect(sc26) failed: DER_NO_PERM` | the uid seen by the agent isn't in the pool ACL. Check `--userns keep-id`, and that `daos pool query sc26` works on the host |
+| `daos_pool_connect` hangs, or `DER_UNREACH` / `DER_TIMEDOUT` | no `--network host`, or missing `--device /dev/infiniband` on an InfiniBand fabric |
+| `Permission denied` on `/work` or the socket | SELinux: add `--security-opt label=disable` |
+| `podman` image or overlay errors in `$HOME` | use node-local storage (see Prerequisites) |
+
+### Without a container
+
+Alternatively, build natively on ebpf2201 (section 2) and run the binary directly on a node:
+```bash
+srun -p <tb-partition> -N1 -n1 env DAOS_POOL=sc26 DAOS_CONT=kv-test \
     ./build/tests/daos/daos_kv_test --log_level=message
 ```
-
-Use the binary directly here instead of `meson test`, because the node may not have meson.
-For a batch job, put the same command in an `sbatch` script.
-
-Also run the `unit` binary on the node to confirm the node's `libdaos` matches what you built against:
-```bash
-srun -p <tb-partition> -N1 -n1 ./build/tests/daos/daos_test
-```
-
-### Option B: build and run in the container with Apptainer
-
-Use this when the node's OS or library versions differ from ebpf220x.
-The dev image has its own DAOS 2.6 client and headers.
-The node's `daos_agent` is shared with the container through its socket directory, so the container talks to the real DAOS system.
-
-```bash
-# Once, on a host with Docker: export the image, copy it to the shared filesystem
-docker save e2sar-daos:dev -o e2sar-daos-dev.tar
-apptainer build e2sar-daos-dev.sif docker-archive://e2sar-daos-dev.tar
-
-# Build inside the container (any node or ebpf220x)
-apptainer exec --bind "$PWD":/work --pwd /work e2sar-daos-dev.sif \
-    bash -c "meson setup build-sif && meson compile -C build-sif"
-
-# Run on a TB node, sharing the host's daos_agent socket
-srun -p <tb-partition> -N1 -n1 \
-    apptainer exec --bind "$PWD":/work --pwd /work --bind /var/run/daos_agent \
-    --env DAOS_POOL=sc26,DAOS_CONT=kv-test \
-    e2sar-daos-dev.sif ./build-sif/tests/daos/daos_kv_test --log_level=message
-```
-
-Notes:
-- `/var/run/daos_agent` is the default agent socket directory. If the node's `/etc/daos/daos_agent.yml` sets a different `runtime_dir`, bind that one instead.
-- Keep the container's DAOS client minor version (2.6) the same as the servers'.
-- Use a separate build directory (`build-sif`) from the native build, since they link different libraries.
+At run time, `daos_kv_test` only needs `libdaos`, `libdfs`, `libgurt` and `libcrypto` from the node.
+It doesn't link E2SAR, and the Boost test framework is header-only here.
+This works when the node's DAOS client minor version matches ebpf2201's.
+A Rocky 9 build normally runs on AlmaLinux 9, but check `ldd build/tests/daos/daos_kv_test` on the node first.
