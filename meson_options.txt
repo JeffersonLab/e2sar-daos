@@ -1,3 +1,9 @@
 option('buildtest',
-        type: 'boolean', 
+        type: 'boolean',
         value: true, description: 'Enable building tests')
+option('daos_pool',
+        type: 'string',
+        value: 'sc26', description: 'DAOS pool label used by integration tests (exported as DAOS_POOL)')
+option('daos_cont',
+        type: 'string',
+        value: 'kv-test', description: 'DAOS container label used by integration tests (exported as DAOS_CONT)')
