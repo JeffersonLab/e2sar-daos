@@ -65,9 +65,17 @@ daos cont create sc26 kv-test                 # only if the container doesn't ex
 daos cont query sc26 kv-test                  # container is reachable
 ```
 
-E2SAR must be installed and visible to `pkg-config` (see [Point pkg-config to E2SAR](../README.md#point-pkg-config-to-e2sar)):
+E2SAR must be installed and visible to `pkg-config`, and Meson must use the Boost installed with E2SAR, not the system one in `/usr/include/boost`.
+See [Point pkg-config to E2SAR](../README.md#point-pkg-config-to-e2sar) and [Point Meson to E2SAR's Boost](../README.md#point-meson-to-e2sars-boost).
+Put this in every shell you build or run in:
 ```bash
-pkg-config --modversion e2sar
+E2SAR_ROOT=$HOME/opt/e2sar                  # adjust to your E2SAR staging root
+export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
+export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
+export BOOST_ROOT=$E2SAR_ROOT/usr/local
+export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
+
+pkg-config --modversion e2sar               # sanity check
 ```
 
 ### Build and test
@@ -76,7 +84,7 @@ Use a fresh clone (or `git worktree`) of the branch under test, so it doesn't mi
 ```bash
 git clone -b <branch> git@github.com:JeffersonLab/e2sar-daos.git && cd e2sar-daos
 
-meson setup build
+meson setup build                           # prints "Boost version: ..."; must be E2SAR's Boost
 meson compile -C build
 meson test -C build --suite unit -v
 meson test -C build --suite integration -v
@@ -105,6 +113,8 @@ DAOS_POOL=mypool DAOS_CONT=mycont ./build/tests/daos/daos_kv_test --log_level=me
 | Message | Likely cause |
 |---|---|
 | `daos_init failed: ... (is daos_agent running?)` | `daos_agent` is not running on this host |
+| `meson setup` finds a different Boost version than E2SAR's, or link errors in `boost::log::v2_mt_posix` / `boost::urls` | `BOOST_ROOT` is unset, so Meson used the system Boost. Export it as above and run `meson setup --wipe build` |
+| a binary fails with `libboost_*.so... cannot open shared object file` | `LD_LIBRARY_PATH` doesn't include `$BOOST_ROOT/lib64` |
 | `daos_pool_connect(sc26) failed: DER_NO_PERM` | your user is not in the pool ACL |
 | `daos_pool_connect(sc26) failed: DER_NONEXIST` | wrong pool label, or the pool is in another DAOS system |
 | `daos_cont_open(kv-test) failed: DER_NONEXIST` | run `daos cont create sc26 kv-test` |
@@ -282,9 +292,8 @@ The test uses a dedicated container, `e2sar-test`, so it can be removed afterwar
 
 ```bash
 cd e2sar-daos
+# plus the E2SAR_ROOT / PKG_CONFIG_PATH / BOOST_ROOT / LD_LIBRARY_PATH exports from section 2
 E2SAR_BIN=$E2SAR_ROOT/usr/local/bin        # where e2sar_ft is; adjust to your E2SAR install
-# if a binary can't find libe2sar.so:
-# export LD_LIBRARY_PATH=$E2SAR_ROOT/usr/local/lib64:$E2SAR_ROOT/usr/local/lib
 
 # Without a control plane only data= matters. The sender uses data port 19522.
 export EJFAT_URI='ejfat://useless@127.0.0.1:18347/lb/1?data=127.0.0.1&sync=127.0.0.1:19020'
