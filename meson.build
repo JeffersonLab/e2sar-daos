@@ -35,24 +35,37 @@ endif
 message('Building e2sar-daos with:')
 message('  - e2sar version: ' + e2sar_version)
 
-# Sources
+# Library
 project_include_dir = include_directories('include')
 
-project_sources = [
-    'src/DAOSConnectorImpl.cc'
-]
+project_sources = files(
+    'src/daos_handles.cpp',
+    'src/async_kv_writer.cpp',
+)
 
-# Build Shared Library
-# NOTE: update to "install: true" when it's ready
 e2sar_daos = library('e2sar-daos',
     project_sources,
     include_directories: project_include_dir,
-    dependencies: [e2sar_dep, daos_dep],
-    install: false
+    dependencies: [daos_dep],
+    install: true
 )
 
-# # Install Headers
-# install_headers('include/all_headers.h')
+install_headers(
+    'include/e2sar_daos/daos_handles.hpp',
+    'include/e2sar_daos/async_kv_writer.hpp',
+    'include/e2sar_daos/event_layout.hpp',
+    'include/e2sar_daos/latency_histogram.hpp',
+    subdir: 'e2sar_daos'
+)
+
+e2sar_daos_dep = declare_dependency(
+    include_directories: project_include_dir,
+    link_with: e2sar_daos,
+    dependencies: [daos_dep]
+)
+
+# Applications
+subdir('bin')
 
 # Check the buildtest option
 if get_option('buildtest')

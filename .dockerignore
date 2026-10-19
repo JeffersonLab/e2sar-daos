@@ -1,0 +1,6 @@
+# Keep container build contexts small and free of host build artifacts.
+.git
+build/
+build-*/
+containers/*/certs/*.crt
+containers/*/certs/*.pem
