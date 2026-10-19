@@ -76,4 +76,5 @@ The restored `.evio` files are the original files byte for byte, ready for an EV
 
 - Use a new `--prefix` per run. `e2sar_ft` restarts event numbers at 0, so reusing a prefix overwrites earlier events.
 - The image's DAOS client is 2.6. Keep it on the same minor version as the nodes' `daos-client` (`rpm -q daos-client`).
+- At exit, `e2sar_daos_recv` prints a `Timing:` block with ingest and DAOS commit throughput and put latencies. Add `--timing-csv /work/timing.csv` for per-event rows ([details](../../bin/README.md#timing-and-throughput)).
 - The progress line's `enqueue loss` counts events dropped because DAOS writes didn't keep up. Try more `--deq` threads or a higher `--inflight` first. Then lower the sender `--rate`.

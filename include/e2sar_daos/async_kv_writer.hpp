@@ -15,7 +15,9 @@
 */
 
 #include "e2sar_daos/daos_handles.hpp"
+#include "e2sar_daos/latency_histogram.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -53,11 +55,15 @@ public:
     size_t inflight() const noexcept { return inflight_; }
     size_t capacity() const noexcept { return slots_.size(); }
 
+    /** Launch-to-completion time of every successful put (excludes waiting for a slot). */
+    const LatencyHistogram& putLatency() const noexcept { return putLatency_; }
+
 private:
     struct Slot {
         std::string key;  // must outlive the in-flight put
         Callback cb;
         int launchRc = 0;
+        std::chrono::steady_clock::time_point launched;
     };
 
     const DaosKV& kv_;
@@ -69,6 +75,7 @@ private:
     std::vector<size_t> free_;
     std::vector<daos_event_t*> polled_;
     size_t inflight_ = 0;
+    LatencyHistogram putLatency_;
 
     void complete(size_t idx, int rc);
 };

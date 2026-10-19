@@ -14,6 +14,12 @@ event_layout_test = executable('event_layout_test', files('test_event_layout.cpp
 
 test('EventLayoutTests', event_layout_test, suite: ['daos', 'unit'])
 
+latency_histogram_test = executable('latency_histogram_test', files('test_latency_histogram.cpp'),
+                                include_directories: project_include_dir,
+                                dependencies: [boost_dep])
+
+test('LatencyHistogramTests', latency_histogram_test, suite: ['daos', 'unit'])
+
 # Toy KV round-trip (5 x 0.5 MiB, SHA-256 verified) against a live DAOS system.
 # Not part of 'unit': it needs a DAOS server.
 # Pool/container come from -Ddaos_pool / -Ddaos_cont, exported as DAOS_POOL / DAOS_CONT.

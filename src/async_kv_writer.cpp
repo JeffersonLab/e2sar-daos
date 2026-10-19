@@ -45,6 +45,7 @@ void AsyncKVWriter::submit(std::string key, const void* buf, size_t size, Callba
     s.key = std::move(key);
     s.cb = std::move(cb);
     s.launchRc = 0;
+    s.launched = std::chrono::steady_clock::now();
     inflight_++;
 
     // The key string lives in the slot until completion, as DAOS requires.
@@ -67,12 +68,16 @@ size_t AsyncKVWriter::progress(int64_t timeoutUs) {
                          polled_.data());
     check(n < 0 ? n : 0, "daos_eq_poll");
 
+    const auto now = std::chrono::steady_clock::now();
     for (int i = 0; i < n; i++) {
         daos_event_t* ev = polled_[i];
         const size_t idx = static_cast<size_t>(ev - evs_.data());
         int rc = ev->ev_error;
         if (rc == 0)
             rc = slots_[idx].launchRc;
+        if (rc == 0)
+            putLatency_.record(static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(now - slots_[idx].launched).count()));
         daos_event_fini(ev);
         complete(idx, rc);
     }

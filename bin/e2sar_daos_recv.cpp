@@ -11,6 +11,12 @@
     Threading: each dequeue thread (--deq) pulls events from the Reassembler and owns its
     own AsyncKVWriter (one DAOS event queue, --inflight concurrent puts). All threads
     share one pool/container/KV handle.
+
+    Timing: the exit summary reports throughput over the receive window (first to last
+    event received) and the commit window (first event received to last event committed),
+    so idle time before the sender starts or after it stops doesn't dilute the numbers,
+    plus latency distributions per event (reassembled -> committed) and per daos_kv_put.
+    --timing-csv writes one row per committed event.
 */
 
 #include <signal.h>
@@ -19,9 +25,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -32,6 +40,7 @@
 #include "e2sar_daos/async_kv_writer.hpp"
 #include "e2sar_daos/daos_handles.hpp"
 #include "e2sar_daos/event_layout.hpp"
+#include "e2sar_daos/latency_histogram.hpp"
 
 namespace po = boost::program_options;
 using namespace e2sar;
@@ -52,6 +61,34 @@ struct Stats {
     std::atomic<int> lastDaosErr{0};
 } stats;
 
+// All timestamps are nanoseconds since program start (steady clock).
+using Clock = std::chrono::steady_clock;
+const Clock::time_point tStart = Clock::now();
+
+int64_t sinceStartNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - tStart).count();
+}
+
+struct Timing {
+    std::atomic<int64_t> firstRecvNs{-1};
+    std::atomic<int64_t> lastRecvNs{-1};
+    std::atomic<int64_t> lastCommitNs{-1};
+    std::mutex mtx;                 // guards the merged histograms and the CSV
+    LatencyHistogram eventLatency;  // reassembled event handed to us -> metadata committed
+    LatencyHistogram putLatency;    // each daos_kv_put, launch -> completion
+    std::ofstream csv;
+} timing;
+
+void updateMin(std::atomic<int64_t>& a, int64_t v) {
+    int64_t cur = a.load();
+    while ((cur < 0 || v < cur) && !a.compare_exchange_weak(cur, v)) {}
+}
+
+void updateMax(std::atomic<int64_t>& a, int64_t v) {
+    int64_t cur = a.load();
+    while (v > cur && !a.compare_exchange_weak(cur, v)) {}
+}
+
 void onSignal(int) { running = false; }
 
 struct WriterConfig {
@@ -69,6 +106,8 @@ struct PendingEvent {
     uint16_t dataId = 0;
     std::string baseKey;
     std::string meta;  // metadata value; must outlive its async put
+    uint64_t nchunks = 0;
+    int64_t recvNs = 0;  // when recvEvent handed it to us
     size_t remaining = 0;
     int err = 0;
 
@@ -87,6 +126,7 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
         // since callbacks must not submit. Declared before the writer so it outlives
         // the writer's destructor, which may still run callbacks while draining.
         std::vector<std::shared_ptr<PendingEvent>> done;
+        LatencyHistogram eventLatency;  // per thread; merged into timing at the end
         AsyncKVWriter writer(*kv, cfg.maxInflight);
 
         auto commitDone = [&]() {
@@ -101,15 +141,25 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
                                   << " not committed: " << d_errstr(ev->err) << std::endl;
                         continue;
                     }
-                    writer.submit(ev->baseKey, ev->meta.data(), ev->meta.size(), [ev, &cfg, tid](int rc) {
+                    writer.submit(ev->baseKey, ev->meta.data(), ev->meta.size(),
+                                  [ev, &cfg, tid, &eventLatency](int rc) {
                         if (rc != 0) {
                             stats.putErrors++;
                             stats.eventsFailed++;
                             stats.lastDaosErr = rc;
                             return;
                         }
+                        const int64_t now = sinceStartNs();
+                        updateMax(timing.lastCommitNs, now);
+                        eventLatency.record(static_cast<uint64_t>(now - ev->recvNs));
                         stats.eventsCommitted++;
                         stats.bytesCommitted += ev->size;
+                        if (timing.csv.is_open()) {
+                            std::lock_guard<std::mutex> lk(timing.mtx);
+                            timing.csv << ev->evtNum << ',' << ev->dataId << ',' << ev->size << ','
+                                       << ev->nchunks << ',' << tid << ',' << ev->recvNs / 1e9 << ','
+                                       << now / 1e9 << ',' << (now - ev->recvNs) / 1e6 << '\n';
+                        }
                         if (cfg.verbose)
                             std::cout << "[t" << tid << "] committed " << ev->baseKey << " ("
                                       << ev->size << " bytes)" << std::endl;
@@ -126,14 +176,24 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
             size_t size = 0;
             EventNum_t evtNum = 0;
             uint16_t dataId = 0;
-            auto res = reas->recvEvent(&buf, &size, &evtNum, &dataId, 100);
+            // With puts in flight, don't sleep in recvEvent: poll the Reassembler and wait
+            // on the DAOS event queue instead, so completions are reaped (and timed) promptly.
+            const bool busy = writer.inflight() > 0;
+            auto res = busy ? reas->getEvent(&buf, &size, &evtNum, &dataId)
+                            : reas->recvEvent(&buf, &size, &evtNum, &dataId, 100);
             if (res.has_error()) {
                 stats.recvErrors++;
                 continue;
             }
-            if (res.value() == -1)  // timed out or stopping
+            if (res.value() == -1) {  // nothing queued (or stopping)
+                if (busy)
+                    writer.progress(1000);  // up to 1 ms
                 continue;
+            }
 
+            const int64_t recvNs = sinceStartNs();
+            updateMin(timing.firstRecvNs, recvNs);
+            updateMax(timing.lastRecvNs, recvNs);
             stats.eventsReceived++;
             stats.bytesReceived += size;
 
@@ -142,10 +202,12 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
             ev->size = size;
             ev->evtNum = evtNum;
             ev->dataId = dataId;
+            ev->recvNs = recvNs;
             ev->baseKey = eventKey(cfg.prefix, evtNum, dataId);
 
             const EventMeta meta = EventMeta::forSize(size, cfg.chunkSize);
             ev->meta = meta.toString();
+            ev->nchunks = meta.nchunks;
             ev->remaining = meta.nchunks;
 
             if (meta.nchunks == 0) {
@@ -174,6 +236,10 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
         writer.drain();
         commitDone();
         writer.drain();
+
+        std::lock_guard<std::mutex> lk(timing.mtx);
+        timing.eventLatency.merge(eventLatency);
+        timing.putLatency.merge(writer.putLatency());
     } catch (const std::exception& e) {
         std::cerr << "[t" << tid << "] fatal: " << e.what() << std::endl;
         running = false;
@@ -182,7 +248,7 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
 
 void reportLoop(Reassembler* reas, unsigned intervalSec) {
     using clock = std::chrono::steady_clock;
-    uint64_t lastBytes = 0, lastEvents = 0;
+    uint64_t lastBytes = 0, lastEvents = 0, lastRcvdBytes = 0;
     auto lastT = clock::now();
     while (running) {
         for (unsigned i = 0; i < intervalSec * 10 && running; i++)
@@ -193,17 +259,19 @@ void reportLoop(Reassembler* reas, unsigned intervalSec) {
         const auto now = clock::now();
         const double dt = std::chrono::duration<double>(now - lastT).count();
         const uint64_t bytes = stats.bytesCommitted, events = stats.eventsCommitted;
+        const uint64_t rcvdBytes = stats.bytesReceived;
         const auto rs = reas->getStats();
 
         std::cout << std::fixed << std::setprecision(2)
-                  << "rcvd " << stats.eventsReceived << " evts | committed " << events
-                  << " evts, " << bytes / 1048576.0 << " MiB | "
+                  << "in " << stats.eventsReceived << " evts, " << (rcvdBytes - lastRcvdBytes) * 8.0 / dt / 1e9
+                  << " Gbps | committed " << events << " evts, " << bytes / 1048576.0 << " MiB, "
                   << (bytes - lastBytes) * 8.0 / dt / 1e9 << " Gbps, "
                   << (events - lastEvents) / dt << " evt/s | failed " << stats.eventsFailed
                   << " | reassembly loss " << rs.reassemblyLoss
                   << ", enqueue loss " << rs.enqueueLoss << std::endl;
 
         lastBytes = bytes;
+        lastRcvdBytes = rcvdBytes;
         lastEvents = events;
         lastT = now;
     }
@@ -241,12 +309,52 @@ void printFinalStats(Reassembler& r) {
         std::cout << "\tLast DAOS error:           " << d_errstr(stats.lastDaosErr) << std::endl;
 }
 
+std::string fmtRate(uint64_t bytes, uint64_t events, int64_t windowNs) {
+    if (windowNs <= 0)
+        return "n/a (needs at least 2 events)";
+    const double sec = windowNs / 1e9;
+    std::ostringstream o;
+    o << std::fixed << std::setprecision(3) << bytes * 8.0 / windowNs << " Gbps, "
+      << std::setprecision(1) << bytes / 1048576.0 / sec << " MiB/s, " << events / sec << " evt/s";
+    return o.str();
+}
+
+std::string fmtLatency(const LatencyHistogram& h) {
+    if (h.count() == 0)
+        return "n/a";
+    auto ms = [](double ns) { return ns / 1e6; };
+    std::ostringstream o;
+    o << std::fixed << std::setprecision(3) << "min " << ms(h.minNs()) << " | mean " << ms(h.meanNs())
+      << " | p50 " << ms(h.percentileNs(50)) << " | p90 " << ms(h.percentileNs(90)) << " | p99 "
+      << ms(h.percentileNs(99)) << " | max " << ms(h.maxNs()) << " ms  (" << h.count() << ")";
+    return o.str();
+}
+
+void printTiming() {
+    const int64_t first = timing.firstRecvNs, lastRecv = timing.lastRecvNs, lastCommit = timing.lastCommitNs;
+    std::cout << "Timing:" << std::endl;
+    if (first < 0) {
+        std::cout << "\tno events received" << std::endl;
+        return;
+    }
+    std::cout << std::fixed << std::setprecision(3)
+              << "\tFirst event received:      " << first / 1e9 << " s after start" << std::endl
+              << "\tReceive window:            " << (lastRecv - first) / 1e9 << " s (first -> last event received)" << std::endl
+              << "\tCommit window:             " << (lastCommit >= 0 ? (lastCommit - first) / 1e9 : 0.0)
+              << " s (first event received -> last event committed)" << std::endl
+              << "\tIngest throughput:         " << fmtRate(stats.bytesReceived, stats.eventsReceived, lastRecv - first) << std::endl
+              << "\tDAOS commit throughput:    "
+              << fmtRate(stats.bytesCommitted, stats.eventsCommitted, lastCommit >= 0 ? lastCommit - first : 0) << std::endl
+              << "\tEvent latency (recv->commit): " << fmtLatency(timing.eventLatency) << std::endl
+              << "\tdaos_kv_put latency:       " << fmtLatency(timing.putLatency) << std::endl;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
 
-    std::string uriStr, recvIP, pool, cont, oclass, prefix;
+    std::string uriStr, recvIP, pool, cont, oclass, prefix, timingCsv;
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB;
     std::vector<int> coreList;
@@ -281,6 +389,7 @@ int main(int argc, char** argv) {
     opts("deq", po::value<size_t>(&deqThreads)->default_value(1), "number of dequeue threads, each with its own DAOS event queue");
     opts("report", po::value<unsigned>(&reportSec)->default_value(1), "progress report interval in seconds (0 = off)");
     opts("verbose", po::bool_switch()->default_value(false), "print every committed event");
+    opts("timing-csv", po::value<std::string>(&timingCsv), "write one CSV row of timing per committed event to this file");
 
     po::variables_map vm;
     try {
@@ -339,6 +448,17 @@ int main(int argc, char** argv) {
     if (uriRes.has_error()) {
         std::cerr << "Unable to parse EJFAT URI: " << uriRes.error().message() << std::endl;
         return 1;
+    }
+
+    if (!timingCsv.empty()) {
+        timing.csv.open(timingCsv, std::ios::trunc);
+        if (!timing.csv) {
+            std::cerr << "Unable to open --timing-csv file " << timingCsv << std::endl;
+            return 1;
+        }
+        // times in seconds since program start, microsecond resolution
+        timing.csv << std::fixed << std::setprecision(6);
+        timing.csv << "evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms\n";
     }
 
     signal(SIGINT, onSignal);
@@ -412,6 +532,11 @@ int main(int argc, char** argv) {
             std::cerr << "Unable to deregister worker: " << dereg.error().message() << std::endl;
         reas->stopThreads();
         printFinalStats(*reas);
+        printTiming();
+        if (timing.csv.is_open()) {
+            timing.csv.close();
+            std::cout << "Per-event timing written to " << timingCsv << std::endl;
+        }
     } catch (const DaosError& e) {
         std::cerr << "DAOS error: " << e.what() << std::endl;
         return 1;

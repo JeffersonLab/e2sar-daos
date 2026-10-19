@@ -4,7 +4,7 @@ There are two test suites:
 
 | Suite | Test | Needs |
 |---|---|---|
-| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking that `e2sar_daos_recv`/`e2sar_daos_read` use | DAOS headers and libraries, no DAOS server |
+| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking that `e2sar_daos_recv`/`e2sar_daos_read` use.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary | DAOS headers and libraries, no DAOS server |
 | `integration` | `DAOSKVTest`: writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and compares SHA-256 digests | A reachable DAOS pool and container, plus `openssl-devel` at build time |
 
 `DAOSKVTest` reads the pool and container from `DAOS_POOL` and `DAOS_CONT` (defaults `sc26` and `kv-test`).
@@ -45,7 +45,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work e2sar-daos:dev \
 Check that:
 - `meson setup` does **not** print `libcrypto (openssl-devel) not found, skipping DAOSKVTest`, so the KV test is at least compiled.
 - `meson compile` links both `daos_test` and `daos_kv_test`.
-- `--suite unit` reports `Ok: 2`.
+- `--suite unit` reports `Ok: 3`.
 
 If `meson setup` fails with `Could not generate cargs for e2sar` or `Package 're2' ... not found`, the image was built from an older Dockerfile. Rebuild it.
 
@@ -361,7 +361,7 @@ $E2SAR_BIN/e2sar_ft -s --ip <ebpf2201 ip> --rate 5 $SRC/*
 Then verify on ebpf2203 as above. Firewalls between the two hosts must let UDP 19522 through.
 
 **Variations worth running:**
-- Throughput and back-pressure: larger EVIO files, `--rate 10`, and `--deq 2 --inflight 128` on the receiver. Watch `enqueue loss` in the progress line.
+- Throughput: send a few GB (tens of files or more) at increasing sender `--rate`, with `--timing-csv /tmp/$USER/timing.csv` on the receiver. Compare *Ingest* with *DAOS commit throughput* in the `Timing:` block at exit. While they match, DAOS keeps up. When commit falls behind and `enqueue loss` grows, try `--deq 2 --inflight 128`. See [bin/README.md, Timing and throughput](../bin/README.md#timing-and-throughput).
 - Single-value events: `--chunk 0` on the receiver. The listing then shows 1 chunk per event.
 
 ### Clean up

@@ -85,8 +85,50 @@ DAOS options:
 | `--deq` | 1 | Dequeue threads, each with its own event queue |
 | `--report` | 1 | Progress line interval in seconds (0 = off) |
 | `--verbose` | off | Print every committed event |
+| `--timing-csv FILE` | — | Write one row of timing per committed event (see [Timing and throughput](#timing-and-throughput)) |
 
 Exit status: 0 if every received event was committed, 2 if any event failed, 1 on a setup error.
+
+### Timing and throughput
+
+The progress line, every `--report` seconds, shows the rate over the last interval (all numbers in this section are illustrative, not measurements):
+```
+in 412 evts, 4.87 Gbps | committed 405 evts, 38120.55 MiB, 4.79 Gbps, 50.00 evt/s | failed 0 | reassembly loss 0, enqueue loss 0
+```
+`in` is what E2SAR handed over (network side). `committed` is what DAOS has fully stored.
+
+At exit, after the Reassembler and DAOS counters, a `Timing:` block summarizes the run:
+```
+Timing:
+	First event received:      3.214 s after start
+	Receive window:            41.871 s (first -> last event received)
+	Commit window:             41.903 s (first event received -> last event committed)
+	Ingest throughput:         4.912 Gbps, 585.6 MiB/s, 49.9 evt/s
+	DAOS commit throughput:    4.908 Gbps, 585.1 MiB/s, 49.9 evt/s
+	Event latency (recv->commit): min 9.812 | mean 21.440 | p50 19.922 | p90 29.297 | p99 46.875 | max 61.203 ms  (2090)
+	daos_kv_put latency:       min 0.912 | mean 4.311 | p50 3.906 | p90 6.836 | p99 11.719 | max 18.442 ms  (25080)
+```
+
+| Line | Meaning |
+|---|---|
+| Receive window | From the first event handed over to the last one. Idle time before the sender starts and after it stops is excluded, so stopping with Ctrl-C late doesn't matter |
+| Commit window | From the first event received to the last event committed to DAOS |
+| Ingest throughput | Bytes received / receive window: what the network + reassembly delivered |
+| DAOS commit throughput | Bytes committed / commit window: **the end-to-end number to quote**. If it matches ingest, DAOS kept up and the sender's rate was the limit |
+| Event latency | From an event being handed over to its metadata key being committed. Includes waiting for a free put slot, so it grows when DAOS is the bottleneck |
+| `daos_kv_put` latency | Each chunk or metadata put, from launch to completion, i.e. DAOS's own response time at the current queue depth (`--deq` x `--inflight`) |
+
+Notes:
+- A window is measured between events, so the first event's own transfer time is not in it. With only a few events, throughput is overestimated. Send at least tens of events.
+- Percentiles come from a log-scale histogram and are accurate to within 12.5%. Min, mean and max are exact.
+- If ingest throughput is well below the sender's `--rate`, look at `reassembly loss` and `enqueue loss` first. If DAOS commit throughput is below ingest and `enqueue loss` grows, DAOS is the bottleneck. Try more `--deq` threads or a higher `--inflight`.
+
+`--timing-csv FILE` writes one row per committed event, with times in seconds since the program started:
+```
+evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms
+0,4321,93456789,90,0,3.214001,3.236950,22.949000
+```
+For example, plot `commit_s` against the running sum of `bytes` for throughput over time, or a histogram of `latency_ms`.
 
 ## `e2sar_daos_read`
 
