@@ -4,7 +4,7 @@
 #   sender node:    e2sar_evio_send ──▶ [EJFAT LB] ──▶ e2sar_daos_recv ──▶ DAOS   :receiver node
 #
 # Run both roles at the same time, one on each node, with the same TAG and mode:
-#   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|b2b] [-T recv_threads]
+#   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|b2b] [-T recv_threads] [-S kv|dfuse|pil4dfs] [-D deq_threads]
 #   sender:    e2sar_e2e_bench.sh send TAG [-m lb|b2b] [-P segmenters] [-s sockets]
 #                                          [-n events_per_segmenter] [-f frames_per_event] [-r gbps]
 #   either:    e2sar_e2e_bench.sh clean
@@ -14,6 +14,15 @@
 #        receiver's -T ports by their random entropy.
 #   b2b  back-to-back, no LB. Segmenter i sends to port PORT+i (--port-per-segmenter), so use
 #        -T >= -P on the receiver.
+#
+# Sinks (receiver -S):
+#   kv       (default) native DAOS KV object, async puts, 1 MiB chunks
+#   dfuse    one file per event in a POSIX container mounted with dfuse at $MNT
+#            (e2sar_daos_recv --dir), blocking open/write/close on each of the -D threads
+#   pil4dfs  dfuse plus LD_PRELOAD=libpil4dfs.so, which turns the file I/O into libdfs calls
+#            in-process and bypasses FUSE
+# For dfuse/pil4dfs the receiver creates $CONT as a POSIX container, mounts it, checks the
+# files with sha256sum after the run, then unmounts and destroys it.
 #
 # The nodes can't SSH to each other, so the roles meet through files in $RUN/bench/TAG/
 # (an NFS $HOME shared by both nodes): recv writes "ready" once it listens (with the LB:
@@ -31,6 +40,14 @@
 : "${CONT:=e2sar-bench}"                 # DAOS container, destroyed after every run
 : "${NIC:=enp1s0f1np1}"                  # receiver data-plane NIC, for drop counters
 : "${RUN:=$HOME/e2sar_run}"              # shared: logs and rendezvous files
+: "${MNT:=/tmp/$USER-dfuse}"             # dfuse mount point for -S dfuse|pil4dfs (node-local)
+# dfuse defaults to at most 16 threads and one event queue; more of both lets the
+# receiver's parallel writers through. Set DFUSE_OPTS= to get dfuse's defaults.
+: "${DFUSE_OPTS=--thread-count=32 --eq-count=8}"
+: "${PIL4DFS:=/usr/lib64/libpil4dfs.so}"  # interception library for -S pil4dfs
+# With its default per-thread event queues, libpil4dfs segfaults in libfabric (verbs
+# rxm_conn_progress) once more than ~2 threads write; 0 makes it use blocking calls.
+: "${PIL4DFS_ENV=D_IL_MAX_EQ=0}"
 : "${E2SAR_DAOS_BUILD:=$(cd "$(dirname "$0")/.." && pwd)/build}"
 
 source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset variables
@@ -47,19 +64,26 @@ nic_counters() { /usr/sbin/ethtool -S "$NIC" | awk '/ (rx_out_of_buffer|rx_disca
 
 ROLE=${1:-}; shift || true
 if [ "$ROLE" = clean ]; then
+    mountpoint -q "$MNT" && fusermount3 -u "$MNT"
     daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
     echo "removed $POOL/$CONT (if present)"; exit 0
 fi
 TAG=${1:-}; shift || true
 [ -n "$TAG" ] && [[ "$ROLE" =~ ^(send|recv)$ ]] || usage
 
-MODE=lb SEGS=4 SOCKETS=2 EVENTS=100000 FRAMES=1 RATE=-1 THREADS=32 POOLSZ=64
-while getopts "m:P:s:n:f:r:T:" o; do
+MODE=lb SEGS=4 SOCKETS=2 EVENTS=100000 FRAMES=1 RATE=-1 THREADS=32 POOLSZ=64 SINK=kv DEQ=
+while getopts "m:P:s:n:f:r:T:S:D:" o; do
     case $o in
         m) MODE=$OPTARG ;; P) SEGS=$OPTARG ;; s) SOCKETS=$OPTARG ;; n) EVENTS=$OPTARG ;;
-        f) FRAMES=$OPTARG ;; r) RATE=$OPTARG ;; T) THREADS=$OPTARG ;; *) usage ;;
+        f) FRAMES=$OPTARG ;; r) RATE=$OPTARG ;; T) THREADS=$OPTARG ;; S) SINK=$OPTARG ;;
+        D) DEQ=$OPTARG ;; *) usage ;;
     esac
 done
+case $SINK in
+    kv)            : "${DEQ:=4}" ;;
+    dfuse|pil4dfs) : "${DEQ:=16}" ;;
+    *)             usage ;;
+esac
 case $MODE in
     lb)  : "${EJFAT_URI:?EJFAT_URI (LB instance URI) not set}"; URI=$EJFAT_URI; CP=--withcp ;;
     b2b) URI="ejfat://useless@10.10.10.10:1234/lb/1?data=$RECV_IP:$PORT"; CP= ;;
@@ -90,12 +114,25 @@ fi
 # ---------------------------------------------------------------- receiver
 ss -uan | grep -q ":$PORT\b" && die "UDP port $PORT is in use (ss -uanp); someone else may be testing"
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
+SINKARGS=(--pool "$POOL" --cont "$CONT" --deq "$DEQ" --inflight 128) PRELOAD=()
+if [ "$SINK" != kv ]; then
+    mountpoint -q "$MNT" && die "$MNT is already mounted (e2sar_e2e_bench.sh clean)"
+    daos cont create "$POOL" "$CONT" --type POSIX > /dev/null || die "cannot create POSIX container $POOL/$CONT"
+    mkdir -p "$MNT"
+    # shellcheck disable=SC2086  # DFUSE_OPTS is a list of options
+    dfuse $DFUSE_OPTS "$MNT" "$POOL" "$CONT" || die "dfuse mount of $POOL/$CONT on $MNT failed"
+    SINKARGS=(--dfuse "$MNT" --deq "$DEQ")
+    # shellcheck disable=SC2206  # PIL4DFS_ENV is a list of VAR=value
+    [ "$SINK" = pil4dfs ] && PRELOAD=(LD_PRELOAD="$PIL4DFS" $PIL4DFS_ENV)
+fi
 nic_counters > "$D/nic0"; nstat -n
-"$BIN/e2sar_daos_recv" -u "$URI" $CP --ip "$RECV_IP" --port "$PORT" --threads "$THREADS" \
-    --pool "$POOL" --cont "$CONT" --prefix "$TAG" --timeout 10000 -b 1073741824 \
-    --deq 4 --inflight 128 --timing-csv "$D/timing.csv" > "$D/recv.log" 2>&1 < /dev/null &
+env "${PRELOAD[@]}" "$BIN/e2sar_daos_recv" -u "$URI" $CP --ip "$RECV_IP" --port "$PORT" \
+    --threads "$THREADS" --prefix "$TAG" --timeout 10000 -b 1073741824 "${SINKARGS[@]}" \
+    --timing-csv "$D/timing.csv" > "$D/recv.log" 2>&1 < /dev/null &
 PID=$!
-trap 'kill -INT $PID 2>/dev/null; wait $PID' EXIT
+# unmount and destroy the container on any exit (the dfuse sink only)
+unmount() { [ "$SINK" = kv ] || { fusermount3 -u "$MNT"; daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1; }; }
+trap 'kill -INT $PID 2>/dev/null; wait $PID; unmount' EXIT
 
 for ((i = 0; i < 60; i++)); do
     sleep 1
@@ -121,20 +158,28 @@ while :; do
     sleep 1
 done
 sleep 2   # one more progress tick
-kill -INT $PID; wait $PID; trap - EXIT
+kill -INT $PID; wait $PID; trap unmount EXIT
 
 nic_counters > "$D/nic1"
 DISC=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_discards_phy" {print $4 - $2}')
 OOB=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_out_of_buffer" {print $4 - $2}')
 RCVBUF=$(nstat -z UdpRcvbufErrors | awk '/UdpRcvbufErrors/{print $2}')
 
-"$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$TAG" --fetch > "$D/fetch.txt" 2>&1
-daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
+if [ "$SINK" = kv ]; then
+    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$TAG" --fetch > "$D/fetch.txt" 2>&1
+    daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
+else
+    # same "<sha256>  <prefix>_<evt>_<dataId>.evio" lines as e2sar_daos_read --fetch
+    (cd "$MNT/$TAG" && find . -name '*.evio' -printf '%f\0' | xargs -0 -r -P 16 -n 64 sha256sum) > "$D/fetch.txt" 2>&1
+fi
+unmount; trap - EXIT
 
 GP=$(grep -oP 'Sender goodput:\s+\K[0-9.]+' "$D/send.log")
 R=$(python3 -I "$HERE/e2sar_e2e_analyze.py" "$D" --pool "$S_pool" --expected "$S_events" --set \
     tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" frames_per_event="$S_frames" \
-    rate="$S_rate" recv_threads="$THREADS" sender_goodput_gbps="${GP:-0}" rx_discards_phy="$DISC" \
+    rate="$S_rate" recv_threads="$THREADS" sink="$SINK" deq_threads="$DEQ" \
+    dfuse_opts="$([ "$SINK" = kv ] || echo "${DFUSE_OPTS// /_}")" \
+    sender_goodput_gbps="${GP:-0}" rx_discards_phy="$DISC" \
     rx_out_of_buffer="$OOB" udp_rcvbuf_errors="${RCVBUF:-0}" 2> "$D/summary.txt")
 echo "$R" > "$D/result.json"
 echo "$R" >> "$RUN/bench/results.jsonl"

@@ -6,12 +6,13 @@ Inputs (all in the run directory):
   timing.csv   e2sar_daos_recv --timing-csv: evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms
                (seconds since the receiver's clock start, printed as "Clock start" in recv.log)
   digests      e2sar_evio_send --digests: <dataId> <slot> <sha256>
-  fetch.txt    e2sar_daos_read --fetch output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
+  fetch.txt    e2sar_daos_read --fetch (or sha256sum, dfuse sink) output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
 
 Latency stages per event, matched on (evt_num, data_id):
   sender   queue_ns -> sent_ns    waiting in the Segmenter queue, segmenting, sending every packet
   network  sent_ns  -> recv       wire + LB + last packet to reassembled event handed to a DAOS thread
   daos     recv     -> commit     all chunk puts and the metadata put completed
+                                  (dfuse sink: open/write/close of the event's file)
   total    queue_ns -> commit
 The two hosts' clocks are chrony-synced (offsets ~0.1 ms), so cross-host stages are good to ~0.2 ms.
 
@@ -124,7 +125,8 @@ def summary(a):
     """Human-readable summary on stderr."""
     g = a.get
     lines = [f"{g('tag', '')} {a['result']}  mode={g('mode')} P={g('segmenters')} s={g('sockets')} "
-             f"f={g('frames_per_event')} rate={g('rate')} T={g('recv_threads')}  "
+             f"f={g('frames_per_event')} rate={g('rate')} T={g('recv_threads')} "
+             f"sink={g('sink', 'kv')} D={g('deq_threads')}  "
              f"committed {a['committed']}/{a['expected']}, verified {a['verified']}"]
     if "received_gbps" in a:
         lines.append(f"  received {a['received_gbps']:.2f} Gbps ({a['received_evt_per_s']:.0f} evt/s, "
