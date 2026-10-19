@@ -125,6 +125,35 @@ $E2SAR_BIN/e2sar_ft -s --ip 129.57.178.85 --mtu 9000 --rate 5 -p $SRC/*
 ```
 Ctrl-C the receiver after the last `committed` line, then verify on ebpf2203 (step 7) and clean up both nodes (step 8).
 
+## 5b. High throughput: parallel senders to parallel receive ports
+
+A single `e2sar_ft` sends each file (event) on one thread, so one large file tops out at about 10–12 Gbps. Several files in one `e2sar_ft` do go out in parallel, but always to one destination port. A single receive thread can't keep up, and every event is lost (see [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md#6-multi-thread-segmenter-several-files-in-one-e2sar_ft)).
+To go faster, run **N `e2sar_ft` processes**, one file each, each to its own port with its own `--dataid`. On the receiver, use `--threads N`, which listens on N consecutive ports.
+
+**ebpf2203, receiver** (N = 4 listens on ports 20480–20483):
+```bash
+N=4
+./build/bin/e2sar_daos_recv --ip 129.57.178.86 --port $PORT --threads $N \
+    --pool sc26 --cont e2sar-test --prefix $PREFIX \
+    --timeout 10000 -b 1073741824 --deq 4 --inflight 128 --verbose
+```
+
+**ebpf2201, N senders** (stage N files in `$SRC` first):
+```bash
+N=4; FILES=($(ls $SRC/*.evio | head -$N)); pids=()
+for i in "${!FILES[@]}"; do
+  EJFAT_URI="ejfat://useless@127.0.0.1:18347/lb/1?data=129.57.178.86:$((PORT+i))&sync=129.57.178.86:19020" \
+    $E2SAR_BIN/e2sar_ft -s --ip 129.57.178.85 --mtu 9000 --rate -1 --sockets 1 \
+        --dataid $((4321+i)) -p "${FILES[$i]}" > $RUN/send_$i.log 2>&1 &
+  pids+=($!)
+done
+wait "${pids[@]}"; grep -h 'goodput' $RUN/send_*.log
+```
+Each process restarts event numbers at 0. The distinct `--dataid` keeps their keys apart in the reassembler and in DAOS (`<PREFIX>/0/4321`, `<PREFIX>/0/4322`, ...).
+Verify with step 7. The digest comparison works the same way, since `e2sar_daos_read` lists every data id under the prefix.
+
+Up to 4 senders (about 48 Gbps in total) ran cleanly. At 4 one of two runs and at 8 every run lost all events to NIC receive-ring overflow (`rx_out_of_buffer`; see Troubleshooting).
+
 ## 6. Reverse: ebpf2203 → ebpf2201
 
 This is the same as step 5 with the roles swapped. Use 129.57.178.85 in the URI and as the receiver's `--ip`, and run `e2sar_ft` on ebpf2203 with `--ip 129.57.178.86`.
@@ -172,7 +201,20 @@ Each run sent `frames_thread0_file0020.evio` (1.78 GB) and a 3.5 MB random file.
 | ebpf2203 → ebpf2201 | 1 | 14.3 Gbps | 20.9 Gbps | 17.8 Gbps |
 | | 2 | 11.1 Gbps | 9.0 Gbps | 8.4 Gbps |
 
-These runs read the source from `$HOME` (NFS). The `/scratch` runs in the bottleneck analysis gave the same range, so reading from local disk is for consistency, not speed.
+These runs read the source from `$HOME` (NFS), but the file was already in ebpf2201's memory cache. Uncached NFS reads run at only about 2.2 Gbps, which is why step 3 stages the source on `/scratch`.
+
+### Parallel senders (step 5b), ebpf2201 → ebpf2203, source on `/scratch`
+
+Each file is about 2.1 GiB from `~/evio-data`. "Sum of senders" adds up each `e2sar_ft`'s own goodput. Every run's DAOS data was read back and its digests checked before cleanup.
+
+| Senders / receive threads | Sum of senders | Committed | NIC `rx_out_of_buffer` | Digests |
+|---|---|---|---|---|
+| 2 / 2 | 19.9 Gbps | 2 / 2 | – | PASS |
+| 2 / 2 | 25.2 Gbps | 2 / 2 | 0 | PASS |
+| 3 / 3 | 26.3 Gbps | 3 / 3 | 0 | PASS |
+| 4 / 4 | 48.2 Gbps | 4 / 4 | 0 | PASS |
+| 4 / 4 | 48.4 Gbps | 0 / 4 | not measured (drops seen in cumulative counter) | – |
+| 8 / 8 | 88.1 Gbps | 0 / 8 | not measured (drops seen in cumulative counter) | – |
 
 ## Recommended settings
 
@@ -185,6 +227,8 @@ These runs read the source from `$HOME` (NFS). The `/scratch` runs in the bottle
 | Receiver | `-b 1073741824` | With 256 MiB the kernel dropped packets in 3 of 11 runs. With 1 GiB it dropped none in 20 runs |
 | Receiver | `--timeout 10000` | The maximum. The default 500 ms drops multi-GB events |
 | Both | `data=<ip>:$PORT` in `EJFAT_URI` | Without the port, `e2sar_ft` sends to junk ports |
+| Above ~10 Gbps | N `e2sar_ft` processes, one port each, receiver `--threads N`, N ≤ 4 | One `e2sar_ft` uses one port. Beyond 4 the NIC drops packets (step 5b) |
+| Receiver | no `--threads` > 1 with a single `e2sar_ft` | The extra ports get no traffic |
 
 ## Troubleshooting
 
@@ -196,6 +240,8 @@ These runs read the source from `$HOME` (NFS). The `/scratch` runs in the bottle
 | Sender exits 255: `Conflicting options 'cores' and 'sockets'` | With `--cores`, the number of send threads is the number of cores. Drop `--sockets` |
 | Large file missing, `Lost in reassembly: 1`, `RcvbufErrors` 0 | The event wasn't complete within `--timeout`. Use `--timeout 10000`, `--mtu 9000`, and no `--smooth` |
 | Large file missing, `RcvbufErrors` > 0 | The receive socket overflowed. Use `-b 1073741824` |
+| Several files in one `e2sar_ft`: every event lost, `RcvbufErrors` in the hundreds of thousands | The sender sends the files in parallel (43–70 Gbps), but all to one port, so one receive thread gets everything. Use parallel senders (step 5b) |
+| Events lost, `RcvbufErrors` 0 | Dropped in the NIC before the kernel. Check `ethtool -S enp1s0f1np1 \| grep -E 'rx_out_of_buffer\|rx_discards_phy'` before and after. The RX ring is 1024 of a possible 8192. Raising it (`ethtool -G enp1s0f1np1 rx 8192`) needs root; otherwise use fewer parallel senders |
 | Receiver exits: `Event timeout exception unreasonably long, limit 10s` | `--timeout` is capped at 10000 ms |
 | Either app exits: `NUMA management not available` | This build has no NUMA support. Drop `--numa` |
 | Receiver exits at once and the sender shows `Connection refused` | Read the receiver output. Check that it is still running before starting the sender |
