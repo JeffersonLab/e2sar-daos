@@ -170,7 +170,7 @@ Stop the receiver with Ctrl-C once the sender finishes. Then check the data on a
 ./build/bin/e2sar_daos_read --prefix run42 --fetch -o ~/restored   # run42_<evt>_<dataId>.evio
 ```
 
-The restored `.evio` files open directly in an EVIO viewer, e.g. evio-interactive-view: `python serve.py ~/restored`.
+The restored files are ordinary EVIO files. To open them on a remote node, see [Viewing the restored files](#viewing-the-restored-files).
 
 `e2sar_ft` sends the files of a run as events 0, 1, 2, ... in traversal order. With more than one enqueue thread (`--enq`), the order is not guaranteed. So compare digests as sets, not line by line:
 
@@ -187,3 +187,28 @@ daos cont destroy sc26 e2sar           # the run's event data; only if the conta
 rm -rf /path/to/staged/copies          # sender: only copies made for the test, never the original data
 ```
 `daos cont destroy` removes every prefix in the container. If the container is shared with data you want to keep, use a separate container for tests (`--cont e2sar-test`) and destroy that one instead.
+
+## Viewing the restored files
+
+The restored `.evio` files are ordinary EVIO files, so any EVIO viewer opens them. They are on the node where `e2sar_daos_read -o` ran, usually a remote DAOS client. To look at them there, use [pyevio](https://github.com/JeffersonLab/pyevio) (`pip install 'pyevio[web]'`, or `'pyevio[gui]'` for the terminal viewer). The file stays on that node either way.
+
+In a browser, through an SSH tunnel:
+
+```bash
+# on the DAOS client node
+pyevio web ~/restored --no-browser        # prints http://127.0.0.1:8765/?token=...
+# on your laptop
+ssh -L 8765:localhost:8765 user@daos-client
+```
+
+Open the printed URL on your laptop, including the `?token=...` part. Without the token the page shows nothing. If port 8765 is taken on the node, start with `--port 9000` and forward `-L 8765:localhost:9000`. The server listens on 127.0.0.1 only, so the tunnel is the only way in.
+
+In the terminal, with no tunnel and no browser, from inside the SSH session:
+
+```bash
+pyevio gui ~/restored/run42_0_<dataId>.evio
+```
+
+The plots are for CODA streaming fADC250 files. Any other EVIO v6 file still shows the record table and the structure tree. See pyevio's [web viewer](https://github.com/JeffersonLab/pyevio/blob/main/docs/web_viewer.md) and [console viewer](https://github.com/JeffersonLab/pyevio/blob/main/docs/console_gui.md) docs.
+
+Delete the restored files when you are done (see the cleanup above).
