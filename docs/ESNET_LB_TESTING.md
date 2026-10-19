@@ -116,6 +116,23 @@ Both URIs live only in `~/.bashrc` (step 1).
 | **Instance** `$EJFAT_URI`, `ejfats://<instance token>@ejfat-lb.es.net:18008/lb/<id>?sync=...&data=...` | reservation, for one LB | `--status`, `--addsenders`, `--removesenders`, `--register`, `--deregister`, `--free`, and both apps |
 | Session | issued to one worker by `--register` | That worker's `--state` and `--deregister`. With `-s <session id>`, the instance URI works for both |
 
+An example instance URI, for LB 638 as used in these tests, with the token replaced by a placeholder:
+
+```
+ejfats://<instance token>@ejfat-lb.es.net:18008/lb/638?sync=192.188.29.6:19016&sync=[2001:400:a300::6]:19016&data=192.188.29.16:16384-32767&data=[2001:400:a300::16]:16384-32767
+```
+
+| Part | Example | Meaning |
+|---|---|---|
+| Scheme | `ejfats://` | gRPC over TLS. Use the hostname, not an IP, so the certificate validates |
+| Token | `<instance token>` | Printed once by `--reserve` (3.3). It's a secret: keep it in `~/.bashrc` only |
+| Control plane | `ejfat-lb.es.net:18008` | Where `lbadm` and the apps send gRPC calls |
+| LB ID | `/lb/638` | The reserved instance. The admin URI uses `/lb/0` |
+| `sync=` | `192.188.29.6:19016`, `[2001:400:a300::6]:19016` | Where the sender sends sync packets, IPv4 and IPv6. The port is specific to this instance |
+| `data=` | `192.188.29.16:16384-32767`, `[2001:400:a300::16]:16384-32767` | The LB's data-plane address and port range, IPv4 and IPv6. The sender sends events here |
+
+In `~/.bashrc` (step 1), wrap it in single quotes, because `&` and `[` mean something to the shell. A different instance has a different token, LB ID and `sync=` port. Always take the URI exactly as `--reserve` printed it.
+
 In the back-to-back case the URI needs `data=<ip>:<port>`. Here, keep the `data=` range exactly as the LB returns it. The LB picks the worker port from what the receiver registers.
 
 ### 3.2 Inspect the LB
