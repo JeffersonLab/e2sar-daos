@@ -178,3 +178,12 @@ The restored `.evio` files open directly in an EVIO viewer, e.g. evio-interactiv
 diff <(sha256sum /path/to/files/*.evio | cut -d' ' -f1 | sort) \
      <(./build/bin/e2sar_daos_read --prefix run42 --fetch | grep -E '^[0-9a-f]{64} ' | cut -d' ' -f1 | sort)
 ```
+
+Clean up after every test run, once it is verified:
+
+```bash
+rm -rf ~/restored                      # restored files (where -o wrote them)
+daos cont destroy sc26 e2sar           # the run's event data; only if the container holds test data alone
+rm -rf /path/to/staged/copies          # sender: only copies made for the test, never the original data
+```
+`daos cont destroy` removes every prefix in the container. If the container is shared with data you want to keep, use a separate container for tests (`--cont e2sar-test`) and destroy that one instead.

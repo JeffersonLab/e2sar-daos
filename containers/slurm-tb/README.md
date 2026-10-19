@@ -72,6 +72,14 @@ $TB_RUN e2sar-daos:tb e2sar_daos_read --prefix run42 --fetch -o /work/restored  
 The digests should be the same set as the `sha256sum` output. Event numbers follow the order in which `e2sar_ft` queued the files.
 The restored `.evio` files are the original files byte for byte, ready for an EVIO viewer.
 
+**Clean up after every run**, once it is verified:
+```bash
+rm -rf restored                                      # restored files on the node that ran e2sar_daos_read
+$TB_RUN e2sar-daos:tb daos cont destroy sc26 e2sar   # the run's event data; only if the container holds test data alone
+# sender: remove staged copies made for the test, never the original files under /path/to/files
+```
+`daos cont destroy` removes every prefix in the container. For tests, use a dedicated container (`--cont e2sar-test`) and destroy that one.
+
 ### Notes
 
 - Use a new `--prefix` per run. `e2sar_ft` restarts event numbers at 0, so reusing a prefix overwrites earlier events.

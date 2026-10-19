@@ -373,12 +373,21 @@ Then verify on ebpf2203 as above. Firewalls between the two hosts must let UDP 1
 - Throughput: send a few GB (tens of files or more) at increasing sender `--rate`, with `--timing-csv /tmp/$USER/timing.csv` on the receiver. Compare *Ingest* with *DAOS commit throughput* in the `Timing:` block at exit. While they match, DAOS keeps up. When commit falls behind and `enqueue loss` grows, try `--deq 2 --inflight 128`. See [bin/README.md, Timing and throughput](../bin/README.md#timing-and-throughput).
 - Single-value events: `--chunk 0` on the receiver. The listing then shows 1 chunk per event.
 
-### Clean up
+### Clean up (after every run)
+
+Clean up when each run is verified, before starting the next one. Each run leaves the source copies, the restored files and the event data in DAOS behind.
 
 ```bash
-daos cont destroy sc26 e2sar-test
-rm -rf /tmp/$USER/e2sar_src /tmp/$USER/e2sar_out /tmp/$USER/*.sha256
+# receiver (ebpf2203): restored files, digests and this run's DAOS data
+rm -rf /tmp/$USER/e2sar_out /tmp/$USER/*.sha256
+daos cont destroy sc26 e2sar-test            # e2sar_daos_recv recreates it on the next run
+# sender (ebpf2203 for loopback, ebpf2201 across hosts): source copies
+rm -rf /tmp/$USER/e2sar_src
 ```
+`/tmp` is local to each node, so run the sender line on the node that sent.
+`daos cont destroy` removes every prefix in `e2sar-test`, so make sure no other run is using it. Don't destroy `kv-test`: the integration test uses it.
+To check, run `ls /tmp/$USER` on both nodes, and `daos cont list sc26` should not show `e2sar-test`.
+For the `/scratch`-based procedure, see [EBPF_TESTBED_NOTES.md, step 8](EBPF_TESTBED_NOTES.md#8-clean-up-after-every-run-required).
 
 ### Common failures
 
