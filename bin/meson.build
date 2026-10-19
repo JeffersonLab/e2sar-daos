@@ -16,9 +16,28 @@ if boost_root != ''
 endif
 boost_url_dep = cpp_compiler.find_library('boost_url', dirs: boost_url_dirs, required: true)
 
+# libe2sar.a can reference gRPC TLS/insecure helper symbols that are not pulled in by
+# the generic `-lgrpc++` / `-lgrpc` pair alone when a staging-root install is used.
+# Link the insecure/TLS variants from the same E2SAR prefix before falling back to the
+# distro libraries, so Meson does not accidentally pick up a mismatched system gRPC ABI.
+grpc_lib_dirs = [e2sar_prefix / 'lib', e2sar_prefix / 'lib64']
+if e2sar_sysroot != ''
+    grpc_lib_dirs += [e2sar_sysroot / 'usr/local/lib', e2sar_sysroot / 'usr/local/lib64']
+endif
+grpc_unsecure_dep = cpp_compiler.find_library('grpc++_unsecure', dirs: grpc_lib_dirs + ['/usr/lib64'], required: false)
+grpc_core_unsecure_dep = cpp_compiler.find_library('grpc_unsecure', dirs: grpc_lib_dirs + ['/usr/lib64'], required: false)
+
+grpc_link_deps = []
+if grpc_unsecure_dep.found()
+    grpc_link_deps += [grpc_unsecure_dep]
+endif
+if grpc_core_unsecure_dep.found()
+    grpc_link_deps += [grpc_core_unsecure_dep]
+endif
+
 executable('e2sar_daos_recv', 'e2sar_daos_recv.cpp',
     dependencies: [e2sar_daos_dep, e2sar_dep, app_boost_dep, e2sar_boost_dep, boost_url_dep,
-                   dependency('threads')],
+                   grpc_link_deps, dependency('threads')],
     install: true
 )
 

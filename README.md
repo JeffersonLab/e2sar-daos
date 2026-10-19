@@ -24,14 +24,17 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
     ```
 
 ### Point pkg-config to E2SAR
-If E2SAR was installed with a staging root (e.g. `DESTDIR=~/opt/e2sar`, so the `*.pc` files still say `prefix=/usr/local`), set both the search path and the sysroot:
+If E2SAR was installed with a staging root (e.g. `DESTDIR=~/opt/e2sar`, so the `*.pc` files still say `prefix=/usr/local`), set both the search path and the sysroot to the staging root itself, not to `$E2SAR_ROOT/usr/local`:
 ```bash
 E2SAR_ROOT=$HOME/opt/e2sar
 export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
 export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
 pkg-config --modversion e2sar   # sanity check
+pkg-config --libs e2sar         # confirm it resolves to $E2SAR_ROOT/usr/local/lib* and not /usr/lib64
 ```
 If E2SAR was installed directly to its prefix, only `PKG_CONFIG_PATH` is needed.
+
+If the link fails with undefined references such as `grpc::experimental::NoOpCertificateVerifier` or `grpc::experimental::TlsCredentialsOptions`, the wrong E2SAR gRPC ABI is being selected. In that case, make sure `pkg-config --libs e2sar` shows the E2SAR install under `$E2SAR_ROOT`, not a system `/usr/lib64` install, and rebuild from a fresh `meson setup --wipe build`.
 
 ### Configure, compile, and test
 ```bash
