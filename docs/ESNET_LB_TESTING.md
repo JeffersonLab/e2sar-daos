@@ -127,7 +127,7 @@ $E2SAR_BIN/lbadm --status
 Expected: `LB ID`, `LB details: expiresat=...`, `Registered senders: ...` and `Registered workers:`.
 Write down the sender list so you can check at the end that you left it as it was. LB 638 already lists other JLab and NERSC senders.
 The worker list should be empty. If it isn't, someone else is receiving on this LB, and events would be split between their workers and yours.
-Any other allowlisted sender that sends while you are the only worker sends to *your* receiver. In the 3–4 file runs, ebpf2203's NIC received about 0.5 M more packets than were sent, possibly for this reason.
+Any other allowlisted sender that sends while you are the only worker sends to *your* receiver. On 2026-10-19 this happened: an allowlisted sender, probably the coda-fb sender at 129.57.69.58, was sending ~15k packets/s of ~100-byte packets with a version-2 RE header through LB 638. E2SAR 0.4.0rc1 discards them as `Bad RE Header Discards`, so they don't corrupt your events, but they inflate `rx_packets_phy` by ~0.5 M per run.
 
 **Nodes idle** (on both nodes):
 ```bash
@@ -380,7 +380,7 @@ Rows marked † happened in these runs. The others are what to check first, base
 | † Several events lost, 0 socket drops, `rx_discards_phy` grew | Total rate above ~25 Gbps. The receiving NIC port dropped frames. Send fewer files at once |
 | † Events lost, one port shows large socket drops (`ss -uanm`) | Two events picked the same port. Use more receiver `--threads` (16–32) |
 | † An event missing from `Events committed`, but `Lost in reassembly` is 0 | None of its packets arrived at all. Check whether another test was using the nodes or the LB at the same time |
-| † NIC counters grew far more than the frames sent | Other traffic is reaching the NIC: another user's test, or another allowlisted sender on the LB. Re-run when idle |
+| † NIC counters grew far more than the frames sent | Other traffic is reaching the NIC. Either another user's test is running on the node, or another allowlisted sender on the LB is sending: LB 638 carried a ~15k pps stream with a v2 RE header from an external sender, which the Reassembler discards as bad headers. Compare `rx_discards_phy`/`rx_out_of_buffer`, not `rx_packets_phy` |
 | Receiver runs, but `lbadm --status` lists no worker | It was started without `--withcp`, or it exited. Read its output |
 | Worker listed with `slotsassigned=0` | The LB hasn't recomputed the schedule yet. Wait a few seconds before sending |
 | Sender shows `0 errors`, but the receiver gets nothing | The sender's `--ip` isn't the address the packets leave from, so the LB drops them. Check `ip route get 192.188.29.16`. Also check that inbound UDP to the receiver ports isn't firewalled |
