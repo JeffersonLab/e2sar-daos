@@ -477,8 +477,8 @@ int main(int argc, char** argv) {
     opts("oclass", po::value<std::string>(&oclass)->default_value(""), "DAOS object class, e.g. SX or RP_2G1 (default: container default)");
     opts("prefix", po::value<std::string>(&prefix)->default_value("run"), "key prefix; use a per-run value, since e2sar_ft restarts event numbers at 0");
     opts("chunk", po::value<size_t>(&chunkKiB)->default_value(1024), "chunk size in KiB for splitting events into KV values (0 = one value per event)");
-    opts("inflight", po::value<size_t>(&inflight)->default_value(64), "max concurrent async puts per dequeue thread");
-    opts("deq", po::value<size_t>(&deqThreads)->default_value(1), "number of dequeue threads, each with its own DAOS event queue");
+    opts("inflight", po::value<size_t>(&inflight)->default_value(128), "max concurrent async puts per dequeue thread");
+    opts("deq", po::value<size_t>(&deqThreads)->default_value(16), "number of dequeue threads, each with its own DAOS event queue");
     // dfuse mode (POSIX container mounted with dfuse)
     opts("dfuse", po::value<std::string>(&outDir), "dfuse mount point: write each event as a file under DIR/<prefix>/ instead of the KV object; --pool/--cont/--oid/--oclass/--chunk/--inflight are ignored");
     opts("fsync", po::bool_switch()->default_value(false), "with --dfuse: fsync each file before closing it");
@@ -499,7 +499,7 @@ int main(int argc, char** argv) {
         std::cout << od << std::endl
                   << "Example (pairs with `e2sar_ft -s -u <uri> --ip <sender ip> /path/to/files`):\n"
                   << "  e2sar_daos_recv -u 'ejfat://...@host:port/lb/1?data=<recv ip>' --ip <recv ip> \\\n"
-                  << "      --pool sc26 --cont e2sar --prefix run42 --deq 2 --inflight 64" << std::endl;
+                  << "      --pool sc26 --cont e2sar --prefix run42" << std::endl;
         return 0;
     }
 

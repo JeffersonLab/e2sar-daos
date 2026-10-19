@@ -4,10 +4,13 @@
 |---|---|
 | `e2sar_daos_recv` | Receives events from an E2SAR sender (e.g. `e2sar_ft -s`) and writes them to a DAOS KV object with asynchronous puts |
 | `e2sar_daos_read` | Lists what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
+| `e2sar_evio_send` | Test sender: synthetic EVIO v6 streaming time frames through several E2SAR Segmenters, paced, with per-event timing and digests |
+| `e2sar_e2e_bench.sh` | One end-to-end run (`e2sar_evio_send` → [LB] → `e2sar_daos_recv` → DAOS): throughput, latency per stage, full digest check. See [docs/E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md) |
+| `e2sar_e2e_analyze.py` | The analysis step of `e2sar_e2e_bench.sh` |
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
 
-Both are built by `meson compile -C build` and placed in `build/bin/`. `e2sar_daos_read` needs `openssl-devel` for SHA-256.
+The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `e2sar_daos_read` and `e2sar_evio_send` need `openssl-devel` for SHA-256.
 
 ## Prerequisites
 
@@ -46,7 +49,7 @@ Reassembler ──recvEvent──▶ dequeue thread 0 ──▶ AsyncKVWriter (o
 ```
 
 - Each dequeue thread (`--deq`) owns one DAOS event queue, because DAOS event queues must be polled by a single thread.
-- A thread keeps up to `--inflight` puts outstanding (default 64, so 64 MiB per thread with 1 MiB chunks). It reaps completions between `recvEvent` calls.
+- A thread keeps up to `--inflight` puts outstanding (default 128, so 128 MiB per thread with 1 MiB chunks). It reaps completions between `recvEvent` calls.
 - The event buffer is freed once all of its chunks have completed.
 - When all slots are busy, the thread blocks on the event queue. That is the back-pressure: if DAOS can't keep up, the Reassembler queue fills, and the loss shows up as *enqueue loss* in the progress line.
 - On Ctrl-C the threads stop receiving and drain every outstanding put, including pending metadata commits. Then the worker is deregistered and the final stats are printed.
@@ -81,8 +84,8 @@ DAOS options:
 | `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1` |
 | `--prefix` | `run` | Key prefix, one per run |
 | `--chunk` | 1024 | Chunk size in KiB (0 = whole event in one value) |
-| `--inflight` | 64 | Max concurrent puts per dequeue thread |
-| `--deq` | 1 | Dequeue threads, each with its own event queue |
+| `--inflight` | 128 | Max concurrent puts per dequeue thread |
+| `--deq` | 16 | Dequeue threads, each with its own event queue. Independent of `--threads`. Below 16, the receiver fell behind above ~25 Gbps ([E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md)) |
 | `--report` | 1 | Progress line interval in seconds (0 = off) |
 | `--verbose` | off | Print every committed event |
 | `--timing-csv FILE` | — | Write one row of timing per committed event (see [Timing and throughput](#timing-and-throughput)) |
@@ -121,7 +124,7 @@ Timing:
 Notes:
 - A window is measured between events, so the first event's own transfer time is not in it. With only a few events, throughput is overestimated. Send at least tens of events.
 - Percentiles come from a log-scale histogram and are accurate to within 12.5%. Min, mean and max are exact.
-- If ingest throughput is well below the sender's `--rate`, look at `reassembly loss` and `enqueue loss` first. If DAOS commit throughput is below ingest and `enqueue loss` grows, DAOS is the bottleneck. Try more `--deq` threads or a higher `--inflight`.
+- If ingest throughput is well below the sender's `--rate`, look at `reassembly loss` and `enqueue loss` first. If they are 0, the dequeue threads are probably behind: events wait in the Reassembler's queue, which the event latency above does not include (it starts when a dequeue thread takes the event). Try more `--deq` threads. Going from 4 to 16 raised the received rate from 24 to 40 Gbps ([E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md)).
 
 `--timing-csv FILE` writes one row per committed event, with times in seconds since the program started:
 ```
@@ -152,7 +155,7 @@ On the receiver node (`192.168.1.20`), with DAOS:
 
 ```bash
 export EJFAT_URI='ejfat://useless@10.0.0.1:18347/lb/1?data=192.168.1.20&sync=192.168.1.20:19020'
-./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 --pool sc26 --cont e2sar --prefix run42 --deq 2
+./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 --pool sc26 --cont e2sar --prefix run42
 ```
 
 On the sender node, using the same `EJFAT_URI`:

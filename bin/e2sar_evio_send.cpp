@@ -32,6 +32,10 @@
     Joined with e2sar_daos_recv --timing-csv on (evt_num, data_id) this splits the latency
     into sender, network + LB + reassembly, and DAOS commit.
 
+    The defaults (16 Segmenters x 1 socket, 256 frames = ~95 KB per event, 20 Gbps) are the
+    highest setting that was lossless in repeated runs on the ebpf testbed, with
+    e2sar_daos_recv --threads 32 --deq 16 --inflight 128 (docs/E2E_BENCHMARK.md).
+
     --rate is the total for all Segmenters, paced by the producing threads (the Segmenter's
     own rate limit works in whole microseconds per event, too coarse for small events).
 */
@@ -294,12 +298,12 @@ int main(int argc, char** argv) {
     opts("novalidate,v", po::bool_switch()->notifier([&](bool b) { validate = !b; }), "don't validate the LB TLS certificate");
     opts("port-per-segmenter", po::bool_switch(&multiPort), "without --withcp: Segmenter i sends to the URI data port + i, one receive thread each");
     opts("mtu,m", po::value<uint16_t>(&mtu)->default_value(9000), "MTU");
-    opts("segmenters,P", po::value<size_t>(&segmenters)->default_value(1), "number of Segmenters, each with its own producing thread");
-    opts("sockets,s", po::value<size_t>(&sockets)->default_value(4), "send sockets/threads per Segmenter");
+    opts("segmenters,P", po::value<size_t>(&segmenters)->default_value(16), "number of Segmenters, each with its own producing thread");
+    opts("sockets,s", po::value<size_t>(&sockets)->default_value(1), "send sockets/threads per Segmenter");
     opts("bufsize,b", po::value<int>(&sndBuf)->default_value(3 * 1024 * 1024), "send socket buffer size");
-    opts("rate,r", po::value<double>(&rate)->default_value(-1), "total send rate in Gbps over all Segmenters (< 0: unlimited)");
-    opts("events,n", po::value<uint64_t>(&events)->default_value(10000), "events per Segmenter");
-    opts("frames,f", po::value<unsigned>(&framesPerEvent)->default_value(1), "EVIO time frames per event (one EVIO record)");
+    opts("rate,r", po::value<double>(&rate)->default_value(20), "total send rate in Gbps over all Segmenters (< 0: unlimited)");
+    opts("events,n", po::value<uint64_t>(&events)->default_value(6250), "events per Segmenter");
+    opts("frames,f", po::value<unsigned>(&framesPerEvent)->default_value(256), "EVIO time frames per event (one EVIO record, ~95 KB at 256)");
     opts("rocs", po::value<unsigned>(&shape.rocs)->default_value(2), "ROC banks per frame");
     opts("hits", po::value<double>(&shape.hitsPerFrame)->default_value(23), "mean hit words per frame");
     opts("pool", po::value<size_t>(&poolSize)->default_value(64), "distinct events per Segmenter (event e is copy e % pool)");
