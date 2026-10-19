@@ -126,7 +126,7 @@ def summary(a):
     g = a.get
     lines = [f"{g('tag', '')} {a['result']}  mode={g('mode')} P={g('segmenters')} s={g('sockets')} "
              f"f={g('frames_per_event')} rate={g('rate')} T={g('recv_threads')} "
-             f"sink={g('sink', 'kv')} D={g('deq_threads')}  "
+             f"D={g('deq')}{'x' + str(g('inflight')) if g('inflight') not in (None, '') else ''} sink={g('sink', 'kv')}  "
              f"committed {a['committed']}/{a['expected']}, verified {a['verified']}"]
     if "received_gbps" in a:
         lines.append(f"  received {a['received_gbps']:.2f} Gbps ({a['received_evt_per_s']:.0f} evt/s, "

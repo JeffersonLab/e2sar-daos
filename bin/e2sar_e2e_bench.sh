@@ -4,7 +4,8 @@
 #   sender node:    e2sar_evio_send ──▶ [EJFAT LB] ──▶ e2sar_daos_recv ──▶ DAOS   :receiver node
 #
 # Run both roles at the same time, one on each node, with the same TAG and mode:
-#   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|b2b] [-T recv_threads] [-S kv|dfuse|pil4dfs] [-D deq_threads]
+#   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|b2b] [-T recv_threads] [-D deq_threads] [-I inflight]
+#                                          [-S kv|dfuse|pil4dfs]
 #   sender:    e2sar_e2e_bench.sh send TAG [-m lb|b2b] [-P segmenters] [-s sockets]
 #                                          [-n events_per_segmenter] [-f frames_per_event] [-r gbps]
 #   either:    e2sar_e2e_bench.sh clean
@@ -18,7 +19,8 @@
 # Sinks (receiver -S):
 #   kv       (default) native DAOS KV object, async puts, 1 MiB chunks
 #   dfuse    one file per event in a POSIX container mounted with dfuse at $MNT
-#            (e2sar_daos_recv --dir), blocking open/write/close on each of the -D threads
+#            (e2sar_daos_recv --dfuse), blocking open/write/close on each of the -D dequeue threads
+#            (default 16 for these sinks; -I does not apply)
 #   pil4dfs  dfuse plus LD_PRELOAD=libpil4dfs.so, which turns the file I/O into libdfs calls
 #            in-process and bypasses FUSE
 # For dfuse/pil4dfs the receiver creates $CONT as a POSIX container, mounts it, checks the
@@ -71,12 +73,12 @@ fi
 TAG=${1:-}; shift || true
 [ -n "$TAG" ] && [[ "$ROLE" =~ ^(send|recv)$ ]] || usage
 
-MODE=lb SEGS=4 SOCKETS=2 EVENTS=100000 FRAMES=1 RATE=-1 THREADS=32 POOLSZ=64 SINK=kv DEQ=
-while getopts "m:P:s:n:f:r:T:S:D:" o; do
+MODE=lb SEGS=4 SOCKETS=2 EVENTS=100000 FRAMES=1 RATE=-1 THREADS=32 DEQ= INFLIGHT=128 POOLSZ=64 SINK=kv
+while getopts "m:P:s:n:f:r:T:D:I:S:" o; do
     case $o in
         m) MODE=$OPTARG ;; P) SEGS=$OPTARG ;; s) SOCKETS=$OPTARG ;; n) EVENTS=$OPTARG ;;
-        f) FRAMES=$OPTARG ;; r) RATE=$OPTARG ;; T) THREADS=$OPTARG ;; S) SINK=$OPTARG ;;
-        D) DEQ=$OPTARG ;; *) usage ;;
+        f) FRAMES=$OPTARG ;; r) RATE=$OPTARG ;; T) THREADS=$OPTARG ;;
+        D) DEQ=$OPTARG ;; I) INFLIGHT=$OPTARG ;; S) SINK=$OPTARG ;; *) usage ;;
     esac
 done
 case $SINK in
@@ -114,14 +116,14 @@ fi
 # ---------------------------------------------------------------- receiver
 ss -uan | grep -q ":$PORT\b" && die "UDP port $PORT is in use (ss -uanp); someone else may be testing"
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
-SINKARGS=(--pool "$POOL" --cont "$CONT" --deq "$DEQ" --inflight 128) PRELOAD=()
+SINKARGS=(--pool "$POOL" --cont "$CONT" --deq "$DEQ" --inflight "$INFLIGHT") PRELOAD=()
 if [ "$SINK" != kv ]; then
     mountpoint -q "$MNT" && die "$MNT is already mounted (e2sar_e2e_bench.sh clean)"
     daos cont create "$POOL" "$CONT" --type POSIX > /dev/null || die "cannot create POSIX container $POOL/$CONT"
     mkdir -p "$MNT"
     # shellcheck disable=SC2086  # DFUSE_OPTS is a list of options
     dfuse $DFUSE_OPTS "$MNT" "$POOL" "$CONT" || die "dfuse mount of $POOL/$CONT on $MNT failed"
-    SINKARGS=(--dfuse "$MNT" --deq "$DEQ")
+    SINKARGS=(--dfuse "$MNT" --deq "$DEQ") INFLIGHT=   # blocking writes: no in-flight puts
     # shellcheck disable=SC2206  # PIL4DFS_ENV is a list of VAR=value
     [ "$SINK" = pil4dfs ] && PRELOAD=(LD_PRELOAD="$PIL4DFS" $PIL4DFS_ENV)
 fi
@@ -177,7 +179,7 @@ unmount; trap - EXIT
 GP=$(grep -oP 'Sender goodput:\s+\K[0-9.]+' "$D/send.log")
 R=$(python3 -I "$HERE/e2sar_e2e_analyze.py" "$D" --pool "$S_pool" --expected "$S_events" --set \
     tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" frames_per_event="$S_frames" \
-    rate="$S_rate" recv_threads="$THREADS" sink="$SINK" deq_threads="$DEQ" \
+    rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" sink="$SINK" \
     dfuse_opts="$([ "$SINK" = kv ] || echo "${DFUSE_OPTS// /_}")" \
     sender_goodput_gbps="${GP:-0}" rx_discards_phy="$DISC" \
     rx_out_of_buffer="$OOB" udp_rcvbuf_errors="${RCVBUF:-0}" 2> "$D/summary.txt")

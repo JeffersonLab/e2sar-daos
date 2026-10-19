@@ -28,7 +28,8 @@ The bench script adds two receiver options:
 | Option | Meaning |
 |---|---|
 | `-S kv\|dfuse\|pil4dfs` | Sink. Default `kv` |
-| `-D N` | Dequeue (writer) threads. Default 4 for `kv`, 16 for `dfuse`/`pil4dfs` |
+| `-D N` | Dequeue threads (`e2sar_daos_recv --deq`), the same option as for the kv sink. For `dfuse`/`pil4dfs` each one is a blocking file writer, and the default is 16 instead of 4 |
+| `-I N` | In-flight puts per dequeue thread (`--inflight`), kv only. Default 128 |
 
 For `dfuse` and `pil4dfs`, the receiver creates `$CONT` as a POSIX container, mounts it at `$MNT`, and starts `e2sar_daos_recv --dfuse $MNT`.
 After the run it checks every file with `sha256sum` against the sender's digests, then unmounts and destroys the container. This also happens if the run fails.
@@ -100,7 +101,7 @@ $B send $TAG -m b2b -P 1 -s 1 -n 300 -f 4096 -r 2
 
 The receiver prints a summary and exits 0 on PASS:
 ```
-dfsmoke_dfuse_1792444835 PASS  mode=b2b P=1 s=1 f=4096 rate=2 T=1 sink=dfuse D=16  committed 300/300, verified 300
+dfsmoke_dfuse_1792444835 PASS  mode=b2b P=1 s=1 f=4096 rate=2 T=1 D=16 sink=dfuse  committed 300/300, verified 300
   received 2.04 Gbps (168 evt/s, 1521898 B/event)  e2e 2.00 Gbps  sender 2.00 Gbps
   ...
   latency daos     p50     9.138  p90    28.656  p99    53.733  max 82.778 ms
@@ -124,7 +125,7 @@ for S in kv dfuse pil4dfs; do for R in 5 10 20 30; do
 done; done
 ```
 `-r` is the total sender rate in Gbps. Each run sends 4 × 2500 = 10,000 events of about 1.5 MB (15 GB).
-Use `-D` to change the number of writer threads (for example `-D 32`), and `DFUSE_OPTS` to try other dfuse settings. Both are recorded in each run's JSON line.
+Use `-D` to change the number of dequeue (writer) threads (for example `-D 32`), and `DFUSE_OPTS` to try other dfuse settings. Both are recorded in each run's JSON line.
 
 Results go to `$RUN/bench/<TAG>/` (logs, `timing.csv`, `fetch.txt`, `result.json`) and one JSON line per run to `$RUN/bench/results.jsonl`. To compare sinks:
 ```bash
@@ -132,7 +133,7 @@ python3 - <<'EOF'
 import json, os
 for l in open(os.path.expanduser("~/e2sar_run/dfuse/bench/results.jsonl")):
     r = json.loads(l)
-    print(f"{r['tag']:36s} {r['result']} sink={r.get('sink','kv'):8s} D={r.get('deq_threads')} "
+    print(f"{r['tag']:36s} {r['result']} sink={r.get('sink','kv'):8s} D={r.get('deq')} "
           f"rate={r['rate']} received={r.get('received_gbps',0):6.2f} Gbps "
           f"commit p50={r.get('latency_ms',{}).get('daos',{}).get('p50')} ms")
 EOF
