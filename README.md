@@ -15,7 +15,7 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
 ### Prerequisites
 - A C++17 compiler (e.g. GCC 11).
 - DAOS client and headers: `sudo dnf install daos-client daos-devel` (installs `/usr/include/daos*.h` and `/usr/lib64/libdaos.so`, `libdfs.so`).
-- Boost `unit_test_framework` (only for tests; `-Dbuildtest=false` to skip).
+- Boost `program_options`, `log`, `log_setup`, `thread`, `filesystem`, `chrono`, `url`, plus `unit_test_framework` for tests (`-Dbuildtest=false` to skip). Use the Boost bundled with E2SAR, not the system one (see below).
 - An installed [E2SAR](https://github.com/JeffersonLab/E2SAR) with its `e2sar.pc`.
 - Meson and Ninja. Without root, install into `~/.local/bin`:
     ```bash
@@ -23,7 +23,7 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
     export PATH="$HOME/.local/bin:$PATH"   # add to ~/.bashrc
     ```
 
-### Point pkg-config to E2SAR
+### Point pkg-config and Meson to E2SAR
 If E2SAR was installed with a staging root (e.g. `DESTDIR=~/opt/e2sar`, so the `*.pc` files still say `prefix=/usr/local`), set both the search path and the sysroot to the staging root itself, not to `$E2SAR_ROOT/usr/local`:
 ```bash
 E2SAR_ROOT=$HOME/opt/e2sar
@@ -33,6 +33,14 @@ pkg-config --modversion e2sar   # sanity check
 pkg-config --libs e2sar         # confirm it resolves to $E2SAR_ROOT/usr/local/lib* and not /usr/lib64
 ```
 If E2SAR was installed directly to its prefix, only `PKG_CONFIG_PATH` is needed.
+
+`libe2sar` is linked against the Boost installed with E2SAR. Meson's Boost lookup does not use pkg-config, so without `BOOST_ROOT` it picks up the system Boost (e.g. `/usr/include/boost`), which may be a different version or ABI. Set `BOOST_ROOT` to the E2SAR install prefix before `meson setup`:
+```bash
+export BOOST_ROOT=$E2SAR_ROOT/usr/local    # staging root, as above
+# export BOOST_ROOT=/usr/local             # E2SAR installed directly to its prefix (e.g. the RPM)
+export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH   # to run the binaries and tests
+```
+`meson setup` prints `Boost version: ...` in the test section; it should match E2SAR's Boost. After changing `BOOST_ROOT`, reconfigure with `meson setup --wipe build`.
 
 If the link fails with undefined references such as `grpc::experimental::NoOpCertificateVerifier` or `grpc::experimental::TlsCredentialsOptions`, the wrong E2SAR gRPC ABI is being selected. In that case, make sure `pkg-config --libs e2sar` shows the E2SAR install under `$E2SAR_ROOT`, not a system `/usr/lib64` install, and rebuild from a fresh `meson setup --wipe build`.
 
@@ -52,7 +60,7 @@ meson compile -C build
 meson configure build -Dbuildtest=false
 meson configure build -Dbuildtest=true
 
-# Reconfigure from scratch (e.g. after changing PKG_CONFIG_PATH or dependencies)
+# Reconfigure from scratch (e.g. after changing PKG_CONFIG_PATH, BOOST_ROOT or dependencies)
 meson setup --wipe build
 
 # Show current build options
