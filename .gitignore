@@ -40,6 +40,7 @@ containers/rocky-dev/certs/*.pem
 
 # build
 build/
+__pycache__/
 
 # Local CA certificates for container builds
 containers/rocky-dev/certs/*.crt

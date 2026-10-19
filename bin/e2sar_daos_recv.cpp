@@ -64,6 +64,9 @@ struct Stats {
 // All timestamps are nanoseconds since program start (steady clock).
 using Clock = std::chrono::steady_clock;
 const Clock::time_point tStart = Clock::now();
+// The same instant on the system clock, so CSV times can be matched with other hosts.
+const int64_t tStartEpochNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
 
 int64_t sinceStartNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - tStart).count();
@@ -465,6 +468,7 @@ int main(int argc, char** argv) {
     signal(SIGTERM, onSignal);
 
     std::cout << "E2SAR version:        " << get_Version() << std::endl
+              << "Clock start:          " << tStartEpochNs << " ns since epoch (--timing-csv times are relative to it)" << std::endl
               << "DAOS version:         " << DAOS_VERSION_MAJOR << "." << DAOS_VERSION_MINOR << "."
               << DAOS_VERSION_FIX << std::endl;
 

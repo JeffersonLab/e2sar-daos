@@ -48,6 +48,12 @@ if libcrypto_app_dep.found()
         dependencies: [e2sar_daos_dep, app_boost_dep, libcrypto_app_dep],
         install: true
     )
+    # Synthetic EVIO time-frame sender for end-to-end tests (see docs/E2E_BENCHMARK.md).
+    executable('e2sar_evio_send', 'e2sar_evio_send.cpp',
+        dependencies: [e2sar_dep, app_boost_dep, e2sar_boost_dep, boost_url_dep, libcrypto_app_dep,
+                       grpc_link_deps, dependency('threads')],
+        install: true
+    )
 else
-    message('libcrypto (openssl-devel) not found, skipping e2sar_daos_read')
+    message('libcrypto (openssl-devel) not found, skipping e2sar_daos_read and e2sar_evio_send')
 endif
