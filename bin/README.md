@@ -170,7 +170,7 @@ Stop the receiver with Ctrl-C once the sender finishes. Then check the data on a
 ./build/bin/e2sar_daos_read --prefix run42 --fetch -o ~/restored   # run42_<evt>_<dataId>.evio
 ```
 
-The restored `.evio` files open directly in an EVIO viewer, e.g. evio-interactive-view: `python serve.py ~/restored`.
+The restored files are ordinary EVIO files. To open them on a remote node, see [Viewing the restored files](#viewing-the-restored-files).
 
 `e2sar_ft` sends the files of a run as events 0, 1, 2, ... in traversal order. With more than one enqueue thread (`--enq`), the order is not guaranteed. So compare digests as sets, not line by line:
 
@@ -187,3 +187,23 @@ daos cont destroy sc26 e2sar           # the run's event data; only if the conta
 rm -rf /path/to/staged/copies          # sender: only copies made for the test, never the original data
 ```
 `daos cont destroy` removes every prefix in the container. If the container is shared with data you want to keep, use a separate container for tests (`--cont e2sar-test`) and destroy that one instead.
+
+## Viewing the restored files
+
+The restored `.evio` files are ordinary EVIO files, so any EVIO viewer opens them. They are on the node where `e2sar_daos_read -o` ran, usually a remote DAOS client. To browse them from your laptop, run the [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) web viewer on that node and forward its port over SSH. See its README for setup (a Python venv with `pip install -r requirements.txt`).
+
+```bash
+# on the DAOS client node, in the evio-interactive-view checkout
+python serve.py ~/restored --no-browser
+# on your laptop
+ssh -L 8765:localhost:8765 user@daos-client
+```
+
+Then open http://localhost:8765 on your laptop and click a `run42_<evt>_<dataId>.evio` file in the folder browser.
+
+- **Another port:** if port 8765 is taken on the node, start with `--port 9000` and forward `-L 8765:localhost:9000`.
+- **Tunnel only:** the server listens on 127.0.0.1 only, so the SSH tunnel is the only way to reach it.
+- **The file is sent to your laptop:** decoding runs in the browser, so the whole file goes through the tunnel.
+- **Size limit:** files must be smaller than 2 GiB. Split larger events with its `evio_split.py` first.
+
+Delete the restored files when you are done (see the cleanup above).
