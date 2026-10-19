@@ -54,6 +54,7 @@ install_headers(
     'include/e2sar_daos/daos_handles.hpp',
     'include/e2sar_daos/async_kv_writer.hpp',
     'include/e2sar_daos/event_layout.hpp',
+    'include/e2sar_daos/latency_histogram.hpp',
     subdir: 'e2sar_daos'
 )
 
