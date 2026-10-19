@@ -18,7 +18,7 @@ e2sar_ft -s --withcp ──UDP──▶ data 192.188.29.16:16384-32767 ──UDP
 |---|---|---|
 | [1](#1-environment-bashrc-once) | either (shared `$HOME`) | Put the E2SAR environment and LB URIs in `~/.bashrc` |
 | [2](#2-build-once) | either | Build e2sar-daos |
-| [3](#3-lb-reservation-and-uri) | either | Get an LB instance URI, or reserve one |
+| [3](#3-the-lb-with-lbadm-reservation-senders-workers) | either | Reserve an LB (or reuse one), inspect it, and add or remove senders and workers |
 | [4](#4-pre-flight-checks-before-each-run) | both | Check the LB path and state, and that nobody else is using the nodes |
 | [5](#5-stage-source-files-ebpf2201) | ebpf2201 | Copy the source files to `/scratch` and save digests |
 | [6](#6-start-the-receiver-ebpf2203) | ebpf2203 | Start the receiver; it registers with the LB |
@@ -38,7 +38,7 @@ Node facts:
 
 - `$HOME` (`/testbed/home/<user>`) is NFS, shared by both nodes, so `~/.bashrc`, the build and `~/e2sar_run` are the same on both. `/scratch/<user>` is local to each node.
 - The nodes can't SSH to each other without a password. Run each step in the terminal for its node.
-- ebpf2203 also has an e2sar 0.3.1 RPM in `/usr/local/bin`. Always call the 0.4.0rc1 tools as `$E2SAR_BIN/...`.
+- E2SAR 0.4.0rc1 is staged in `$HOME/opt/e2sar`, not installed system-wide, so it isn't on `PATH`. Call the tools as `$E2SAR_BIN/...`.
 - Other people run tests on these nodes. Before every run, check that both nodes are idle (step 4).
 
 ## 1. Environment: `~/.bashrc` (once)
@@ -53,7 +53,7 @@ export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/loc
 export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
 export BOOST_ROOT=$E2SAR_ROOT/usr/local
 export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
-export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin   # call tools by full path; ebpf2203 also has e2sar 0.3.1 in /usr/local/bin
+export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin   # not on PATH; call the tools as $E2SAR_BIN/<tool>
 
 ## ESnet EJFAT LB (secrets: keep this file private, never copy into git)
 export LBTOKEN=<instance token>                                       # instance token for LB <id>
@@ -75,7 +75,11 @@ export RUN=$HOME/e2sar_run             # shared: digests and logs
 mkdir -p $RUN
 ```
 
-`EJFAT_URI` is now the LB instance URI in every bash shell. The back-to-back procedure sets its own `EJFAT_URI`, which overrides it for that shell.
+`EJFAT_URI` is now the LB instance URI in every bash shell. Check it before using the LB. The command prints only the part after the token:
+```bash
+echo "$EJFAT_URI" | cut -d@ -f2        # expect: ejfat-lb.es.net:18008/lb/<id>?sync=...
+```
+The back-to-back procedure exports a placeholder, `ejfat://useless@10.10.10.10:1234/lb/1?data=...`, which overrides it for that shell. With the placeholder set, `lbadm --status` fails with `failed to connect ... 10.10.10.10:1234`. Use a separate shell for LB tests, or run `source ~/.bashrc` again.
 Scripts run as `bash -s` or `bash script.sh` don't read `~/.bashrc`. Start them with `source ~/.bashrc`.
 
 ## 2. Build (once)
@@ -89,27 +93,140 @@ meson test -C build --suite unit           # Ok: 3, Fail: 0
 ./build/bin/e2sar_daos_recv --help | grep withcp     # -c [ --withcp ] enable control plane interactions
 ```
 
-## 3. LB reservation and URI
+## 3. The LB with `lbadm`: reservation, senders, workers
 
-There are two kinds of URI. Both live only in `~/.bashrc`.
+An LB test goes through this life cycle:
 
-- **Admin URI** (`$EJFAT_ADMIN_URI`), `ejfats://<admin token>@ejfat-lb.es.net:18008/lb/0`. Only for `lbadm --reserve`, `--free`, `--overview` and token management. The apps don't need it.
-- **Instance URI** (`$EJFAT_URI`), which identifies one reserved LB. It carries the instance token, the LB id, the sync addresses and the data address range.
-
-The apps and `lbadm --status` read `$EJFAT_URI`.
-In the back-to-back case the URI needs `data=<ip>:<port>`, but here keep the `data=` range exactly as the LB gives it. The LB picks the worker port from what the receiver registers.
-
-**If you already have an instance** (LB 638 was already reserved for these tests), check it and go to step 4:
-```bash
-$E2SAR_BIN/lbadm --status | head -4        # LB ID: 638, LB details: expiresat=...
+```
+reserve instance ─▶ allow senders ─▶ register worker(s) ─▶ send ─▶ deregister worker(s) ─▶ remove senders ─▶ free instance
+   (3.3, once)        (3.4)              (3.5)              (7)         (3.5)                  (3.4)          (3.3, at the end)
 ```
 
-**To reserve a new instance** (not run in these tests), use the admin URI. `-a` adds sender IPs to the allowlist, `-d` sets the duration, and `-e` prints the `export EJFAT_URI=...` line for the new instance, which goes into `~/.bashrc`:
+With `--withcp`, the apps do the middle steps themselves. `e2sar_daos_recv` registers and deregisters its worker, and `e2sar_ft` adds and removes its sender IP. So a normal run (steps 6–8) only needs an instance URI.
+The `lbadm` commands below do each step by hand: to inspect the LB, to prepare it for a sender that doesn't use `--withcp`, or to clean up after a crash.
+`lbadm` reads `$EJFAT_URI` unless `-u <uri>` is given. Run it in bash after `source ~/.bashrc`.
+
+### 3.1 Tokens and URIs
+
+Both URIs live only in `~/.bashrc` (step 1).
+
+| URI | Token | Used for |
+|---|---|---|
+| **Admin** `$EJFAT_ADMIN_URI`, `ejfats://<admin token>@ejfat-lb.es.net:18008/lb/0` | admin (`ALL` or `LOAD_BALANCER`) | `--reserve`, `--overview` and token management. The apps don't need it |
+| **Instance** `$EJFAT_URI`, `ejfats://<instance token>@ejfat-lb.es.net:18008/lb/<id>?sync=...&data=...` | reservation, for one LB | `--status`, `--addsenders`, `--removesenders`, `--register`, `--deregister`, `--free`, and both apps |
+| Session | issued to one worker by `--register` | That worker's `--state` and `--deregister`. With `-s <session id>`, the instance URI works for both |
+
+In the back-to-back case the URI needs `data=<ip>:<port>`. Here, keep the `data=` range exactly as the LB returns it. The LB picks the worker port from what the receiver registers.
+
+### 3.2 Inspect the LB
+
+```bash
+$E2SAR_BIN/lbadm --status                            # this instance ($EJFAT_URI)
+$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --overview    # every LB on ejfat-lb.es.net
+```
+
+`--status` prints:
+```
+   LB ID: 638
+LB details: expiresat=2027-10-14T18:59:08.626Z, currentepoch=1748628, predictedeventnum=...
+Registered senders: 129.57.69.58 129.57.69.28 ...
+Registered workers:
+[ name=ebpf2203.jlab.org, controlsignal=..., fillpercent=..., slotsassigned=512, lastupdated=..., IP Address=129.57.178.86, UDP Port=20600, ... ]
+```
+- `Registered senders` is the allowlist. The LB drops data from any source IP that isn't on it.
+- `Registered workers` lists the receivers that get events, one line each. Nothing after the colon means no workers.
+- Neither command shows a worker's session ID. Only the process that registered the worker knows it (3.5).
+
+### 3.3 Reserve an instance (or reuse one)
+
+**If you already have an instance** (LB 638 was reserved for these tests), check that it hasn't expired and go to 3.4:
+```bash
+$E2SAR_BIN/lbadm --status | grep -E 'LB ID|expiresat'
+```
+
+**To reserve a new instance** (not done in these tests), use the admin URI:
 ```bash
 $E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --reserve -l <name> -a 129.57.178.85 -d 24:00:00 -e
+# export EJFAT_URI='ejfats://<new instance token>@ejfat-lb.es.net:18008/lb/<id>?sync=...&data=...'
 ```
-When you are done with your own reservation, free it with `lbadm --free`, using the instance URI.
-Never free an instance that someone else reserved.
+- `-l` is a name of your choice. It shows up in `--overview`.
+- `-a` puts sender IPs on the allowlist at once. Repeat it for several senders, or leave it out and use 3.4 later.
+- `-d hh:mm:ss` is how long the reservation lasts. It ends at `expiresat`.
+- `-e` prints only the `export EJFAT_URI=...` line. Without `-e`, the same URI is printed as `Updated URI after reserve with instance token: ...`.
+
+Copy the printed URI into `~/.bashrc` as `EJFAT_URI`, replacing the old one, then `source ~/.bashrc` in every terminal and check with `lbadm --status`.
+The instance token in that URI is the only way to manage the reservation, and the LB doesn't show it again. Don't lose it, and don't put it in git.
+
+**When your tests are over**, free your instance. This removes every sender and worker on it:
+```bash
+$E2SAR_BIN/lbadm --free                              # uses the instance token in $EJFAT_URI
+```
+Never free an instance that someone else reserved, LB 638 included, unless its owner asks you to.
+
+### 3.4 Senders: the allowlist
+
+**Automatic (normal case).** `e2sar_ft --withcp --ip <addr>` adds `<addr>` when it starts and removes it when it exits (step 7). Nothing else is needed.
+
+**By hand,** for a sender that doesn't use `--withcp` (`e2sar_ft` without it, `e2sar_perf`, CODA, ...), or for one that should stay allowed between runs:
+```bash
+$E2SAR_BIN/lbadm --addsenders -a 129.57.178.85                     # repeat -a for more IPs
+$E2SAR_BIN/lbadm --status | grep 'Registered senders'              # check
+$E2SAR_BIN/lbadm --removesenders -a 129.57.178.85                  # when done
+```
+- Without `-a`, `lbadm` uses the address of the interface it would use to reach the LB. Pass `-a` explicitly. Use the address from `ip route get 192.188.29.16` (step 4), the one the data actually leaves from.
+- Remove only the IPs you added. LB 638 also lists JLab and NERSC senders that belong to other people.
+- If a `--withcp` sender was killed before it could clean up, its IP stays on the list. Remove it with `--removesenders -a <ip>`.
+
+### 3.5 Workers: the receivers
+
+**Automatic (normal case).** `e2sar_daos_recv --withcp` registers a worker under its hostname, with `--ip`, `--port` and the number of ports from `--threads`. It then sends a state update every few seconds and deregisters on Ctrl-C (steps 6 and 8).
+The LB assigns slots once the first state update arrives. Before sending, wait until `--status` shows `slotsassigned` above 0.
+
+**By hand,** for example to test the LB path with a plain UDP listener, no root needed:
+```bash
+# ebpf2203: register a probe worker on port 20650 (outside 20600-20639)
+$E2SAR_BIN/lbadm --register -n probe-$USER -a 129.57.178.86 -p 20650 -w 1 -c 1
+#   Success.
+#   Session id is: <SID>                 <- write it down; nothing else will show it
+SID=<SID>
+
+# keep it alive: a state update at least every 10 s, or the LB drops the worker
+while :; do $E2SAR_BIN/lbadm --state -s $SID -q 0 -t 0 -r 1 > /dev/null; sleep 2; done &
+STATE_PID=$!
+
+$E2SAR_BIN/lbadm --status | grep probe-$USER        # slotsassigned > 0 after a few seconds
+python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("129.57.178.86", 20650)); print(s.recvfrom(9000)[1])'
+
+# remove it
+kill $STATE_PID
+$E2SAR_BIN/lbadm --deregister -s $SID              # the instance URI, plus -s; not a /lb/<SID> URI
+```
+- `--register` options: `-n` worker name, `-a` receive IP (without it, auto-detected), `-p` first UDP port, `-c` number of ports (a power of 2; the ports are `-p` to `-p`+`-c`−1), `-w` weight relative to other workers.
+- `--state` options: `-q` queue fill (0–1), `-t` control signal, `-r 1` ready or `-r 0` not ready (no new events). The first update must arrive within 10 s of registering.
+- While the probe is registered, it gets events from every allowlisted sender on the LB, other people's included. Keep it short.
+
+**Removing a worker you didn't register by hand.** The LB keeps a worker only while it sends state updates:
+1. If its process is still running, stop it with Ctrl-C. It deregisters itself.
+2. If the process crashed or was killed (`kill -9`, lost terminal), the state updates stop and the LB drops the worker after about 10 s.
+3. If you have its session ID (from `lbadm --register` output; `e2sar_daos_recv` doesn't print it), run `lbadm --deregister -s <SID>` to remove it immediately.
+
+Check with `lbadm --status` that `Registered workers:` is empty. A worker that stays on the list without a running process is somebody else's: leave it, or ask its owner.
+
+### 3.6 Summary: the whole flow by hand
+
+```bash
+# once, admin: reserve, then put the printed URI in ~/.bashrc and source it
+$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --reserve -l <name> -d 24:00:00 -e
+# per run
+$E2SAR_BIN/lbadm --status                                   # 1. empty worker list (step 4)
+#   ebpf2203: e2sar_daos_recv --withcp ...                  # 2. registers the worker (step 6)
+$E2SAR_BIN/lbadm --status | grep slotsassigned              # 3. slots > 0
+#   ebpf2201: e2sar_ft -s --withcp --ip 129.57.178.85 ...   # 4. adds sender, sends, removes sender (step 7)
+#   ebpf2203: Ctrl-C                                        # 5. deregisters the worker (step 8)
+$E2SAR_BIN/lbadm --status                                   # 6. no workers; same senders as in 1
+# once, at the very end, your own instance only
+$E2SAR_BIN/lbadm --free
+```
 
 ## 4. Pre-flight checks (before each run)
 
@@ -384,6 +501,9 @@ Rows marked † happened in these runs. The others are what to check first, base
 | Receiver runs, but `lbadm --status` lists no worker | It was started without `--withcp`, or it exited. Read its output |
 | Worker listed with `slotsassigned=0` | The LB hasn't recomputed the schedule yet. Wait a few seconds before sending |
 | Sender shows `0 errors`, but the receiver gets nothing | The sender's `--ip` isn't the address the packets leave from, so the LB drops them. Check `ip route get 192.188.29.16`. Also check that inbound UDP to the receiver ports isn't firewalled |
+| `lbadm --status`: `failed to connect to all addresses ... 10.10.10.10:1234` | The shell still has the back-to-back placeholder `EJFAT_URI`. Run `source ~/.bashrc` or open a new bash |
+| `lbadm --overview`: `Error in parsing URI from command-line` | `$EJFAT_ADMIN_URI` is empty in this shell. Run `source ~/.bashrc` |
+| A worker stays in `--status` after its receiver was killed | Wait about 10 s for the LB to drop it, or `lbadm --deregister -s <SID>` if you have the session ID (3.5) |
 | `e2sar_ft` or `lbadm` can't find libraries, or `EJFAT_URI` is empty | The shell didn't read `~/.bashrc`: tcsh, or a `bash -s` script. Run `bash`, or `source ~/.bashrc` |
 | Large file missing, `Lost in reassembly: 1`, no drops anywhere | The event wasn't complete within `--timeout`. Use `--timeout 10000`, `--mtu 9000` and no `--smooth` |
 | gRPC or certificate errors | The URI must be `ejfats://` with the hostname. Use `-v` (`--novalidate`) only if the CA isn't installed |

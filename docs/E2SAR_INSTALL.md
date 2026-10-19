@@ -56,7 +56,7 @@ export LD_LIBRARY_PATH=/usr/local/lib64:/usr/local/lib:$LD_LIBRARY_PATH
 This is what [containers/rocky-dev/Dockerfile](../containers/rocky-dev/Dockerfile) does. To change the version there, use `--build-arg E2SAR_VERSION=<ver> --build-arg ROCKY_VERSION=<9.x>`.
 
 A system-wide install replaces any older E2SAR in `/usr/local` for every user on the node.
-ebpf2203, for example, has the 0.3.1 RPM there. Don't upgrade a shared node without asking its admins. Use section B instead.
+Don't upgrade a shared node without asking its admins. Use section B instead.
 
 ## B. Without root: extract into your home (used on the testbed)
 
@@ -95,7 +95,7 @@ pkg-config --modversion e2sar                 # 0.4.0rc1
 pkg-config --libs e2sar                       # paths under $E2SAR_ROOT/usr/local, not /usr/lib64
 ```
 
-Always call the tools by full path (`$E2SAR_BIN/e2sar_ft`). If an older E2SAR is also in `/usr/local/bin` (ebpf2203 has 0.3.1), a bare `e2sar_ft` runs that one instead.
+Always call the tools by full path (`$E2SAR_BIN/e2sar_ft`). If an older E2SAR is ever installed in `/usr/local/bin`, a bare `e2sar_ft` runs that one instead.
 
 If you have an LB instance URI (see [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md)), check the control plane too:
 ```bash
