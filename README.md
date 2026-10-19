@@ -16,7 +16,7 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
 - A C++17 compiler (e.g. GCC 11).
 - DAOS client and headers: `sudo dnf install daos-client daos-devel` (installs `/usr/include/daos*.h` and `/usr/lib64/libdaos.so`, `libdfs.so`).
 - Boost `program_options`, `log`, `log_setup`, `thread`, `filesystem`, `chrono`, `url`, plus `unit_test_framework` for tests (`-Dbuildtest=false` to skip). Use the Boost bundled with E2SAR, not the system one (see below).
-- An installed [E2SAR](https://github.com/JeffersonLab/E2SAR) with its `e2sar.pc`.
+- An installed [E2SAR](https://github.com/JeffersonLab/E2SAR) with its `e2sar.pc`. To install the latest GitHub release, with or without root, see [docs/E2SAR_INSTALL.md](docs/E2SAR_INSTALL.md).
 - Meson and Ninja. Without root, install into `~/.local/bin`:
     ```bash
     python3 -m pip install --user meson ninja
