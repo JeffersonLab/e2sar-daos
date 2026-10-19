@@ -15,6 +15,7 @@ For how to run the tests, see [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 | NIC receive ring | Part of the loss, not the root cause | At ring 1024, 4–8 senders lost frames to `rx_out_of_buffer`. At 8192 those drops mostly went away, but events were still lost (table 8) |
 | **Receiving NIC port, no end-to-end flow control** | **The remaining limit at 4+ senders** | Every failed run in table 8 had 11–1,229 `rx_discards_phy` drops. ebpf2203 has sent pause frames, but ebpf2201 has received none: the switch doesn't push back to the sender. At ~1 frame in 27,000 lost, a 240k-frame event almost never survives |
 | Receive-thread CPU placement | Not the cause | Pinning receive threads to CPUs 64+, away from the NIC's interrupt cores, changed nothing (table 8) |
+| Through the ESnet LB (one `e2sar_ft`, N files, `--threads 16–32`) | **Same ~25 Gbps ceiling** | The LB spreads events over the worker's ports by random entropy, so the multi-thread Segmenter works without N processes. 2 events (11.5 Gbps) clean in 3 of 3 runs. 3 events (25.8 Gbps) clean in 2 of 4, and every failure had `rx_discards_phy` > 0. See [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md#11-highest-lossless-throughput) |
 | NFS source read | **2.2 Gbps when not cached** | Copying 33 GB uncached took 124 s. Stage the source on `/scratch` |
 | Network | Not the bottleneck | 100 Gb/s link. 88 Gbps went out with no sender errors |
 | DAOS KV writes | **Not the bottleneck up to at least ~48 Gbps** | `Lost in enqueue` was 0 in every run. Four ~2.1 GiB events (8.6 GB) committed and read back with matching digests (table 7) |
@@ -25,12 +26,29 @@ For how to run the tests, see [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 - **Payload:** for tables 1–5, `frames_thread0_file0020.evio` (1,776,313,996 bytes) and a 3.5 MB random file. For tables 6–7, up to 16 files of about 2.1 GiB each (`frames_thread0_file0000`–`0015.evio`). `e2sar_ft` sends each file as one event.
 - **Receiver:** `e2sar_daos_recv --timeout 10000`, 1 MiB KV chunks. Tables 1–5 use 1 dequeue thread with 64 in-flight puts. Tables 6–7 use 4 × 128.
 - **Cleanup:** after each run the receiver's restored files and the DAOS container `e2sar-test` were deleted, and after each sweep the sender's `/scratch` source copies.
-- **Metrics:**
-  - *sender goodput*: `e2sar_ft`'s own estimate for the whole run.
-  - *ingest*: the receiver's rate from the first event received to the last.
-  - *DAOS commit*: the rate from the first event received to the last event committed.
-  - *`RcvbufErrors`*: the kernel UDP counter on the receiver, taken from `/proc/net/snmp` before and after each run.
-  - *NIC drops*: `rx_out_of_buffer` and `rx_discards_phy` from `ethtool -S enp1s0f1np1`, before and after (tables 7–8).
+- **Metrics:** see [Throughput metrics](#throughput-metrics) below.
+
+## Throughput metrics
+
+These definitions apply to every results table in this directory. All rates are in Gbps (10⁹ bit/s) of **payload**, meaning the file bytes. E2SAR, LB, UDP and IP headers aren't counted.
+
+| Metric | Printed by | Formula | What it tells you |
+|---|---|---|---|
+| **Sender goodput** | `e2sar_ft`: `Estimated goodput (Gbps)` | Total size of the files queued × 8 / *send time*. Send time runs from just before the first file is queued until every file has been read and segmented and the send threads have stopped (`bin/e2sar_ft.cpp`) | How fast the sender pushed data out, including reading the files. It's measured only on the sender, so it says nothing about whether the packets arrived. With `--withcp`, the LB registration at startup is outside this window |
+| **Ingest** | `e2sar_daos_recv`: `Ingest throughput` | Bytes of all fully reassembled events × 8 / *receive window*. The receive window runs from when the Reassembler hands over the first complete event to when it hands over the last one | What the network plus reassembly delivered to the application |
+| **DAOS commit** | `e2sar_daos_recv`: `DAOS commit throughput` | Bytes committed × 8 / *commit window*. The commit window runs from the first event handed over until the last event's metadata key is committed | Data safely stored in DAOS. If it's close to ingest, DAOS kept up |
+
+Caveats on the receiver metrics:
+- Both windows start when the first event is *complete*, so that event's own transfer time isn't counted, but its bytes are. With few events, both rates come out too high.
+- With one event the receive window is 0, and ingest prints `n/a`. The commit window then covers only the DAOS write tail, so DAOS commit is meaningless. For example, a single 2.1 GB event showed "120 Gbps".
+- When several events finish at nearly the same time, as with parallel senders, the windows are tiny and the rates come out far too high (tables 6–7).
+- For a fair comparison, send tens of events per run, or use an **end-to-end** rate: total bytes × 8 / (sender start → last commit). This needs synchronized clocks. On the ebpf nodes chrony keeps them within ~20 µs. That interval also includes `e2sar_ft` startup and, with `--withcp`, the LB control-plane calls (~1 s over the WAN).
+
+Loss counters, read before and after each run:
+- *`Lost in reassembly`*: events the receiver started but couldn't complete within `--timeout`. Any single lost packet loses the whole event. An event whose packets *all* went missing isn't counted here. It's simply absent from `Events committed`.
+- *`UdpRcvbufErrors`*: kernel UDP socket overflow on the receiver (`nstat`, or `/proc/net/snmp`).
+- *NIC drops*: `rx_out_of_buffer` (RX ring full) and `rx_discards_phy` (NIC port buffer) from `ethtool -S enp1s0f1np1`.
+  These counters cover all traffic on the NIC, including other users' tests, so read them only when the nodes are otherwise idle.
 
 ## Measurements
 

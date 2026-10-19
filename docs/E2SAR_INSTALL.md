@@ -97,7 +97,7 @@ pkg-config --libs e2sar                       # paths under $E2SAR_ROOT/usr/loca
 
 Always call the tools by full path (`$E2SAR_BIN/e2sar_ft`). If an older E2SAR is also in `/usr/local/bin` (ebpf2203 has 0.3.1), a bare `e2sar_ft` runs that one instead.
 
-If you have an LB instance URI (see [EJFAT_LB_TESTING.md](EJFAT_LB_TESTING.md)), check the control plane too:
+If you have an LB instance URI (see [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md)), check the control plane too:
 ```bash
 $E2SAR_BIN/lbadm --status                     # LB ID, registered senders and workers
 ```

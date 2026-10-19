@@ -4,7 +4,7 @@ This is the procedure for testing `e2sar_ft` → `e2sar_daos_recv` → DAOS → 
 Both nodes are DAOS clients of pool `sc26`, so either one can be the receiver. The steps use ebpf2201 as the sender and ebpf2203 as the receiver, and step 6 shows the reverse.
 Every run uses **MTU 9000**. The sender reads from local `/scratch/<user>`, and the receiver restores into local `/scratch/<user>`.
 Last run on 2026-10-19 against PR #11 (`feature/daos-kv-recv-apps`). Settings that differ from [TESTING.md §4](TESTING.md#4-applications-end-to-end-on-ebpf2203) are marked **⚠**.
-For throughput limits, see [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). To send through the ESnet EJFAT load balancer instead, see [EJFAT_LB_TESTING.md](EJFAT_LB_TESTING.md).
+For throughput limits, see [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). To send through the ESnet EJFAT load balancer instead, see [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md).
 
 ```
 ebpf2201                                         ebpf2203
