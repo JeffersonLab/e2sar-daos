@@ -11,8 +11,10 @@ For how to run the tests, see [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 | Sender, multi-thread Segmenter | Scales with the number of files queued | One `e2sar_ft` with 4 / 8 / 16 files sent 43 / 70 / 58 Gbps (table 6) |
 | Receiver, one port | **Limits to about 10–12 Gbps** | One `e2sar_ft` sends everything to one port and one receive thread. At 43+ Gbps the kernel dropped 40–76% of packets and lost every event (table 6) |
 | Receiver socket buffer | Caused the single-port losses at ~10 Gbps until raised to 1 GiB | With 256 MiB: `RcvbufErrors` in 3 of 11 runs. With 1 GiB: 0 in 20 runs |
-| Receiver, parallel ports | **Lossless up to about 48 Gbps** | N `e2sar_ft` processes to N ports, `--threads N`: N ≤ 4 clean (one 4-sender run failed). 8 senders (88 Gbps) lost everything (table 7) |
-| NIC receive ring | **The limit above ~48 Gbps** | Losses at 4–8 senders came from `rx_out_of_buffer` in the NIC, with 0 kernel drops. The RX ring is 1024 of 8192 entries, and resizing it needs root |
+| Receiver, parallel ports | **Reliably lossless only up to ~25 Gbps** | N `e2sar_ft` processes to N ports, `--threads N`: 2–3 senders (20–26 Gbps) clean every time. 4 senders (~48 Gbps) clean in 1 of 6 runs. 8+ never (tables 7–8) |
+| NIC receive ring | Part of the loss, not the root cause | At ring 1024, 4–8 senders lost frames to `rx_out_of_buffer`. At 8192 those drops mostly went away, but events were still lost (table 8) |
+| **Receiving NIC port, no end-to-end flow control** | **The remaining limit at 4+ senders** | Every failed run in table 8 had 11–1,229 `rx_discards_phy` drops. ebpf2203 has sent pause frames, but ebpf2201 has received none: the switch doesn't push back to the sender. At ~1 frame in 27,000 lost, a 240k-frame event almost never survives |
+| Receive-thread CPU placement | Not the cause | Pinning receive threads to CPUs 64+, away from the NIC's interrupt cores, changed nothing (table 8) |
 | NFS source read | **2.2 Gbps when not cached** | Copying 33 GB uncached took 124 s. Stage the source on `/scratch` |
 | Network | Not the bottleneck | 100 Gb/s link. 88 Gbps went out with no sender errors |
 | DAOS KV writes | **Not the bottleneck up to at least ~48 Gbps** | `Lost in enqueue` was 0 in every run. Four ~2.1 GiB events (8.6 GB) committed and read back with matching digests (table 7) |
@@ -28,7 +30,7 @@ For how to run the tests, see [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
   - *ingest*: the receiver's rate from the first event received to the last.
   - *DAOS commit*: the rate from the first event received to the last event committed.
   - *`RcvbufErrors`*: the kernel UDP counter on the receiver, taken from `/proc/net/snmp` before and after each run.
-  - *NIC drops*: `rx_out_of_buffer` and `rx_discards_phy` from `ethtool -S enp1s0f1np1`, before and after (table 7 only).
+  - *NIC drops*: `rx_out_of_buffer` and `rx_discards_phy` from `ethtool -S enp1s0f1np1`, before and after (tables 7–8).
 
 ## Measurements
 
@@ -125,6 +127,27 @@ The receiver's *ingest* and *DAOS commit* figures are not shown. With N events a
 The two failed runs had 0 kernel UDP drops. Afterwards, the NIC counters on ebpf2203 showed `rx_out_of_buffer: 319,525` and `rx_discards_phy: 14,560` (cumulative), and the RX ring was 1024 of a possible 8192.
 Later runs that recorded the counters before and after showed 0 NIC drops for 2–4 senders.
 
+### 8. Parallel senders with RX ring 8192 and pinned receive threads
+
+Same setup as table 7, but with the RX ring raised from 1024 to 8192 on both nodes (`ethtool -G enp1s0f1np1 rx 8192`). NIC and kernel counters were taken before and after every run.
+*RX queues* shows how many receive queues carried a full file (~0.24 M frames). "2 flows on 1 queue" means two senders' flows hashed to the same queue.
+
+| Senders | Receiver | Committed | `rx_out_of_buffer` | `rx_discards_phy` | `RcvbufErrors` | RX queues |
+|---|---|---|---|---|---|---|
+| 4 | `--threads 4` | 0 / 4 | 132,951 | 961 | 0 | not recorded |
+| 4 | `--threads 4` | 0 / 4 | 0 | 11 | 0 | not recorded |
+| 8 | `--threads 8` | 0 / 8 | 183,193 | 340 | 0 | 8 queues; 4 of them short by 30–60 k frames |
+| 8 | `--threads 8` | 0 / 8 | 0 | 192 | 0 | all full; 2 flows on 1 queue |
+| 12 | `--threads 12` | 0 / 12 | 0 | 231 | 181,561 | all full; 2 queues with 2 flows each |
+| 16 | `--threads 16` | 0 / 16 | 0 | 1,229 | 0 | all full; 2 flows on 1 queue |
+| 4 | `--cores 64-67` | 0 / 4 | 0 | 36 | 0 | all full |
+| 4 | `--cores 64-67` | 0 / 4 | 0 | 62 | 0 | all full |
+| 8 | `--cores 64-71` | 0 / 8 | 85,900 | 240 | 0 | the queue with 2 flows short by ~90 k frames |
+| 8 | `--cores 64-71` | 0 / 8 | 0 | 426 | 0 | all full |
+
+Sum of sender goodputs, in table order: 49.8, 46.0, 92.2, 90.8, 94.9, 96.3, 35.3, 50.8, 89.8 and 94.5 Gbps. 12 and 16 senders saturate the 100 Gb/s link. No sender reported errors.
+Pause frames, read once after these runs: ebpf2203 had sent 820 since boot (`tx_pause_ctrl_phy`), and ebpf2201 had received 0 (`rx_pause_ctrl_phy`).
+
 ## Analysis
 
 ### Sender: one event is sent by one thread
@@ -146,8 +169,14 @@ Each E2SAR receive thread owns its ports. One `e2sar_ft` sends everything to one
 - At about 10 Gbps, the occasional `RcvbufErrors` were bursts the socket couldn't absorb. A 1 GiB buffer (`-b 1073741824`; `net.core.rmem_max` is 2 GiB) fixed that, with no losses in 20 runs.
 - At 43–70 Gbps into one port (table 6), no buffer helps. One thread can't drain the socket fast enough.
 
-`--threads N` only helps when traffic arrives on N ports. `e2sar_ft` has no switch for E2SAR's `multiPort` flag. Running N `e2sar_ft` processes, one per port with distinct `--dataid`s, achieves the same thing (table 7) and stays lossless up to about 48 Gbps.
-Above that, packets are lost in the **NIC receive ring** (`rx_out_of_buffer`) before the kernel sees them. The ring is set to 1024 of a possible 8192 entries. Raising it (`ethtool -G enp1s0f1np1 rx 8192`) or spreading flows over more RSS queues needs root.
+`--threads N` only helps when traffic arrives on N ports. `e2sar_ft` has no switch for E2SAR's `multiPort` flag. Running N `e2sar_ft` processes, one per port with distinct `--dataid`s, achieves the same thing (table 7). That is reliably lossless for 2–3 senders (~25 Gbps).
+
+From 4 senders on, frames are lost in the NIC, before the kernel sees them:
+- **`rx_out_of_buffer`**: a receive queue ran out of host buffers. At ring 1024 this happened often. At 8192 it happened only in some runs, mostly on a queue that had two flows hashed to it (~22 Gbps for one core).
+- **`rx_discards_phy`**: the NIC port's buffer overflowed. This happened in **every** failed run, even with the ring at 8192, receive threads pinned off the interrupt cores, and all flows on separate queues. The NIC responded with pause frames, but the switch didn't pass them back to the sender, so the extra frames were dropped rather than slowed.
+
+Each failed run lost only 11–1,229 frames out of about 1–4 M, roughly 1 frame in 27,000 at 4 senders. But `e2sar_ft` sends each file as one event of ~240 k frames, with no retransmission. At that loss rate the chance of an event arriving intact is about e^−9, effectively zero.
+So the limit at 4+ senders is not an E2SAR or DAOS bottleneck. It's a lossy UDP path combined with events too large to survive any loss.
 
 ### DAOS: keeps up
 
@@ -157,7 +186,9 @@ Its ceiling is still unknown. A clean sustained rate needs a longer run (tens of
 
 ## Not yet tested
 
-1. **NIC RX ring at 8192** (needs root: `ethtool -G enp1s0f1np1 rx 8192` on the receiver). That should push lossless parallel sending past 4 senders.
-2. **Sustained parallel load.** Send several files per sender process (N × M files) to measure steady DAOS commit throughput, not single-burst numbers. Add `--timing-csv` on the receiver.
-3. **A `multiPort` switch in `e2sar_ft`.** One process with `--sockets N` sending to N ports would replace the N-process workaround.
-4. **Variation between runs.** The same settings varied by up to 2×, for example 9.0 versus 20.9 Gbps ingest. More repeats, and pinning the receive threads to NIC-local cores (NUMA node 0, CPUs 0–63), would show whether that comes from the nodes or the network.
+1. **End-to-end flow control.** Have the network team check whether the switch port toward the sender honors and propagates pause frames (802.3x), or set up PFC. With flow control end to end, `rx_discards_phy` should become backpressure instead of loss.
+2. **Smaller events.** Split the files (for example with `evio_split.py`) into events of tens of MB. At the measured loss rate, a 10 MB event (~1,100 frames) survives about 96% of the time, versus about 0% for a 2 GiB event. That shows how much of the problem is event size.
+3. **Rate-limited parallel senders.** Cap each sender, for example 4 × 6 Gbps, to find the highest lossless aggregate. `--rate` only spaces out events, and `--smooth` is too slow, so this needs many smaller events per sender.
+4. **Sustained parallel load.** Send several files per sender process (N × M files) to measure steady DAOS commit throughput, not single-burst numbers. Add `--timing-csv` on the receiver.
+5. **A `multiPort` switch in `e2sar_ft`.** One process with `--sockets N` sending to N ports would replace the N-process workaround.
+6. **Variation between runs.** The same settings varied by up to 2×, for example 9.0 versus 20.9 Gbps ingest. More repeats, and pinning the receive threads to NIC-local cores (NUMA node 0, CPUs 0–63), would show whether that comes from the nodes or the network.

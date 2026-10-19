@@ -27,9 +27,25 @@ ebpf2201                                         ebpf2203
 - `/scratch/<user>` is **local to each node**. Each sender needs its own copy of the source files, and each receiver writes its own restored files.
 - The login shell is tcsh. Run every snippet below inside `bash`.
 - `meson` and `ninja` are in `~/.local/bin`.
-- **⚠** ebpf2203 also has the e2sar 0.3.1 RPM, which installs `e2sar_ft` in `/usr/local/bin`. Always call the 0.4.0rc1 binary as `$E2SAR_BIN/e2sar_ft`.
+- `e2sar_ft` is not on `PATH`. Call it as `$E2SAR_BIN/e2sar_ft`.
 - This E2SAR build has no NUMA support. `--numa` makes both apps exit with `NUMA management not available on this system`.
 - GitHub over SSH is blocked from the nodes. Use HTTPS to clone or pull.
+- For parallel senders (step 5b), set the receiver's NIC RX ring to its maximum. It helps but doesn't prevent loss at 4 or more senders. See [NIC RX ring](#nic-rx-ring-receiver-needs-root) below.
+
+### NIC RX ring (receiver, needs root)
+
+The default RX ring is 1024 entries per queue. With 4 or more parallel senders, the NIC dropped packets (`rx_out_of_buffer`) before the kernel saw them. Raising the ring to its maximum, 8192, removed most of those drops but not the port-level drops (`rx_discards_phy`). Events were still lost; see step 5b. To raise it on the receiving node:
+
+```bash
+ethtool -g enp1s0f1np1                       # "Current hardware settings: RX:" (max under "Pre-set maximums")
+sudo ethtool -G enp1s0f1np1 rx 8192          # now; lost on reboot
+# keep it across reboots and NetworkManager reactivation:
+sudo nmcli connection modify "Wired connection 1" ethtool.ring-rx 8192
+sudo nmcli device reapply enp1s0f1np1
+```
+Applying it briefly restarts the NIC's receive queues, which pauses traffic for about a second. SSH to the ebpf nodes goes over this same NIC. To revert: `sudo ethtool -G enp1s0f1np1 rx 1024`.
+The ring keeps about 5 GB of buffers in memory (63 queues × 8192 × ~9 KB). The nodes have 503 GB.
+As of 2026-10-19 both nodes are at 8192, set with `ethtool -G` only, so it's lost on reboot. Check with `ethtool -g` before throughput runs.
 
 ## 1. Environment (each shell, both nodes)
 
@@ -152,7 +168,9 @@ wait "${pids[@]}"; grep -h 'goodput' $RUN/send_*.log
 Each process restarts event numbers at 0. The distinct `--dataid` keeps their keys apart in the reassembler and in DAOS (`<PREFIX>/0/4321`, `<PREFIX>/0/4322`, ...).
 Verify with step 7. The digest comparison works the same way, since `e2sar_daos_read` lists every data id under the prefix.
 
-Up to 4 senders (about 48 Gbps in total) ran cleanly. At 4 one of two runs and at 8 every run lost all events to NIC receive-ring overflow (`rx_out_of_buffer`; see Troubleshooting).
+2–3 senders (20–26 Gbps in total) ran cleanly every time. 4 senders (about 48 Gbps) succeeded in only 1 of 6 runs, and 8 or more never did.
+Raising the RX ring to 8192 and pinning the receive threads away from the NIC's interrupt cores (`--cores 64 …`) did not change this. A few dozen to a few hundred frames are still dropped at the receiving NIC port (`rx_discards_phy`), and one lost frame loses a whole ~2 GiB event.
+See [BOTTLENECK_ANALYSIS.md, table 8](BOTTLENECK_ANALYSIS.md#8-parallel-senders-with-rx-ring-8192-and-pinned-receive-threads).
 
 ## 6. Reverse: ebpf2203 → ebpf2201
 
@@ -216,6 +234,21 @@ Each file is about 2.1 GiB from `~/evio-data`. "Sum of senders" adds up each `e2
 | 4 / 4 | 48.4 Gbps | 0 / 4 | not measured (drops seen in cumulative counter) | – |
 | 8 / 8 | 88.1 Gbps | 0 / 8 | not measured (drops seen in cumulative counter) | – |
 
+The runs above had the RX ring at 1024. The runs below had it at 8192, with NIC counters recorded before and after each run. The last four also pinned the receive threads to CPUs 64+.
+
+| Senders / receive threads | Receiver option | Committed | NIC `rx_out_of_buffer` | NIC `rx_discards_phy` | Kernel `RcvbufErrors` |
+|---|---|---|---|---|---|
+| 4 / 4 | `--threads 4` | 0 / 4 | 132,951 | 961 | 0 |
+| 4 / 4 | `--threads 4` | 0 / 4 | 0 | 11 | 0 |
+| 8 / 8 | `--threads 8` | 0 / 8 | 183,193 | 340 | 0 |
+| 8 / 8 | `--threads 8` | 0 / 8 | 0 | 192 | 0 |
+| 12 / 12 | `--threads 12` | 0 / 12 | 0 | 231 | 181,561 |
+| 16 / 16 | `--threads 16` | 0 / 16 | 0 | 1,229 | 0 |
+| 4 / 4 | `--cores 64-67` | 0 / 4 | 0 | 36 | 0 |
+| 4 / 4 | `--cores 64-67` | 0 / 4 | 0 | 62 | 0 |
+| 8 / 8 | `--cores 64-71` | 0 / 8 | 85,900 | 240 | 0 |
+| 8 / 8 | `--cores 64-71` | 0 / 8 | 0 | 426 | 0 |
+
 ## Recommended settings
 
 | | Setting | Why |
@@ -227,7 +260,7 @@ Each file is about 2.1 GiB from `~/evio-data`. "Sum of senders" adds up each `e2
 | Receiver | `-b 1073741824` | With 256 MiB the kernel dropped packets in 3 of 11 runs. With 1 GiB it dropped none in 20 runs |
 | Receiver | `--timeout 10000` | The maximum. The default 500 ms drops multi-GB events |
 | Both | `data=<ip>:$PORT` in `EJFAT_URI` | Without the port, `e2sar_ft` sends to junk ports |
-| Above ~10 Gbps | N `e2sar_ft` processes, one port each, receiver `--threads N`, N ≤ 4 | One `e2sar_ft` uses one port. Beyond 4 the NIC drops packets (step 5b) |
+| Above ~10 Gbps | N `e2sar_ft` processes, one port each, receiver `--threads N`, N = 2–3 | One `e2sar_ft` uses one port. From 4 on, the receiving NIC port drops a few frames in almost every run (step 5b) |
 | Receiver | no `--threads` > 1 with a single `e2sar_ft` | The extra ports get no traffic |
 
 ## Troubleshooting
@@ -241,7 +274,7 @@ Each file is about 2.1 GiB from `~/evio-data`. "Sum of senders" adds up each `e2
 | Large file missing, `Lost in reassembly: 1`, `RcvbufErrors` 0 | The event wasn't complete within `--timeout`. Use `--timeout 10000`, `--mtu 9000`, and no `--smooth` |
 | Large file missing, `RcvbufErrors` > 0 | The receive socket overflowed. Use `-b 1073741824` |
 | Several files in one `e2sar_ft`: every event lost, `RcvbufErrors` in the hundreds of thousands | The sender sends the files in parallel (43–70 Gbps), but all to one port, so one receive thread gets everything. Use parallel senders (step 5b) |
-| Events lost, `RcvbufErrors` 0 | Dropped in the NIC before the kernel. Check `ethtool -S enp1s0f1np1 \| grep -E 'rx_out_of_buffer\|rx_discards_phy'` before and after. The RX ring is 1024 of a possible 8192. Raising it (`ethtool -G enp1s0f1np1 rx 8192`) needs root; otherwise use fewer parallel senders |
+| Events lost, `RcvbufErrors` 0 | Dropped in the NIC before the kernel. Check `ethtool -S enp1s0f1np1 \| grep -E 'rx_out_of_buffer\|rx_discards_phy'` before and after. `rx_out_of_buffer`: raise the RX ring to 8192 (see [NIC RX ring](#nic-rx-ring-receiver-needs-root)), and check whether two flows share a queue (`ethtool -S \| grep rxN_packets`). `rx_discards_phy`: the NIC port's buffer overflowed. The switch doesn't pass the receiver's pause frames back to the sender, so use fewer parallel senders |
 | Receiver exits: `Event timeout exception unreasonably long, limit 10s` | `--timeout` is capped at 10000 ms |
 | Either app exits: `NUMA management not available` | This build has no NUMA support. Drop `--numa` |
 | Receiver exits at once and the sender shows `Connection refused` | Read the receiver output. Check that it is still running before starting the sender |
