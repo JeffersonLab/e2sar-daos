@@ -10,6 +10,7 @@
 | 4 | **Slurm TB nodes** | pool `sc26` and `daos_agent`, but **may have no `daos-devel`** (and no E2SAR) | `unit` and `integration` suites and the end-to-end path, using the podman image, which brings its own DAOS headers and E2SAR | [§3](#3-slurm-tb-nodes-daos-pool-but-no-daos-devel), [containers/slurm-tb](../containers/slurm-tb/README.md) |
 
 Scenario 1 needs only Docker. Scenarios 2 and 3 need SSH access to the ebpf nodes, and scenario 3 also needs an LB instance URI. Scenario 4 needs a Slurm TB allocation and podman.
+For throughput and latency of scenarios 2 and 3 with synthetic EVIO time frames instead of files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`bin/e2sar_e2e_bench.sh`).
 Scenarios 2 and 3 share the same nodes with other users. Use your own port, container and `/scratch` directories, and clean up after every run.
 
 ## Test suites
