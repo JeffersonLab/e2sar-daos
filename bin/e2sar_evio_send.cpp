@@ -38,8 +38,9 @@
 
     --rate is the total for all Segmenters, paced by the producing threads (the Segmenter's
     own rate limit works in whole microseconds per event, too coarse for small events).
-    Segmenter i starts i/P of an event interval after Segmenter 0, so the Segmenters' events
-    interleave instead of leaving at the same instant (--no-stagger: all start together).
+    --stagger starts Segmenter i i/P of an event interval after Segmenter 0, so the Segmenters'
+    events interleave instead of leaving at the same instant. It made no difference to the loss
+    at the start of node-to-node runs (docs/E2E_BENCHMARK.md, section 7).
 */
 
 #include <signal.h>
@@ -293,7 +294,7 @@ int main(int argc, char** argv) {
     FrameShape shape;
     double rate;
     int sndBuf;
-    bool noStagger;
+    bool stagger;
 
     opts("help,h", "show this help message");
     opts("uri,u", po::value<std::string>(&uriStr), "EJFAT URI (default: $EJFAT_URI)");
@@ -301,7 +302,7 @@ int main(int argc, char** argv) {
     opts("ip", po::value<std::string>(&senderIP), "sender IP to add to the LB (required with --withcp)");
     opts("novalidate,v", po::bool_switch()->notifier([&](bool b) { validate = !b; }), "don't validate the LB TLS certificate");
     opts("port-per-segmenter", po::bool_switch(&multiPort), "without --withcp: Segmenter i sends to the URI data port + i, one receive thread each");
-    opts("no-stagger", po::bool_switch(&noStagger), "start all Segmenters at once instead of i/P of an event interval apart");
+    opts("stagger", po::bool_switch(&stagger), "start Segmenter i i/P of an event interval after Segmenter 0, not all at once");
     opts("mtu,m", po::value<uint16_t>(&mtu)->default_value(9000), "MTU");
     opts("segmenters,P", po::value<size_t>(&segmenters)->default_value(16), "number of Segmenters, each with its own producing thread");
     opts("sockets,s", po::value<size_t>(&sockets)->default_value(1), "send sockets/threads per Segmenter");
@@ -421,7 +422,7 @@ int main(int argc, char** argv) {
     const double interval = rate > 0 ? meanEvent * 8.0 / perSeg : 0;   // ns between one Segmenter's events
     for (size_t i = 0; i < workers.size(); i++)
         producers.emplace_back(produce, std::ref(*workers[i]), events, perSeg,
-                               noStagger ? 0.0 : interval * i / segmenters);
+                               stagger ? interval * i / segmenters : 0.0);
     for (auto& t : producers)
         t.join();
 

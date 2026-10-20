@@ -14,6 +14,10 @@ Latency stages per event, matched on (evt_num, data_id):
   daos     recv     -> commit     all chunk puts and the metadata put completed
                                   (dfuse sink: open/write/close of the event's file)
   total    queue_ns -> commit
+latency_steady_ms has the same stages for the events queued --warmup seconds or more after the
+first one: the first ~0.2-0.4 s of a run wait up to ~150 ms while the receiver's first DAOS
+writes are slow, which dominates p90/p99 of short runs. lost_queued_s lists when the lost events
+were queued (seconds after the first), lost_after_warmup counts those at --warmup or later.
 The two hosts' clocks are chrony-synced (offsets ~0.1 ms), so cross-host stages are good to ~0.2 ms.
 
 Throughput (payload bytes, Gbps = 1e9 bit/s):
@@ -41,6 +45,7 @@ def main():
     ap.add_argument("dir")
     ap.add_argument("--pool", type=int, required=True, help="e2sar_evio_send --pool")
     ap.add_argument("--expected", type=int, required=True, help="events sent")
+    ap.add_argument("--warmup", type=float, default=0.5, help="seconds excluded from latency_steady_ms (default 0.5)")
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
                     help="extra fields for the JSON record (numbers are converted)")
     a = ap.parse_args()
@@ -94,19 +99,26 @@ def main():
         out["e2e_gbps"] = total * 8 / (commits[-1] - q0) / 1e9
 
         stages = {"sender": [], "network": [], "daos": [], "total": []}
+        steady = {k: [] for k in stages}
         for k, (_, rv, cm) in recv.items():
             if k not in send:
                 continue
             q, s = send[k]
-            stages["sender"].append((s - q) * 1e3)
-            stages["network"].append((rv - s) * 1e3)
-            stages["daos"].append((cm - rv) * 1e3)
-            stages["total"].append((cm - q) * 1e3)
-        out["latency_ms"] = {}
-        for name, v in stages.items():
-            v.sort()
-            out["latency_ms"][name] = {"p50": round(pct(v, 50), 3), "p90": round(pct(v, 90), 3),
-                                       "p99": round(pct(v, 99), 3), "max": round(v[-1], 3) if v else None}
+            for st in (stages, steady) if q - q0 >= a.warmup else (stages,):
+                st["sender"].append((s - q) * 1e3)
+                st["network"].append((rv - s) * 1e3)
+                st["daos"].append((cm - rv) * 1e3)
+                st["total"].append((cm - q) * 1e3)
+        for key, st in (("latency_ms", stages), ("latency_steady_ms", steady)):
+            out[key] = {}
+            for name, v in st.items():
+                v.sort()
+                out[key][name] = {"p50": round(pct(v, 50), 3), "p90": round(pct(v, 90), 3),
+                                  "p99": round(pct(v, 99), 3), "max": round(v[-1], 3) if v else None}
+        lost = sorted(round(send[k][0] - q0, 3) for k in send if k not in recv)
+        out["warmup_s"] = a.warmup
+        out["lost_queued_s"] = lost
+        out["lost_after_warmup"] = sum(t >= a.warmup for t in lost)
     out["result"] = "PASS" if out["committed"] == a.expected and ok == a.expected and bad == 0 else "FAIL"
     for kv in a.set:
         k, _, v = kv.partition("=")
@@ -135,6 +147,10 @@ def summary(a):
                      f"sender {g('sender_goodput_gbps', 0):.2f} Gbps")
     for k, v in g("latency_ms", {}).items():
         lines.append(f"  latency {k:8s} p50 {v['p50']:9.3f}  p90 {v['p90']:9.3f}  p99 {v['p99']:9.3f}  max {v['max']} ms")
+    if "latency_steady_ms" in a:
+        v = a["latency_steady_ms"]["total"]
+        lines.append(f"  after {a['warmup_s']} s: total p50 {v['p50']:.3f}  p90 {v['p90']:.3f}  p99 {v['p99']:.3f}  max {v['max']} ms, "
+                     f"lost {a['lost_after_warmup']} of {len(a['lost_queued_s'])}")
     lines.append(f"  drops: rx_discards_phy {g('rx_discards_phy')} rx_out_of_buffer {g('rx_out_of_buffer')} "
                  f"UdpRcvbufErrors {g('udp_rcvbuf_errors')}")
     print("\n".join(lines), file=sys.stderr)
