@@ -5,10 +5,10 @@
 | # | Scenario | DAOS | What it checks | Procedure |
 |---|---|---|---|---|
 | 1 | **Local Mac** | none; client headers and libraries only, in the Rocky 9 container | It builds and links, and the `unit` suite passes | [§1](#1-mac-without-daos) |
-| 2 | **ebpf2201 ↔ ebpf2203, back-to-back** | pool `sc26`, native `daos-devel` | `unit` and `integration` suites. End to end: `e2sar_ft` → `e2sar_daos_recv` → DAOS → `e2sar_daos_read`, with loopback on one node and across the two nodes, with no LB in the path | [§2](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel), [§4](#4-applications-end-to-end-on-ebpf2203), [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md) (MTU 9000, `/scratch`) |
+| 2 | **ebpf2201 ↔ ebpf2203, node-to-node** | pool `sc26`, native `daos-devel` | `unit` and `integration` suites. End to end: `e2sar_ft` → `e2sar_daos_recv` → DAOS → `e2sar_daos_read`, with loopback on one node and across the two nodes, with no LB in the path | [§2](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel), [§4](#4-applications-end-to-end-on-ebpf2203), [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md) (MTU 9000, `/scratch`) |
 | 3 | **ebpf2201 → ESnet EJFAT LB → ebpf2203** | pool `sc26`, native `daos-devel` | The same end-to-end path with `--withcp`, through a reserved LB over the WAN: the sender is added to the allowlist, and the worker registers, gets slots and deregisters. Also a throughput sweep, lossless up to 3 concurrent 2 GiB events (~25.8 Gbps) | [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md) |
 | 4 | **Slurm TB nodes** | pool `sc26` and `daos_agent`, but **may have no `daos-devel`** (and no E2SAR) | `unit` and `integration` suites and the end-to-end path, using the podman image, which brings its own DAOS headers and E2SAR | [§3](#3-slurm-tb-nodes-daos-pool-but-no-daos-devel), [containers/slurm-tb](../containers/slurm-tb/README.md) |
-| 5 | **ALCF Aurora** (planned, not run yet) | pool `e2sar-daos` (100 TB), DAOS client on the compute nodes | `unit` and `integration` suites, then the end-to-end path and the b2b bench between Aurora compute nodes over the Slingshot network. Section 5 is the plan and the checks still open | [§5](#5-alcf-aurora-planned) |
+| 5 | **ALCF Aurora** (planned, not run yet) | pool `e2sar-daos` (100 TB), DAOS client on the compute nodes | `unit` and `integration` suites, then the end-to-end path and the n2n bench between Aurora compute nodes over the Slingshot network. Section 5 is the plan and the checks still open | [§5](#5-alcf-aurora-planned) |
 
 Scenario 1 needs only Docker. Scenarios 2 and 3 need SSH access to the ebpf nodes, and scenario 3 also needs an LB instance URI. Scenario 4 needs a Slurm TB allocation and podman. Scenario 5 needs an ALCF project with access to pool `e2sar-daos` and a PBS allocation on Aurora.
 For throughput and latency of scenarios 2 and 3 with synthetic EVIO time frames instead of files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`bin/e2sar_e2e_bench.sh`).
@@ -435,7 +435,7 @@ Aurora is unlike the JLab hosts in four ways that shape the plan:
 | Network | 100 GbE, MTU 9000, DAOS over TCP/verbs | HPE Slingshot 11, several `hsn*` NICs per node, DAOS over `ofi+cxi` *(check)* | UDP between compute nodes goes over the `hsn*` IPs. A container would need the host's CXI libfabric, so the podman route of section 3 doesn't carry over. Build natively instead |
 
 Inbound traffic from outside ALCF to the compute nodes is blocked *(check)*, so the ESnet LB path (scenario 3) can't reach a receiver on Aurora.
-On Aurora, both the sender and the receiver are Aurora compute nodes, connected back to back (b2b).
+On Aurora, both the sender and the receiver are Aurora compute nodes, and the bench runs node to node (n2n), with no LB in the path.
 Whether data from JLab or the LB can get into Aurora at all is a separate question for ALCF (see [Open questions](#open-questions)).
 
 ### Phase 0: find out what's there (one interactive job)
@@ -490,9 +490,9 @@ Follow the same procedure as [section 4](#4-applications-end-to-end-on-ebpf2203)
 2. **Two nodes over Slingshot.** In a 2-node job (`-l select=2`), take the two hostnames from `$PBS_NODEFILE` and run the receiver on the second node (`mpiexec -n 1 --hosts <node2> ...`, or `ssh <node2>` within the job). Use node2's `hsn0` IP in `EJFAT_URI` and `--ip`.
    First check that UDP gets through between the two `hsn` IPs *(check)*, e.g. with `iperf3 -u` if it's available, or with a short `e2sar_ft` run.
 
-### Phase 4: throughput and latency (b2b bench)
+### Phase 4: throughput and latency (n2n bench)
 
-[`bin/e2sar_e2e_bench.sh`](../bin/e2sar_e2e_bench.sh) `-m b2b` should work unchanged when the Aurora values are set in the environment, because its defaults are for the ebpf testbed:
+[`bin/e2sar_e2e_bench.sh`](../bin/e2sar_e2e_bench.sh) `-m n2n` should work unchanged when the Aurora values are set in the environment, because its defaults are for the ebpf testbed:
 
 ```bash
 export POOL=e2sar-daos CONT=e2sar-bench-$USER

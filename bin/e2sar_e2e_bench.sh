@@ -4,16 +4,16 @@
 #   sender node:    e2sar_evio_send ──▶ [EJFAT LB] ──▶ e2sar_daos_recv ──▶ DAOS   :receiver node
 #
 # Run both roles at the same time, one on each node, with the same TAG and mode:
-#   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|b2b] [-T recv_threads] [-D deq_threads] [-I inflight]
+#   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|n2n] [-T recv_threads] [-D deq_threads] [-I inflight]
 #                                          [-C chunk_kib] [-S kv|dfuse|pil4dfs]
-#   sender:    e2sar_e2e_bench.sh send TAG [-m lb|b2b] [-P segmenters] [-s sockets]
+#   sender:    e2sar_e2e_bench.sh send TAG [-m lb|n2n] [-P segmenters] [-s sockets]
 #                                          [-n events_per_segmenter] [-f frames_per_event] [-r gbps]
 #   either:    e2sar_e2e_bench.sh clean
 #
 # Modes:
 #   lb   through the LB in $EJFAT_URI, both sides with --withcp. The LB spreads events over the
 #        receiver's -T ports by their random entropy.
-#   b2b  back-to-back, no LB. Segmenter i sends to port PORT+i (--port-per-segmenter), so use
+#   n2n  node-to-node, no LB. Segmenter i sends to port PORT+i (--port-per-segmenter), so use
 #        -T >= -P on the receiver.
 #
 # Sinks (receiver -S):
@@ -87,9 +87,10 @@ case $SINK in
     dfuse|pil4dfs) : "${DEQ:=16}" ;;
     *)             usage ;;
 esac
+[ "$MODE" = b2b ] && MODE=n2n   # old name for n2n
 case $MODE in
     lb)  : "${EJFAT_URI:?EJFAT_URI (LB instance URI) not set}"; URI=$EJFAT_URI; CP=--withcp ;;
-    b2b) URI="ejfat://useless@10.10.10.10:1234/lb/1?data=$RECV_IP:$PORT"; CP= ;;
+    n2n) URI="ejfat://useless@10.10.10.10:1234/lb/1?data=$RECV_IP:$PORT"; CP= ;;
     *)   usage ;;
 esac
 
@@ -141,7 +142,7 @@ for ((i = 0; i < 60; i++)); do
     sleep 1
     kill -0 $PID 2>/dev/null || die "receiver exited: $(tail -3 "$D/recv.log")"
     grep -q "Receiving" "$D/recv.log" || continue
-    [ "$MODE" = b2b ] && break
+    [ "$MODE" = n2n ] && break
     "$E2SAR_BIN/lbadm" --status 2>/dev/null | grep "IP Address=$RECV_IP, UDP Port=$PORT," \
         | grep -q 'slotsassigned=[1-9]' && break
 done

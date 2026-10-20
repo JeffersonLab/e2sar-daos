@@ -62,7 +62,7 @@ export EJFAT_ADMIN_URI='ejfats://<admin token>@ejfat-lb.es.net:18008/lb/0'   # a
 ```
 `meson` and `ninja` must be on `PATH` too (`export PATH=$HOME/.local/bin:$PATH`).
 
-Then, in **each** terminal, set the per-test variables. The port, container and directories differ from the back-to-back procedure in [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md), which uses 20480 and `e2sar-test`, so the two can't collide:
+Then, in **each** terminal, set the per-test variables. The port, container and directories differ from the node-to-node procedure in [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md), which uses 20480 and `e2sar-test`, so the two can't collide:
 
 ```bash
 bash                                   # from tcsh; this reads ~/.bashrc
@@ -79,7 +79,7 @@ mkdir -p $RUN
 ```bash
 echo "$EJFAT_URI" | cut -d@ -f2        # expect: ejfat-lb.es.net:18008/lb/<id>?sync=...
 ```
-The back-to-back procedure exports a placeholder, `ejfat://useless@10.10.10.10:1234/lb/1?data=...`, which overrides it for that shell. With the placeholder set, `lbadm --status` fails with `failed to connect ... 10.10.10.10:1234`. Use a separate shell for LB tests, or run `source ~/.bashrc` again.
+The node-to-node procedure exports a placeholder, `ejfat://useless@10.10.10.10:1234/lb/1?data=...`, which overrides it for that shell. With the placeholder set, `lbadm --status` fails with `failed to connect ... 10.10.10.10:1234`. Use a separate shell for LB tests, or run `source ~/.bashrc` again.
 Scripts run as `bash -s` or `bash script.sh` don't read `~/.bashrc`. Start them with `source ~/.bashrc`.
 
 ## 2. Build (once)
@@ -133,7 +133,7 @@ ejfats://<instance token>@ejfat-lb.es.net:18008/lb/638?sync=192.188.29.6:19016&s
 
 In `~/.bashrc` (step 1), wrap it in single quotes, because `&` and `[` mean something to the shell. A different instance has a different token, LB ID and `sync=` port. Always take the URI exactly as `--reserve` printed it.
 
-In the back-to-back case the URI needs `data=<ip>:<port>`. Here, keep the `data=` range exactly as the LB returns it. The LB picks the worker port from what the receiver registers.
+In the node-to-node case the URI needs `data=<ip>:<port>`. Here, keep the `data=` range exactly as the LB returns it. The LB picks the worker port from what the receiver registers.
 
 ### 3.2 Inspect the LB
 
@@ -405,7 +405,7 @@ Delete only what you created. Leave other users' directories and containers alon
 ## 11. Highest lossless throughput
 
 One event goes out on one sender thread at about 10 Gbps, so one large file can't go faster. To go faster, queue several files in **one** `e2sar_ft`. The multi-thread Segmenter sends them in parallel, one thread per event.
-Through the LB this works where back-to-back didn't. E2SAR gives each event a random 16-bit entropy value, and the LB uses it to pick one of the worker's ports. With `--threads T`, the receiver opens and registers T ports, so the events land on different receive threads.
+Through the LB this works where node-to-node didn't. E2SAR gives each event a random 16-bit entropy value, and the LB uses it to pick one of the worker's ports. With `--threads T`, the receiver opens and registers T ports, so the events land on different receive threads.
 Without an LB, every event goes to one port and one thread, and all of them were lost (see [BOTTLENECK_ANALYSIS.md, table 6](BOTTLENECK_ANALYSIS.md#6-multi-thread-segmenter-several-files-in-one-e2sar_ft)).
 
 **ebpf2201: stage N files of about 2.1 GiB each:**
@@ -458,7 +458,7 @@ For the definitions of sender goodput, ingest, DAOS commit and end-to-end (E2E),
 | 3 | same | 7.12 Gbps | 1.47 s | 9.70 Gbps | 9.01 Gbps | PASS |
 
 Every run had 0 lost events, 0 `UdpRcvbufErrors` and matching digests. The receiver got all 512 slots within about 10 s and deregistered on Ctrl-C.
-That's the same as back-to-back ebpf2201 → ebpf2203 (7.3–7.4 Gbps sent, 8.8–8.9 Gbps ingest), so the LB and the WAN path don't lower single-sender throughput.
+That's the same as node-to-node ebpf2201 → ebpf2203 (7.3–7.4 Gbps sent, 8.8–8.9 Gbps ingest), so the LB and the WAN path don't lower single-sender throughput.
 
 ### Throughput sweep (step 11, `--rate -1 --sockets N`, `--deq 4 --inflight 128`)
 
@@ -484,7 +484,7 @@ Ingest and DAOS commit aren't shown: with 1–4 events arriving together, their 
 **For reliable lossless runs, use 2 events at a time (11.5 Gbps, 3 of 3).** Every failure at N ≥ 3 came with NIC port discards or a port collision. None were DAOS or sender errors.
 To go higher, the receiver side needs flow control or deeper buffering at ebpf2203's switch port, or several worker nodes behind the LB to spread the load. `e2sar_ft` would also need a way to set entropy, to avoid collisions.
 
-The first sweep attempt ran while another user's 8-sender back-to-back test was running on the same nodes. Those numbers were thrown away. Always do the idle check in step 4.
+The first sweep attempt ran while another user's 8-sender node-to-node test was running on the same nodes. Those numbers were thrown away. Always do the idle check in step 4.
 
 ## Recommended settings
 
@@ -518,7 +518,7 @@ Rows marked † happened in these runs. The others are what to check first, base
 | Receiver runs, but `lbadm --status` lists no worker | It was started without `--withcp`, or it exited. Read its output |
 | Worker listed with `slotsassigned=0` | The LB hasn't recomputed the schedule yet. Wait a few seconds before sending |
 | Sender shows `0 errors`, but the receiver gets nothing | The sender's `--ip` isn't the address the packets leave from, so the LB drops them. Check `ip route get 192.188.29.16`. Also check that inbound UDP to the receiver ports isn't firewalled |
-| `lbadm --status`: `failed to connect to all addresses ... 10.10.10.10:1234` | The shell still has the back-to-back placeholder `EJFAT_URI`. Run `source ~/.bashrc` or open a new bash |
+| `lbadm --status`: `failed to connect to all addresses ... 10.10.10.10:1234` | The shell still has the node-to-node placeholder `EJFAT_URI`. Run `source ~/.bashrc` or open a new bash |
 | `lbadm --overview`: `Error in parsing URI from command-line` | `$EJFAT_ADMIN_URI` is empty in this shell. Run `source ~/.bashrc` |
 | A worker stays in `--status` after its receiver was killed | Wait about 10 s for the LB to drop it, or `lbadm --deregister -s <SID>` if you have the session ID (3.5) |
 | `e2sar_ft` or `lbadm` can't find libraries, or `EJFAT_URI` is empty | The shell didn't read `~/.bashrc`: tcsh, or a `bash -s` script. Run `bash`, or `source ~/.bashrc` |

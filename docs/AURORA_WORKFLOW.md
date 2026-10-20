@@ -148,7 +148,7 @@ If nothing arrives, check that UDP 19522 gets from `SEND_IP` to `RECV_IP` *(chec
 
 ## 4. Bench (2 or more nodes)
 
-`bin/e2sar_e2e_bench.sh -m b2b`, with the Aurora values in the environment. The two roles meet through `$RUN` in the shared `$HOME`.
+`bin/e2sar_e2e_bench.sh -m n2n`, with the Aurora values in the environment. The two roles meet through `$RUN` in the shared `$HOME`.
 `~/daq/jobs/bench.pbs`:
 ```bash
 #!/bin/bash
@@ -167,14 +167,14 @@ export SEND_IP=$(hsn_ip ${NODES[0]}) RECV_IP=$(hsn_ip ${NODES[1]})
 TAG=aurora_${PBS_JOBID%%.*}_${RATE:-20}g
 ENV="POOL=$POOL CONT=$CONT NIC=$NIC RUN=$RUN SEND_IP=$SEND_IP RECV_IP=$RECV_IP"
 
-ssh ${NODES[1]} "cd $PWD && $ENV bin/e2sar_e2e_bench.sh recv $TAG -m b2b -T 4 -D ${DEQ:-16}" &
-ssh ${NODES[0]} "cd $PWD && $ENV bin/e2sar_e2e_bench.sh send $TAG -m b2b -P 4 -r ${RATE:-20}"
+ssh ${NODES[1]} "cd $PWD && $ENV bin/e2sar_e2e_bench.sh recv $TAG -m n2n -T 4 -D ${DEQ:-16}" &
+ssh ${NODES[0]} "cd $PWD && $ENV bin/e2sar_e2e_bench.sh send $TAG -m n2n -P 4 -r ${RATE:-20}"
 wait
 ```
 ```bash
 qsub -v RATE=20,DEQ=16 ~/daq/jobs/bench.pbs        # one point of a sweep
 ```
-Sweep one variable per job series, in the order of the table in [TESTING.md, Phase 4](TESTING.md#phase-4-throughput-and-latency-b2b-bench). Run each point twice.
+Sweep one variable per job series, in the order of the table in [TESTING.md, Phase 4](TESTING.md#phase-4-throughput-and-latency-n2n-bench). Run each point twice.
 `ethtool -S hsn0` may not have the counters the script reads for drops *(check)*. If so, the bench still checks every digest, but the drop column will be empty.
 
 ---

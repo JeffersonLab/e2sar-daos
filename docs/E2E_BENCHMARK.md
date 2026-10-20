@@ -1,6 +1,6 @@
 # End-to-end benchmark: synthetic EVIO frames → E2SAR → DAOS
 
-How fast synthetic EVIO streaming time frames go from a sender on **ebpf2201**, through E2SAR (back-to-back or through the ESnet EJFAT load balancer), to `e2sar_daos_recv` on **ebpf2203** and into DAOS, without losing any. Also where each event's time goes on the way.
+How fast synthetic EVIO streaming time frames go from a sender on **ebpf2201**, through E2SAR (node-to-node or through the ESnet EJFAT load balancer), to `e2sar_daos_recv` on **ebpf2203** and into DAOS, without losing any. Also where each event's time goes on the way.
 Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 on `ejfat-lb.es.net`.
 
 ## Summary
@@ -8,12 +8,12 @@ Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 
 | | Result |
 |---|---|
 | **Highest lossless E2E, through the LB** | **33.7 Gbps** E2E (35.3 Gbps received into DAOS). Lossless in 2 of 2 runs at 35 Gbps. Every run at 40 and 45 lost events |
-| Highest lossless E2E, back-to-back | 24.9 Gbps E2E (25.2 received). Lossless in 1 of 2 runs at that rate |
-| Lossless in every run | **20 Gbps through the LB (3 of 3)**, the new defaults. Back-to-back the same settings passed 1 of 3 |
-| Highest with any loss | 61.2 Gbps received (59.8 E2E), back-to-back, 99.96% of events delivered |
-| What loses events | Frames dropped at ebpf2203's NIC port (`rx_discards_phy`). The LB path smooths the bursts, so loss starts later through it than back-to-back. Never DAOS, never the sockets. Why the port overflows is not settled yet: see [Diagnosing the port discards](#diagnosing-the-port-discards) |
+| Highest lossless E2E, node-to-node | 24.9 Gbps E2E (25.2 received). Lossless in 1 of 2 runs at that rate |
+| Lossless in every run | **20 Gbps through the LB (3 of 3)**, the new defaults. Node-to-node the same settings passed 1 of 3 |
+| Highest with any loss | 61.2 Gbps received (59.8 E2E), node-to-node, 99.96% of events delivered |
+| What loses events | Frames dropped at ebpf2203's NIC port (`rx_discards_phy`). The LB path smooths the bursts, so loss starts later through it than node-to-node. Never DAOS, never the sockets. Why the port overflows is not settled yet: see [Diagnosing the port discards](#diagnosing-the-port-discards) |
 | What limits the rate | 1. The DAOS dequeue threads: 4 cap at ~24 Gbps, 16 reach 40, 32 reach 61. 2. Then the Reassembler at ~85k events/s, whatever the event size |
-| Latency at the defaults | Queued at the sender → committed in DAOS: **0.3–0.5 ms p50** back-to-back, most of it the DAOS write. **75.6 ms p50** through the LB, almost all of it the WAN round trip to ESnet. See [latency per stage](#latency-per-stage-ms-same-runs) |
+| Latency at the defaults | Queued at the sender → committed in DAOS: **0.3–0.5 ms p50** node-to-node, most of it the DAOS write. **75.6 ms p50** through the LB, almost all of it the WAN round trip to ESnet. See [latency per stage](#latency-per-stage-ms-same-runs) |
 | iperf3 baseline | Partial (2026-10-15, DAOS idle). TCP into ebpf2203 reaches 98 Gbps, so the link, port and PCIe path sustain about line rate. UDP stopped at the iperf3 sender's ~20 Gbps with 0 loss, so there is no zero-loss UDP rate above 20 Gbps yet. See [what the evidence says](#what-the-evidence-says-so-far) |
 
 ## The pieces
@@ -52,7 +52,7 @@ Record header (14 words, magic 0xc0da0100, bit info 0x80004206) + index array wh
 - 256 frames make a ~95 KB event, and 4096 frames ~1.5 MB.
 - Each Segmenter sends events numbered 1…N. Event n is copy n mod 64 of 64 distinct events built at start, so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
 - Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`.
-- Events get random entropy, so through the LB they spread over the receiver's T ports. Back-to-back (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
+- Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
 - `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
 
 ## How to run
@@ -67,7 +67,7 @@ bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh recv run1 -m lb
 bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh send run1 -m lb
 ```
 
-`-m lb` goes through the LB in `$EJFAT_URI` (both sides `--withcp`). `-m b2b` sends straight to ebpf2203.
+`-m lb` goes through the LB in `$EJFAT_URI` (both sides `--withcp`). `-m n2n` sends straight to ebpf2203.
 Both sides wait for each other: the sender until the receiver is listening (and, with the LB, has slots), the receiver until the sender is done and every event is committed (or 15 s without progress).
 The receiver then prints the result:
 
@@ -85,13 +85,13 @@ The same as one JSON line goes to `$RUN/bench/results.jsonl`. The exit status is
 
 | Option | Side | Default | |
 |---|---|---|---|
-| `-m lb\|b2b` | both | `lb` | Through the LB, or back-to-back |
+| `-m lb\|n2n` | both | `lb` | Through the LB, or node-to-node |
 | `-P` | send | 16 | Segmenters, each with its own producing thread and dataId |
 | `-s` | send | 1 | Send sockets (threads) per Segmenter |
 | `-n` | send | 6250 | Events per Segmenter (100,000 in total by default) |
 | `-f` | send | 256 | EVIO frames per event (~95 KB) |
 | `-r` | send | 20 | Total rate in Gbps (−1: unlimited) |
-| `-T` | recv | 32 | Receive threads (ports). Back-to-back, use T ≥ P |
+| `-T` | recv | 32 | Receive threads (ports). Node-to-node, use T ≥ P |
 | `-D`, `-I` | recv | 16, 128 | Dequeue threads, and in-flight puts per thread |
 | `-C` | recv | 1024 | DAOS chunk size in KiB (0: whole event in one value). KV sink only |
 | `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Where events go: the DAOS KV object (all results here), or files through dfuse. See [DFUSE_TESTING.md](DFUSE_TESTING.md) |
@@ -125,7 +125,7 @@ Latency per event, matched on (event number, dataId):
 - The "network" stage includes the wait for a dequeue thread. When the dequeue threads are the bottleneck, it's that wait that grows, not "daos". See [the dequeue thread sweep](#3-dequeue-threads-the-hidden-bottleneck).
 - With an unpaced sender, events wait in the sender's queue, so "sender" and "total" mostly measure the backlog. Use a paced sender (`-r`) for latency.
 
-## Results (back-to-back unless stated)
+## Results (node-to-node unless stated)
 
 ### 1. Event size, unpaced, 4 Segmenters, 4 dequeue threads
 
@@ -176,7 +176,7 @@ With 95 KB events the bursts are 16× shorter, and 20 Gbps is lossless.
 
 16 Segmenters × 1 socket, 95 KB events, 16 dequeue threads, 100,000 events per run.
 
-Back-to-back:
+Node-to-node:
 
 | Rate | Runs | Lossless | Received | E2E | Lost events | NIC discards |
 |---|---|---|---|---|---|---|
@@ -205,22 +205,22 @@ Every lost event, in both modes, came with NIC port discards on ebpf2203. There 
 
 | Mode | Run | Result | Received | E2E | Lost events | NIC discards |
 |---|---|---|---|---|---|---|
-| back-to-back | 1 | FAIL | 20.09 | 19.95 | 2 | 2 |
-| back-to-back | 2 | FAIL | 20.09 | 19.95 | 15 | 25 |
-| back-to-back | 3 | **PASS** | 20.09 | 19.95 | 0 | 0 |
+| node-to-node | 1 | FAIL | 20.09 | 19.95 | 2 | 2 |
+| node-to-node | 2 | FAIL | 20.09 | 19.95 | 15 | 25 |
+| node-to-node | 3 | **PASS** | 20.09 | 19.95 | 0 | 0 |
 | **LB** | 1 | **PASS** | 20.07 | 19.58 | 0 | 0 |
 | **LB** | 2 | **PASS** | 20.05 | 19.57 | 0 | 0 |
 | **LB** | 3 | **PASS** | 20.03 | 19.57 | 0 | 0 |
 
-**Through the LB, 20 Gbps was lossless every time, with 0 NIC discards. Back-to-back, the same traffic lost a few events in 2 of 3 runs.**
-The LB path (ESnet WAN and the LB's FPGA data plane) evidently smooths the line-rate bursts of each event before they reach ebpf2203. Back-to-back they arrive straight from the sender's NIC.
+**Through the LB, 20 Gbps was lossless every time, with 0 NIC discards. Node-to-node, the same traffic lost a few events in 2 of 3 runs.**
+The LB path (ESnet WAN and the LB's FPGA data plane) evidently smooths the line-rate bursts of each event before they reach ebpf2203. Node-to-node they arrive straight from the sender's NIC.
 E2E is 0.4 Gbps lower through the LB only because of the extra ~75 ms before the first event lands.
 
 #### Latency per stage (ms), same runs
 
 | Mode | Stage | p50 | p90 | p99 | max |
 |---|---|---|---|---|---|
-| back-to-back | sender | 0.07–0.10 | 0.09–0.13 | 0.14–0.17 | 2–3 |
+| node-to-node | sender | 0.07–0.10 | 0.09–0.13 | 0.14–0.17 | 2–3 |
 | | network | 0.02–0.11 | 0.07–0.19 | 54–58 | 66–68 |
 | | daos | 0.22–0.24 | 0.26–0.33 | 0.9–1.3 | 45–46 |
 | | **total** | **0.32–0.46** | **0.40–0.62** | **56–61** | 82–88 |
@@ -229,9 +229,9 @@ E2E is 0.4 Gbps lower through the LB only because of the extra ~75 ms before the
 | | daos | 0.22–0.23 | 0.26 | 0.85–1.18 | 44–47 |
 | | **total** | **75.5–75.6** | **75.8–75.9** | **126–133** | 155–158 |
 
-- **Back-to-back, most of an event's 0.3–0.5 ms goes to DAOS** (0.22 ms for one 95 KB put plus the metadata put). The sender needs ~0.1 ms, and the wire plus reassembly is within the ±0.2 ms clock error. Values that small (and the occasional slightly negative one) are clock noise.
-- **Through the LB, the WAN dominates: ~75 ms**, the round trip from JLab to the ESnet LB and back (the path's RTT is 71 ms). Everything else is the same as back-to-back.
-- **The p99 tail of ~55 ms (back-to-back) or ~50 ms over the WAN** is in the "network" stage, so events then wait for a dequeue thread. The "daos" stage has its own tail of ~45 ms at the very end (max). Both look like occasional DAOS stalls of tens of milliseconds, which hold up a dequeue thread and the events queued behind it.
+- **Node-to-node, most of an event's 0.3–0.5 ms goes to DAOS** (0.22 ms for one 95 KB put plus the metadata put). The sender needs ~0.1 ms, and the wire plus reassembly is within the ±0.2 ms clock error. Values that small (and the occasional slightly negative one) are clock noise.
+- **Through the LB, the WAN dominates: ~75 ms**, the round trip from JLab to the ESnet LB and back (the path's RTT is 71 ms). Everything else is the same as node-to-node.
+- **The p99 tail of ~55 ms (node-to-node) or ~50 ms over the WAN** is in the "network" stage, so events then wait for a dequeue thread. The "daos" stage has its own tail of ~45 ms at the very end (max). Both look like occasional DAOS stalls of tens of milliseconds, which hold up a dequeue thread and the events queued behind it.
 
 ### 6. DAOS layout: chunks, or one value per event
 
@@ -246,14 +246,14 @@ They differ only for bigger events. Compared with 1.5 MB events (4096 frames, 16
 | 40 | 1 MiB | 40.43 | **0.55** | **0.71** | 22.7 | 9,985 | 267 |
 | 40 | whole event | 40.34 | 0.66 | 0.87 | 24.3 | 9,979 | 121 |
 
-- **Throughput: no difference.** DAOS isn't the limit at either rate. The lost events all come from NIC discards, which 1.5 MB line-rate bursts cause back-to-back regardless of the DAOS layout.
+- **Throughput: no difference.** DAOS isn't the limit at either rate. The lost events all come from NIC discards, which 1.5 MB line-rate bursts cause node-to-node regardless of the DAOS layout.
 - **Latency: 1 MiB chunks are slightly faster** (0.55–0.57 vs 0.66–1.15 ms p50), because one event's chunks are written in parallel.
 - So keep `--chunk 1024`. One value per event saves nothing measurable and gives up the parallel writes for large events. One KV object for everything was not a limit either: at 61 Gbps each write still took 0.33 ms p50. Splitting into one object per event or per dataId (with dataIds as keys) would change the read-back layout without solving a measured problem. It might be worth testing if many receivers write at once.
 
-## Why the lossless ceiling is ~25 Gbps back-to-back and ~35 through the LB
+## Why the lossless ceiling is ~25 Gbps node-to-node and ~35 through the LB
 
 - **NIC port discards on ebpf2203** (`rx_discards_phy`), as in [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). The switch doesn't pass ebpf2203's pause frames back to the sender, so short overloads drop frames, and one lost frame loses its whole event.
-- **Bursts, not the average rate.** Each event leaves the sender as a line-rate burst. Back-to-back, those bursts reach ebpf2203 as they are. Through the LB (ESnet WAN and the LB's data plane) they arrive smoothed, so the same average rate drops fewer frames: 20 Gbps passed 3 of 3 through the LB but 1 of 3 back-to-back.
+- **Bursts, not the average rate.** Each event leaves the sender as a line-rate burst. Node-to-node, those bursts reach ebpf2203 as they are. Through the LB (ESnet WAN and the LB's data plane) they arrive smoothed, so the same average rate drops fewer frames: 20 Gbps passed 3 of 3 through the LB but 1 of 3 node-to-node.
 - **Possibly made worse by DAOS on the same adapter.** E2SAR arrives on `enp1s0f1np1` (Ethernet, 100 Gb/s) and DAOS writes go out on `ibp1s0f0` (InfiniBand HDR, 200 Gb/s). They're the two ports of **one ConnectX-6** (PCI `01:00.0` and `01:00.1`, PCIe Gen4 x16, NUMA node 0), so they share its host interface and on-card buffers.
   The one paced 40 Gbps run that had 0 discards wrote to DAOS at only 24 Gbps (4 dequeue threads). At 25 Gbps and more written to DAOS, there were nearly always some. This is a correlation, not a proof.
 - **Not the cause:** DAOS (writes take 0.2–0.5 ms p50 at every rate, no failed puts), socket buffers (1 GiB, no `RcvbufErrors`), the RX ring (8192, no `rx_out_of_buffer`).
@@ -286,10 +286,10 @@ The receive ring always had buffers (`rx_out_of_buffer` 0), so software wasn't h
 |---|---|---|
 | TCP into ebpf2203 reaches 98 Gbps (iperf3, 6–12 streams, MTU 9000) | iperf3 sweep, 2026-10-15, DAOS idle | The link, the port and the PCIe path sustain about line rate. The discards are short overloads, not a bandwidth ceiling |
 | UDP into ebpf2203 (iperf3, 4 streams) received ~20 Gbps for every offered rate from 25 to 80 Gbps, with 0 loss | same | The iperf3 sender couldn't go past ~20 Gbps, so this is no baseline above 20 Gbps. The nightly job uses the same kind of sender and will hit the same limit |
-| The same 20 Gbps traffic: lossless in 3 of 3 runs through the LB, 1 of 3 back-to-back | [section 5](#5-confirmation-runs-with-the-defaults) | Bursts matter, not the average rate |
-| ebpf2203 has sent pause frames (820), ebpf2201 has received none | [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md#8-parallel-senders-with-rx-ring-8192-and-pinned-receive-threads) | Back-to-back traffic also crosses a switch. ebpf2203 asks for backpressure but it doesn't reach the sender. Pause is per hop, so enabling it on the hosts alone can't fix this. Not known whether the switch honors the pause and buffers, or ignores it |
+| The same 20 Gbps traffic: lossless in 3 of 3 runs through the LB, 1 of 3 node-to-node | [section 5](#5-confirmation-runs-with-the-defaults) | Bursts matter, not the average rate |
+| ebpf2203 has sent pause frames (820), ebpf2201 has received none | [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md#8-parallel-senders-with-rx-ring-8192-and-pinned-receive-threads) | Node-to-node traffic also crosses a switch. ebpf2203 asks for backpressure but it doesn't reach the sender. Pause is per hop, so enabling it on the hosts alone can't fix this. Not known whether the switch honors the pause and buffers, or ignores it |
 | 40 Gbps on the wire. With 4 dequeue threads (24 Gbps into DAOS): 0 discards. With 16 (40 Gbps into DAOS): 92 | [section 3](#3-dequeue-threads-the-hidden-bottleneck) | Points to DAOS writes on the other port of the same ConnectX-6. One run each |
-| 1.5 MB events, back-to-back: 4,215 and 1,187 discards at 20 Gbps, but 267 and 121 at 40 Gbps | [section 6](#6-daos-layout-chunks-or-one-value-per-event) | Unexplained. Fewer discards at the higher rate goes against a simple rate effect. Possibly the Segmenters' bursts line up more often at 20 Gbps. Needs repeats |
+| 1.5 MB events, node-to-node: 4,215 and 1,187 discards at 20 Gbps, but 267 and 121 at 40 Gbps | [section 6](#6-daos-layout-chunks-or-one-value-per-event) | Unexplained. Fewer discards at the higher rate goes against a simple rate effect. Possibly the Segmenters' bursts line up more often at 20 Gbps. Needs repeats |
 
 ### Possible causes
 
@@ -333,11 +333,11 @@ Counter names depend on the mlx5 firmware. A counter that `ethtool -S` doesn't l
 
 | # | Run | Separates | Outcome → conclusion |
 |---|---|---|---|
-| 1 | Ask the network team about the switch port toward ebpf2203: does it honor received pause frames (flow control rx on)? Its egress discards and received-pause counters during one failing back-to-back run | 4 | Pause ignored or egress discards: the switch turns every overload into loss. Pause honored with deep buffers would make the problem mostly go away |
+| 1 | Ask the network team about the switch port toward ebpf2203: does it honor received pause frames (flow control rx on)? Its egress discards and received-pause counters during one failing node-to-node run | 4 | Pause ignored or egress discards: the switch turns every overload into loss. Pause honored with deep buffers would make the problem mostly go away |
 | 2 | iperf3 TCP, 8 streams, 30 s into ebpf2203, three times with DAOS idle and three times while ebpf2203 writes to pool `sc26` at 30–40 Gbps with fio (dfs engine) or IOR, with no E2SAR running | 2 vs 1 | TCP retransmits, discards or PCIe stalls rise only with DAOS writing: the shared adapter adds loss. No change: DAOS on the other port is not a factor |
-| 3 | Repeat the section 3 pair, three times each: back-to-back, 40 Gbps, `-D 4` vs `-D 16`. Record `port_xmit_data` | 2 vs 1 | Discards only with `-D 16`: same as run 2, with E2SAR traffic. The `-D 4` runs queue events in memory (up to ~4 GB for 100,000 events), so watch memory |
-| 4 | Back-to-back, 30 Gbps, `-D 16`, three runs each: `-f 64`, `256`, `1024` at `-P 16`, then `-P 4` and `-P 16` at `-f 256` | 1 | Discards grow with frames per event or with P at the same rate: burst overflow. A fixed DAOS rate in all of these keeps cause 2 constant |
-| 5 | Repeat section 6: 1.5 MB events (`-f 4096`), back-to-back, 20 and 40 Gbps, three runs each | The anomaly | Reproduced: burst alignment depends on the pacing interval, and worth a look at how `e2sar_evio_send` paces. Not reproduced: noise from 2 runs |
+| 3 | Repeat the section 3 pair, three times each: node-to-node, 40 Gbps, `-D 4` vs `-D 16`. Record `port_xmit_data` | 2 vs 1 | Discards only with `-D 16`: same as run 2, with E2SAR traffic. The `-D 4` runs queue events in memory (up to ~4 GB for 100,000 events), so watch memory |
+| 4 | Node-to-node, 30 Gbps, `-D 16`, three runs each: `-f 64`, `256`, `1024` at `-P 16`, then `-P 4` and `-P 16` at `-f 256` | 1 | Discards grow with frames per event or with P at the same rate: burst overflow. A fixed DAOS rate in all of these keeps cause 2 constant |
+| 5 | Repeat section 6: 1.5 MB events (`-f 4096`), node-to-node, 20 and 40 Gbps, three runs each | The anomaly | Reproduced: burst alignment depends on the pacing interval, and worth a look at how `e2sar_evio_send` paces. Not reproduced: noise from 2 runs |
 | 6 | On every run above, compare `outbound_pci_stalled_*` with `rx_discards_phy`. Check the IOMMU mode: `cat /proc/cmdline` (`iommu=pt`?) and `dmesg \| grep -i -e iommu -e dmar` | 3 | Stalls rise with discards even with DAOS idle: host DMA. Then try IOMMU passthrough |
 | 7 | A UDP baseline that gets past 20 Gbps: 8 iperf3 client processes on ebpf2201, each pinned (`-A`) to its own core and server port, each `-u -l 8972 -b <total/8>`, total 20–80 Gbps | Path vs E2SAR bursts | Zero loss well above E2SAR's ceiling: the path is fine and E2SAR's bursts are the problem. Loss near the same rate: the port loses evenly paced UDP too |
 
@@ -348,7 +348,7 @@ Counter names depend on the mlx5 firmware. A counter that `ethtool -S` doesn't l
 | Bursts (1) | Pacing inside each event (E2SAR's `--smooth` is too slow), smaller events, or fewer simultaneous Segmenters. Through the LB this is already mostly smoothed |
 | The shared adapter (2) | DAOS on a separate adapter or a separate node, or limit the DAOS write rate per receiver and add receivers behind the LB |
 | Host DMA (3) | IOMMU passthrough, NIC-local memory for the receive buffers, PCIe settings |
-| The switch (4) | Flow control on the switch port, or a switch with deeper buffers. Only this would make back-to-back loss turn into backpressure |
+| The switch (4) | Flow control on the switch port, or a switch with deeper buffers. Only this would make node-to-node loss turn into backpressure |
 
 A null sink in `e2sar_daos_recv` (receive and reassemble, skip the DAOS write) would make run 3 cleaner: the same wire traffic with no DAOS traffic at all, and no events queued in memory.
 
@@ -358,10 +358,10 @@ These are now the defaults of `e2sar_evio_send`, `e2sar_e2e_bench.sh` and (`--de
 
 | | Setting | Why |
 |---|---|---|
-| Sender | 16 Segmenters × 1 socket | Spreads events over many receive threads (back-to-back: ports PORT…PORT+15). One socket each keeps bursts short |
+| Sender | 16 Segmenters × 1 socket | Spreads events over many receive threads (node-to-node: ports PORT…PORT+15). One socket each keeps bursts short |
 | Sender | 256 frames per event (~95 KB) | Short line-rate bursts, but few enough events to stay far below the receiver's ~85k events/s |
-| Sender | `--rate 20` | The only rate with no loss in every run through the LB (3 of 3). Through the LB, up to 35 was lossless in some runs. Back-to-back, no rate tested was lossless every time |
-| Receiver | `--threads 32` | Through the LB: more ports, fewer events sharing one. Back-to-back: at least P |
+| Sender | `--rate 20` | The only rate with no loss in every run through the LB (3 of 3). Through the LB, up to 35 was lossless in some runs. Node-to-node, no rate tested was lossless every time |
+| Receiver | `--threads 32` | Through the LB: more ports, fewer events sharing one. Node-to-node: at least P |
 | Receiver | `--deq 16 --inflight 128` | 4 dequeue threads cap at ~24 Gbps. 16 are enough to 40 Gbps |
 | Receiver | `-b 1073741824 --timeout 10000` | As before. No socket drops |
 | Receiver | `--chunk 1024` | As fast as one value per event, a little faster for events > 1 MiB. See [DAOS layout](#6-daos-layout-chunks-or-one-value-per-event) |

@@ -23,7 +23,7 @@
     --digests writes "<dataId> <slot> <sha256>" for every pool slot.
 
     Paths: with --withcp the events go to the LB, which spreads them over the receiver's ports
-    by their random entropy. Without it (back-to-back) everything goes to the data= address in
+    by their random entropy. Without it (node-to-node) everything goes to the data= address in
     the URI; add --port-per-segmenter so Segmenter i sends to data port + i, which spreads
     them over the receiver's threads (--threads >= --segmenters).
 
@@ -200,7 +200,7 @@ std::string sha256(const std::vector<uint8_t>& b) {
 
 // ------------------------------------------------------------------ sending
 
-// The URI with every data=<host>:<port> port moved up by `by` (back-to-back, no LB).
+// The URI with every data=<host>:<port> port moved up by `by` (node-to-node, no LB).
 EjfatURI shiftDataPort(const std::string& uriStr, size_t by) {
     std::string out;
     size_t pos = 0;

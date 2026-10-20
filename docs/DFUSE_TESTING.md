@@ -1,4 +1,4 @@
-# Writing events through dfuse (b2b)
+# Writing events through dfuse (n2n)
 
 This compares two ways of storing E2SAR events in DAOS on the ebpf testbed:
 
@@ -6,7 +6,7 @@ This compares two ways of storing E2SAR events in DAOS on the ebpf testbed:
 - **dfuse**: `e2sar_daos_recv --dfuse <mount>` writes each event as one file into a POSIX container mounted with `dfuse`.
 - **pil4dfs**: the same as dfuse, with `libpil4dfs.so` preloaded, which turns the file calls into in-process libdfs calls and bypasses FUSE.
 
-All three use the back-to-back (b2b) bench, `bin/e2sar_e2e_bench.sh -m b2b`: `e2sar_evio_send` on ebpf2201 sends synthetic EVIO events straight to the receiver on ebpf2203, with no load balancer.
+All three use the node-to-node (n2n) bench, `bin/e2sar_e2e_bench.sh -m n2n`: `e2sar_evio_send` on ebpf2201 sends synthetic EVIO events straight to the receiver on ebpf2203, with no load balancer.
 Setup, MTU and NIC notes are in [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 
 ```
@@ -91,17 +91,17 @@ TAG=dfsmoke_${S}_<same number on both nodes>
 
 **ebpf2203, receiver:**
 ```bash
-$B recv $TAG -m b2b -T 1 -S $S
+$B recv $TAG -m n2n -T 1 -S $S
 ```
 
 **ebpf2201, sender:**
 ```bash
-$B send $TAG -m b2b -P 1 -s 1 -n 300 -f 4096 -r 2
+$B send $TAG -m n2n -P 1 -s 1 -n 300 -f 4096 -r 2
 ```
 
 The receiver prints a summary and exits 0 on PASS:
 ```
-dfsmoke_dfuse_1792444835 PASS  mode=b2b P=1 s=1 f=4096 rate=2 T=1 D=16 sink=dfuse  committed 300/300, verified 300
+dfsmoke_dfuse_1792444835 PASS  mode=n2n P=1 s=1 f=4096 rate=2 T=1 D=16 sink=dfuse  committed 300/300, verified 300
   received 2.04 Gbps (168 evt/s, 1521898 B/event)  e2e 2.00 Gbps  sender 2.00 Gbps
   ...
   latency daos     p50     9.138  p90    28.656  p99    53.733  max 82.778 ms
@@ -117,11 +117,11 @@ Raise the rate and the number of segmenters, and run the same sweep for each sin
 STAMP=<same number on both nodes>
 # ebpf2203
 for S in kv dfuse pil4dfs; do for R in 5 10 20 30; do
-  $B recv tput_${S}_r${R}_$STAMP -m b2b -T 32 -S $S
+  $B recv tput_${S}_r${R}_$STAMP -m n2n -T 32 -S $S
 done; done
 # ebpf2201, same order and TAGs
 for S in kv dfuse pil4dfs; do for R in 5 10 20 30; do
-  $B send tput_${S}_r${R}_$STAMP -m b2b -P 4 -s 1 -n 2500 -f 4096 -r $R
+  $B send tput_${S}_r${R}_$STAMP -m n2n -P 4 -s 1 -n 2500 -f 4096 -r $R
 done; done
 ```
 `-r` is the total sender rate in Gbps. Each run sends 4 × 2500 = 10,000 events of about 1.5 MB (15 GB).
@@ -152,8 +152,8 @@ Keep `$RUN`, which holds the logs and results.
 
 ## 7. Results from 2026-10-19 (smoke test)
 
-ebpf2201 → ebpf2203, b2b, MTU 9000, 1 segmenter at 2 Gbps, 300 events of about 1.5 MB, 1 receive port.
-Another b2b sweep was running on port 20600 at the same time, so these show correctness and per-event write cost, not peak throughput.
+ebpf2201 → ebpf2203, n2n, MTU 9000, 1 segmenter at 2 Gbps, 300 events of about 1.5 MB, 1 receive port.
+Another n2n sweep was running on port 20600 at the same time, so these show correctness and per-event write cost, not peak throughput.
 
 | Sink | Writer threads | Result | Received | Write latency p50 / p90 / p99 |
 |---|---|---|---|---|
