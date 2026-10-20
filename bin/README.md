@@ -20,7 +20,15 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 
 ## Data layout in DAOS
 
-Everything goes into one KV object (`DAOS_OT_KV_HASHED`) in `<pool>/<cont>`, identified by `--oid` (default `0xE25A`).
+Everything goes into one KV object (`DAOS_OT_KV_HASHED`) in `<pool>/<cont>`, identified by `--oid` (default `0xE25A`):
+
+```
+pool                  --pool, e.g. sc26
+└── container         --cont, e.g. e2sar (created on first use)
+    └── KV object     DAOS_OT_KV_HASHED, OID low bits --oid (default 0xE25A), class --oclass
+        └── keys      <prefix>/<evtNum>/<dataId>[/<chunk>], one KV value each
+```
+
 Each reassembled event is stored as follows. With `e2sar_ft`, one event is one file.
 
 ```
@@ -37,8 +45,61 @@ Each reassembled event is stored as follows. With `e2sar_ft`, one event is one f
     - An event smaller than the chunk size is a single value. `--chunk 0` stores every event as a single value.
 - **Commit marker:** the metadata key is written only after all of an event's chunks have been stored successfully. An event that is listed with metadata is complete. Chunks without metadata come from a failed or interrupted write. `e2sar_daos_read` reports them as *incomplete*.
 - **Key prefix:** `e2sar_ft` numbers events from 0 on every run, so use a new `--prefix` for each run (e.g. `run42`). Otherwise new data overwrites old data under the same keys.
+- **Key parts:** `prefix` is the run, `evtNum` is the E2SAR event number, and `dataId` is the sender stream. A Segmenter sends with its own dataId, so events from different streams with the same number don't collide.
+- **Placement:** the object is hashed, so DAOS places each key on a target by its hash, according to the object class (`--oclass`, e.g. `SX` or `RP_2G1`). The chunks of one event usually land on different targets and are written in parallel. Keys have no order in DAOS: `e2sar_daos_read` lists them all and groups them into events.
 
 The layout is defined in [`include/e2sar_daos/event_layout.hpp`](../include/e2sar_daos/event_layout.hpp).
+
+### Example: an EVIO file sent with `e2sar_ft`
+
+`e2sar_ft` sends each file as one event, numbered 0, 1, 2, … in the order it queues them.
+Say `frames_thread0_file0020.evio` (1,776,313,996 bytes) is the first file of a run, received with `--prefix run42` and sent with `--dataid 4321`.
+1,776,313,996 bytes = 1,694 chunks of 1 MiB + 26,252 bytes, so the event takes 1,695 chunk values and one metadata value:
+
+```
+run42/0/4321/0       bytes [0, 1048576)
+run42/0/4321/1       bytes [1048576, 2097152)
+...
+run42/0/4321/1693    bytes [1775239168, 1776287744)
+run42/0/4321/1694    bytes [1776287744, 1776313996)                  26,252 bytes
+run42/0/4321         "size=1776313996 chunk=1048576 nchunks=1695"    written last
+```
+
+The next file of the run is `run42/1/4321/...`, and so on.
+`e2sar_daos_read --prefix run42 --fetch -o DIR` joins the chunks back into `DIR/run42_0_4321.evio`, byte for byte the original file.
+
+### Example: events from `e2sar_evio_send`
+
+Here one event is one EVIO v6 record holding `-f` built time frames, not a file.
+Segmenter i sends with dataId 4321 + i and numbers its events 1…N, so every Segmenter has an event 1, and the dataId tells them apart.
+`e2sar_e2e_bench.sh` passes its TAG as `--prefix`. With the bench defaults (16 Segmenters, 256 frames ≈ 95 KB per event), every event fits in one chunk. For a run tagged `tput20`:
+
+```
+tput20/1/4321/0      event 1 of Segmenter 0: the whole EVIO record (S ≈ 95 KB)
+tput20/1/4321        "size=S chunk=S nchunks=1"
+tput20/1/4322/0      event 1 of Segmenter 1
+tput20/1/4322
+...
+tput20/1/4336/0      event 1 of Segmenter 15
+tput20/1/4336
+tput20/2/4321/0      event 2 of Segmenter 0
+tput20/2/4321
+...
+```
+
+S differs a little from event to event, with the hits in the frames.
+When an event is smaller than the chunk size, the metadata records the event size as the chunk size.
+With `-f 4096` (~1.5 MB events), each event has 2 chunks: `/0` with 1 MiB and `/1` with the remaining ~0.5 MB.
+
+| | `e2sar_ft` | `e2sar_evio_send` |
+|---|---|---|
+| One event | One whole file (often GBs) | One EVIO record of `-f` frames (~95 KB by default) |
+| `evtNum` | 0, 1, 2, … per run | 1…N per Segmenter |
+| `dataId` | `--dataid`, one stream | 4321 + i, one per Segmenter |
+| Chunks per event | Many (1,695 for the 1.7 GB file above) | Usually 1 |
+| Restored by `e2sar_daos_read -o` | The original `.evio` file | One standalone EVIO v6 record |
+
+With `e2sar_daos_recv --dfuse DIR` (the bench's `-S dfuse`), there is no KV object: each event is one file, `DIR/<prefix>/<prefix>_<evtNum>_<dataId>.evio`, in a POSIX container. See [docs/DFUSE_TESTING.md](../docs/DFUSE_TESTING.md).
 
 ## How writing works
 
