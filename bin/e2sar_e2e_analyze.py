@@ -18,6 +18,8 @@ latency_steady_ms has the same stages for the events queued --warmup seconds or 
 first one: the first ~0.2-0.4 s of a run wait up to ~150 ms while the receiver's first DAOS
 writes are slow, which dominates p90/p99 of short runs. lost_queued_s lists when the lost events
 were queued (seconds after the first), lost_after_warmup counts those at --warmup or later.
+--profile S prints, on stderr, the events queued in each S-second slice of the run: how many,
+how many were lost, and their latency (total p50/p90/max, network p50, daos p99).
 The two hosts' clocks are chrony-synced (offsets ~0.1 ms), so cross-host stages are good to ~0.2 ms.
 
 Throughput (payload bytes, Gbps = 1e9 bit/s):
@@ -46,6 +48,7 @@ def main():
     ap.add_argument("--pool", type=int, required=True, help="e2sar_evio_send --pool")
     ap.add_argument("--expected", type=int, required=True, help="events sent")
     ap.add_argument("--warmup", type=float, default=0.5, help="seconds excluded from latency_steady_ms (default 0.5)")
+    ap.add_argument("--profile", type=float, metavar="S", help="print latency and loss per S-second slice of the run")
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
                     help="extra fields for the JSON record (numbers are converted)")
     a = ap.parse_args()
@@ -122,6 +125,8 @@ def main():
         out["warmup_s"] = a.warmup
         out["lost_queued_s"] = lost
         out["lost_after_warmup"] = sum(t >= a.warmup for t in lost)
+        if a.profile:
+            profile(send, recv, q0, a.profile)
     out["result"] = "PASS" if out["committed"] == a.expected and ok == a.expected and bad == 0 else "FAIL"
     for kv in a.set:
         k, _, v = kv.partition("=")
@@ -134,6 +139,31 @@ def main():
                 out[k] = v
     print(json.dumps(out))
     summary(out)
+
+
+def profile(send, recv, q0, step):
+    """Latency and loss of the events queued in each `step`-second slice, on stderr."""
+    bins = {}
+    for k, (q, s) in send.items():
+        b = bins.setdefault(int((q - q0) / step), {"n": 0, "lost": 0, "total": [], "network": [], "daos": []})
+        b["n"] += 1
+        if k not in recv:
+            b["lost"] += 1
+            continue
+        _, rv, cm = recv[k]
+        b["total"].append((cm - q) * 1e3)
+        b["network"].append((rv - s) * 1e3)
+        b["daos"].append((cm - rv) * 1e3)
+    print(f"{'queued at s':>11} {'events':>7} {'lost':>5} {'total p50':>10} {'p90':>8} {'max':>8} {'network p50':>12} {'daos p99':>9}  (ms)",
+          file=sys.stderr)
+    for i in sorted(bins):
+        b = bins[i]
+        t, nw, dq = sorted(b["total"]), sorted(b["network"]), sorted(b["daos"])
+        if not t:
+            print(f"{i * step:11.2f} {b['n']:7d} {b['lost']:5d}", file=sys.stderr)
+            continue
+        print(f"{i * step:11.2f} {b['n']:7d} {b['lost']:5d} {pct(t, 50):10.2f} {pct(t, 90):8.2f} {t[-1]:8.2f} "
+              f"{pct(nw, 50):12.2f} {pct(dq, 99):9.2f}", file=sys.stderr)
 
 
 def summary(a):
