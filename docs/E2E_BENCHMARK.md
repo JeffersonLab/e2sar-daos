@@ -13,6 +13,7 @@ Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 
 | Highest with any loss | 61.2 Gbps received (59.8 E2E), node-to-node, 99.96% of events delivered |
 | What loses events | Frames dropped at ebpf2203's NIC port (`rx_discards_phy`). The LB path smooths the bursts, so loss starts later through it than node-to-node. Never DAOS, never the sockets. Why the port overflows is not settled yet: see [Diagnosing the port discards](#diagnosing-the-port-discards) |
 | What limits the rate | 1. The DAOS dequeue threads: 4 cap at ~24 Gbps, 16 reach 40, 32 reach 61. 2. Then the Reassembler at ~85k events/s, whatever the event size |
+| The DAOS sink alone | Without a sender (`--synthetic`), the KV sink at the defaults commits **92–103 Gbps** of 95 KB events and 183 Gbps of 1.5 MB events (the IB link). DAOS isn't what limits E2E. See [section 7](#7-the-sink-without-a-sender---synthetic) |
 | Latency at the defaults | Queued at the sender → committed in DAOS: **0.3–0.5 ms p50** node-to-node, most of it the DAOS write. **75.6 ms p50** through the LB, almost all of it the WAN round trip to ESnet. See [latency per stage](#latency-per-stage-ms-same-runs) |
 | iperf3 baseline | Partial (2026-10-15, DAOS idle). TCP into ebpf2203 reaches 98 Gbps, so the link, port and PCIe path sustain about line rate. UDP stopped at the iperf3 sender's ~20 Gbps with 0 loss, so there is no zero-loss UDP rate above 20 Gbps yet. See [what the evidence says](#what-the-evidence-says-so-far) |
 
@@ -29,7 +30,7 @@ e2sar_evio_send                                                  e2sar_daos_recv
 | Tool | What it does |
 |---|---|
 | [`bin/e2sar_evio_send`](../bin/e2sar_evio_send.cpp) | Builds synthetic EVIO v6 events and sends them with P E2SAR Segmenters, paced to a total rate. Writes per-event send times and the SHA-256 of every event it can send |
-| [`bin/e2sar_daos_recv`](../bin/README.md#e2sar_daos_recv) | The existing receiver, unchanged except that it now prints its clock start so its per-event times can be matched with the sender's |
+| [`bin/e2sar_daos_recv`](../bin/README.md#e2sar_daos_recv) | The existing receiver. It now prints its clock start so its per-event times can be matched with the sender's. `--synthetic` measures it without a sender ([section 7](#7-the-sink-without-a-sender---synthetic)) |
 | [`bin/e2sar_e2e_bench.sh`](../bin/e2sar_e2e_bench.sh) | Runs one test: starts the receiver, waits for it (and the LB) to be ready, sends, waits for every commit, reads every event back from DAOS, analyzes, cleans up |
 | [`bin/e2sar_e2e_analyze.py`](../bin/e2sar_e2e_analyze.py) | Joins the two hosts' per-event times, checks every digest, computes throughput and latency per stage |
 
@@ -251,6 +252,37 @@ They differ only for bigger events. Compared with 1.5 MB events (4096 frames, 16
 - **Latency: 1 MiB chunks are slightly faster** (0.55–0.57 vs 0.66–1.15 ms p50), because one event's chunks are written in parallel.
 - So keep `--chunk 1024`. One value per event saves nothing measurable and gives up the parallel writes for large events. One KV object for everything was not a limit either: at 61 Gbps each write still took 0.33 ms p50. Splitting into one object per event or per dataId (with dataIds as keys) would change the read-back layout without solving a measured problem. It might be worth testing if many receivers write at once.
 
+### 7. The sink without a sender (`--synthetic`)
+
+`e2sar_daos_recv --synthetic N` stores N events generated in memory, with no network and no Reassembler. Everything from the dequeue threads on is the same receiver code ([bin/README.md](../bin/README.md#synthetic-mode-the-sinks-ceiling-without-a-sender)). Unpaced, it shows the most the sink can commit with the given settings, which no end-to-end run with those settings can beat.
+`fio --ioengine=dfs` isn't a substitute: it writes byte ranges of a few large files, while the receiver does one KV put (or one file) per event, so per-operation costs that limit the receiver don't show up in fio's Gbps.
+
+Measured on 2026-10-20 on ebpf2203, idle testbed, the same debug build as the E2E runs. The DAOS engines are remote, behind the 200 Gb/s HDR port. Every run committed every event.
+
+| Sink | Event | `--deq` | Events | Commit Gbps | Events/s | Event latency p50 / p99 |
+|---|---|---|---|---|---|---|
+| kv | 95 KB | 4 | 100k ×2 | 27.6, 27.4 | 35k | 0.33 / 0.5–1.3 ms |
+| kv | 95 KB | **16 (default)** | 100k ×2, 500k | 103, 93, 92 | 118–132k | 0.33–0.43 / 2.6–16 ms |
+| kv | 95 KB | 32 | 100k ×2, 500k | 106, 111, 130 | 137–167k | 0.49–0.52 / 0.9–21 ms |
+| kv | 95 KB, `--chunk 0` | 16 | 100k ×2 | 97, 98 | 125k | 0.33 / 1.0–1.3 ms |
+| kv | 1.5 MB | 16 | 10k ×2, 50k | 158, 166, **183** | 13–15k | 84 / 185–201 ms |
+| dfuse | 95 KB | 16 | 50k | 2.5 | 3.2k | 5.2 / 10 ms |
+| pil4dfs | 95 KB | 16 | 50k | 12.6 | 16k | 0.98 / 1.7 ms |
+| dfuse | 1.5 MB | 16 | 5k | 35 | 2.8k | 4.7 / 42 ms |
+| pil4dfs | 1.5 MB | 16 | 5k, 25k | 160, 165 | 13k | 1.0–1.2 / 1.8–3.4 ms |
+| kv, paced `--rate 20` | 95 KB | 16 | 100k | 20.0 | 26k | 0.33 / 0.98 ms |
+
+What this says about the E2E results:
+- **The DAOS KV sink isn't what limits E2E.** At the defaults it commits 92–103 Gbps of 95 KB events, about 4× the highest lossless E2E rate. The limits are on the network side: the port discards and the Reassembler.
+- **The 4-thread cap in [section 3](#3-dequeue-threads-the-hidden-bottleneck) is the sink.** 4 dequeue threads commit 27.5 Gbps without a sender and 24.3 with one. That's about 8.8k events/s per thread, with one blocking `recvEvent`, two puts and their completions per event.
+- **The ~85k events/s ceiling is the Reassembler, not DAOS.** Without it, 32 threads commit 167k events/s.
+- **1.5 MB events reach the IB link** (183 Gbps ≈ 91% of 200 Gb/s). Their latency is queueing: 16 × 128 puts in flight at once, unpaced. At an E2E rate DAOS takes ~0.5 ms per event.
+- **Plain dfuse is the sink's own limit**, the same 3.2k files/s as in the [dfuse sweep](DFUSE_TESTING.md). pil4dfs reaches 16k files/s with 95 KB events and about the KV rate with 1.5 MB events.
+- **Paced at 20 Gbps, DAOS adds 0.33 ms p50**, the same as the "daos" stage in the node-to-node E2E runs. E2SAR traffic on the shared adapter doesn't slow the DAOS writes.
+- `--chunk 0` makes no difference at 95 KB: both layouts are one data put and one metadata put.
+
+`--synthetic --rate R` is also a cleaner DAOS load for run 2 of the [diagnosis plan](#runs-cheapest-first) than fio: the same write pattern as the receiver, at a fixed rate.
+
 ## Why the lossless ceiling is ~25 Gbps node-to-node and ~35 through the LB
 
 - **NIC port discards on ebpf2203** (`rx_discards_phy`), as in [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). The switch doesn't pass ebpf2203's pause frames back to the sender, so short overloads drop frames, and one lost frame loses its whole event.
@@ -335,7 +367,7 @@ Counter names depend on the mlx5 firmware. A counter that `ethtool -S` doesn't l
 | # | Run | Separates | Outcome → conclusion |
 |---|---|---|---|
 | 1 | Ask the network team about the switch port toward ebpf2203: does it honor received pause frames (flow control rx on)? Its egress discards and received-pause counters during one failing node-to-node run | 4 | Pause ignored or egress discards: the switch turns every overload into loss. Pause honored with deep buffers would make the problem mostly go away |
-| 2 | iperf3 TCP, 8 streams, 30 s into ebpf2203, three times with DAOS idle and three times while ebpf2203 writes to pool `sc26` at 30–40 Gbps with fio (dfs engine) or IOR, with no E2SAR running | 2 vs 1 | TCP retransmits, discards or PCIe stalls rise only with DAOS writing: the shared adapter adds loss. No change: DAOS on the other port is not a factor |
+| 2 | iperf3 TCP, 8 streams, 30 s into ebpf2203, three times with DAOS idle and three times while ebpf2203 writes to pool `sc26` at 30–40 Gbps with `e2sar_daos_recv --synthetic 2000000 --rate 35` (the receiver's own write pattern; [section 7](#7-the-sink-without-a-sender---synthetic)), with no E2SAR running | 2 vs 1 | TCP retransmits, discards or PCIe stalls rise only with DAOS writing: the shared adapter adds loss. No change: DAOS on the other port is not a factor |
 | 3 | Repeat the section 3 pair, three times each: node-to-node, 40 Gbps, `-D 4` vs `-D 16`. Record `port_xmit_data` | 2 vs 1 | Discards only with `-D 16`: same as run 2, with E2SAR traffic. The `-D 4` runs queue events in memory (up to ~4 GB for 100,000 events), so watch memory |
 | 4 | Node-to-node, 30 Gbps, `-D 16`, three runs each: `-f 64`, `256`, `1024` at `-P 16`, then `-P 4` and `-P 16` at `-f 256` | 1 | Discards grow with frames per event or with P at the same rate: burst overflow. A fixed DAOS rate in all of these keeps cause 2 constant |
 | 5 | Repeat section 6: 1.5 MB events (`-f 4096`), node-to-node, 20 and 40 Gbps, three runs each | The anomaly | Reproduced: burst alignment depends on the pacing interval, and worth a look at how `e2sar_evio_send` paces. Not reproduced: noise from 2 runs |
