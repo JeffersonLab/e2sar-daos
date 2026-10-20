@@ -87,7 +87,6 @@ case $SINK in
     dfuse|pil4dfs) : "${DEQ:=16}" ;;
     *)             usage ;;
 esac
-[ "$MODE" = b2b ] && MODE=n2n   # old name for n2n
 case $MODE in
     lb)  : "${EJFAT_URI:?EJFAT_URI (LB instance URI) not set}"; URI=$EJFAT_URI; CP=--withcp ;;
     n2n) URI="ejfat://useless@10.10.10.10:1234/lb/1?data=$RECV_IP:$PORT"; CP= ;;
