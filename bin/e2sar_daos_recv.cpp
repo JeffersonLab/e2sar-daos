@@ -17,12 +17,22 @@
     so idle time before the sender starts or after it stops doesn't dilute the numbers,
     plus latency distributions per event (reassembled -> committed) and per daos_kv_put.
     --timing-csv writes one row per committed event.
+
+    dfuse mode (--dfuse DIR): instead of the KV object, write each event as one file
+    DIR/<prefix>/<prefix>_<evt>_<dataId>.evio (the names e2sar_daos_read --fetch -o uses),
+    with blocking open/write/close on each dequeue thread. Meant for a dfuse mount of a
+    POSIX container, to compare against the native KV path; the pool/container options
+    are then ignored. "Committed" means close() (and fsync() with --fsync) returned.
 */
 
+#include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -59,11 +69,15 @@ struct Stats {
     std::atomic<uint64_t> putErrors{0};
     std::atomic<uint64_t> recvErrors{0};
     std::atomic<int> lastDaosErr{0};
+    std::atomic<int> lastErrno{0};  // dfuse mode
 } stats;
 
 // All timestamps are nanoseconds since program start (steady clock).
 using Clock = std::chrono::steady_clock;
 const Clock::time_point tStart = Clock::now();
+// The same instant on the system clock, so CSV times can be matched with other hosts.
+const int64_t tStartEpochNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
 
 int64_t sinceStartNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - tStart).count();
@@ -75,7 +89,7 @@ struct Timing {
     std::atomic<int64_t> lastCommitNs{-1};
     std::mutex mtx;                 // guards the merged histograms and the CSV
     LatencyHistogram eventLatency;  // reassembled event handed to us -> metadata committed
-    LatencyHistogram putLatency;    // each daos_kv_put, launch -> completion
+    LatencyHistogram putLatency;    // each daos_kv_put, launch -> completion (dfuse mode: open -> close)
     std::ofstream csv;
 } timing;
 
@@ -96,6 +110,8 @@ struct WriterConfig {
     size_t chunkSize;    // 0 = whole event in one value
     size_t maxInflight;  // per thread
     bool verbose;
+    std::string dir;     // dfuse mode: <mount>/<prefix>; empty = KV mode
+    bool fsync;          // dfuse mode: fsync before close
 };
 
 // One reassembled event while its chunks are being written.
@@ -246,6 +262,79 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
     }
 }
 
+// Write the whole buffer to a new file; returns 0 or an errno.
+int writeFile(const std::string& path, const uint8_t* buf, size_t size, bool doFsync) {
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+        return errno;
+    int err = 0;
+    for (size_t off = 0; off < size && err == 0;) {
+        const ssize_t n = ::write(fd, buf + off, size - off);
+        if (n < 0 && errno != EINTR)
+            err = errno;
+        else if (n > 0)
+            off += static_cast<size_t>(n);
+    }
+    if (err == 0 && doFsync && ::fsync(fd) != 0)
+        err = errno;
+    if (::close(fd) != 0 && err == 0)
+        err = errno;
+    return err;
+}
+
+// dfuse mode: receive -> write one file -> commit. Runs on one thread.
+void dfuseLoop(Reassembler* reas, const WriterConfig cfg, int tid) {
+    LatencyHistogram eventLatency, writeLatency;  // per thread; merged into timing at the end
+    while (running) {
+        uint8_t* raw = nullptr;
+        size_t size = 0;
+        EventNum_t evtNum = 0;
+        uint16_t dataId = 0;
+        auto res = reas->recvEvent(&raw, &size, &evtNum, &dataId, 100);
+        if (res.has_error()) {
+            stats.recvErrors++;
+            continue;
+        }
+        if (res.value() == -1)  // nothing queued (or stopping)
+            continue;
+        std::unique_ptr<uint8_t[]> buf(raw);  // E2SAR allocates events with new[]
+
+        const int64_t recvNs = sinceStartNs();
+        updateMin(timing.firstRecvNs, recvNs);
+        updateMax(timing.lastRecvNs, recvNs);
+        stats.eventsReceived++;
+        stats.bytesReceived += size;
+
+        const std::string name = cfg.prefix + "_" + std::to_string(evtNum) + "_" + std::to_string(dataId) + ".evio";
+        const int64_t t0 = sinceStartNs();
+        const int err = writeFile(cfg.dir + "/" + name, buf.get(), size, cfg.fsync);
+        const int64_t now = sinceStartNs();
+        if (err != 0) {
+            stats.putErrors++;
+            stats.eventsFailed++;
+            stats.lastErrno = err;
+            std::cerr << "[t" << tid << "] event " << evtNum << "/" << dataId << " not written: "
+                      << std::strerror(err) << std::endl;
+            continue;
+        }
+        updateMax(timing.lastCommitNs, now);
+        eventLatency.record(static_cast<uint64_t>(now - recvNs));
+        writeLatency.record(static_cast<uint64_t>(now - t0));
+        stats.eventsCommitted++;
+        stats.bytesCommitted += size;
+        if (timing.csv.is_open()) {
+            std::lock_guard<std::mutex> lk(timing.mtx);
+            timing.csv << evtNum << ',' << dataId << ',' << size << ",1," << tid << ',' << recvNs / 1e9 << ','
+                       << now / 1e9 << ',' << (now - recvNs) / 1e6 << '\n';
+        }
+        if (cfg.verbose)
+            std::cout << "[t" << tid << "] committed " << name << " (" << size << " bytes)" << std::endl;
+    }
+    std::lock_guard<std::mutex> lk(timing.mtx);
+    timing.eventLatency.merge(eventLatency);
+    timing.putLatency.merge(writeLatency);
+}
+
 void reportLoop(Reassembler* reas, unsigned intervalSec) {
     using clock = std::chrono::steady_clock;
     uint64_t lastBytes = 0, lastEvents = 0, lastRcvdBytes = 0;
@@ -290,7 +379,7 @@ result<int> prepareToReceive(Reassembler& r) {
     return r.openAndStart();
 }
 
-void printFinalStats(Reassembler& r) {
+void printFinalStats(Reassembler& r, bool dfuseMode) {
     const auto rs = r.getStats();
     std::cout << "Reassembler:" << std::endl
               << "\tEvents reassembled:        " << rs.eventSuccess << std::endl
@@ -298,15 +387,17 @@ void printFinalStats(Reassembler& r) {
               << "\tLost in enqueue:           " << rs.enqueueLoss << std::endl
               << "\tData errors:               " << rs.dataErrCnt << std::endl
               << "\tgRPC errors:               " << rs.grpcErrCnt << std::endl;
-    std::cout << "DAOS:" << std::endl
+    std::cout << (dfuseMode ? "dfuse:" : "DAOS:") << std::endl
               << "\tEvents received:           " << stats.eventsReceived << std::endl
               << "\tEvents committed:          " << stats.eventsCommitted << std::endl
               << "\tBytes committed:           " << stats.bytesCommitted << std::endl
               << "\tEvents failed:             " << stats.eventsFailed << std::endl
-              << "\tPut errors:                " << stats.putErrors << std::endl
+              << (dfuseMode ? "\tWrite errors:              " : "\tPut errors:                ") << stats.putErrors << std::endl
               << "\trecvEvent errors:          " << stats.recvErrors << std::endl;
     if (stats.lastDaosErr != 0)
         std::cout << "\tLast DAOS error:           " << d_errstr(stats.lastDaosErr) << std::endl;
+    if (stats.lastErrno != 0)
+        std::cout << "\tLast write error:          " << std::strerror(stats.lastErrno) << std::endl;
 }
 
 std::string fmtRate(uint64_t bytes, uint64_t events, int64_t windowNs) {
@@ -330,7 +421,7 @@ std::string fmtLatency(const LatencyHistogram& h) {
     return o.str();
 }
 
-void printTiming() {
+void printTiming(bool dfuseMode) {
     const int64_t first = timing.firstRecvNs, lastRecv = timing.lastRecvNs, lastCommit = timing.lastCommitNs;
     std::cout << "Timing:" << std::endl;
     if (first < 0) {
@@ -343,10 +434,11 @@ void printTiming() {
               << "\tCommit window:             " << (lastCommit >= 0 ? (lastCommit - first) / 1e9 : 0.0)
               << " s (first event received -> last event committed)" << std::endl
               << "\tIngest throughput:         " << fmtRate(stats.bytesReceived, stats.eventsReceived, lastRecv - first) << std::endl
-              << "\tDAOS commit throughput:    "
+              << (dfuseMode ? "\tdfuse commit throughput:   " : "\tDAOS commit throughput:    ")
               << fmtRate(stats.bytesCommitted, stats.eventsCommitted, lastCommit >= 0 ? lastCommit - first : 0) << std::endl
               << "\tEvent latency (recv->commit): " << fmtLatency(timing.eventLatency) << std::endl
-              << "\tdaos_kv_put latency:       " << fmtLatency(timing.putLatency) << std::endl;
+              << (dfuseMode ? "\tFile open->close latency:  " : "\tdaos_kv_put latency:       ")
+              << fmtLatency(timing.putLatency) << std::endl;
 }
 
 }  // namespace
@@ -354,7 +446,7 @@ void printTiming() {
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
 
-    std::string uriStr, recvIP, pool, cont, oclass, prefix, timingCsv;
+    std::string uriStr, recvIP, pool, cont, oclass, prefix, timingCsv, outDir;
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB;
     std::vector<int> coreList;
@@ -387,6 +479,9 @@ int main(int argc, char** argv) {
     opts("chunk", po::value<size_t>(&chunkKiB)->default_value(1024), "chunk size in KiB for splitting events into KV values (0 = one value per event)");
     opts("inflight", po::value<size_t>(&inflight)->default_value(64), "max concurrent async puts per dequeue thread");
     opts("deq", po::value<size_t>(&deqThreads)->default_value(1), "number of dequeue threads, each with its own DAOS event queue");
+    // dfuse mode (POSIX container mounted with dfuse)
+    opts("dfuse", po::value<std::string>(&outDir), "dfuse mount point: write each event as a file under DIR/<prefix>/ instead of the KV object; --pool/--cont/--oid/--oclass/--chunk/--inflight are ignored");
+    opts("fsync", po::bool_switch()->default_value(false), "with --dfuse: fsync each file before closing it");
     opts("report", po::value<unsigned>(&reportSec)->default_value(1), "progress report interval in seconds (0 = off)");
     opts("verbose", po::bool_switch()->default_value(false), "print every committed event");
     opts("timing-csv", po::value<std::string>(&timingCsv), "write one CSV row of timing per committed event to this file");
@@ -465,23 +560,39 @@ int main(int argc, char** argv) {
     signal(SIGTERM, onSignal);
 
     std::cout << "E2SAR version:        " << get_Version() << std::endl
+              << "Clock start:          " << tStartEpochNs << " ns since epoch (--timing-csv times are relative to it)" << std::endl
               << "DAOS version:         " << DAOS_VERSION_MAJOR << "." << DAOS_VERSION_MINOR << "."
               << DAOS_VERSION_FIX << std::endl;
 
+    const bool dfuseMode = !outDir.empty();
     try {
-        // DAOS first: fail before registering with the load balancer if storage is unavailable.
-        DaosRuntime daos;
-        DaosPool daosPool(pool);
-        DaosContainer daosCont(daosPool, cont, /*createIfMissing=*/true);
-        DaosKV kv(daosCont, oidLo, 0, oclass);
+        // Storage first: fail before registering with the load balancer if it is unavailable.
+        std::unique_ptr<DaosRuntime> daos;
+        std::unique_ptr<DaosPool> daosPool;
+        std::unique_ptr<DaosContainer> daosCont;
+        std::unique_ptr<DaosKV> kv;
+        if (dfuseMode) {
+            outDir += "/" + prefix;
+            if (::mkdir(outDir.c_str(), 0755) != 0 && errno != EEXIST) {
+                std::cerr << "Unable to create " << outDir << ": " << std::strerror(errno) << std::endl;
+                return 1;
+            }
+            std::cout << "Output directory:     " << outDir << (vm["fsync"].as<bool>() ? " (fsync)" : "") << std::endl
+                      << "Dequeue threads:      " << deqThreads << " (blocking file writes)" << std::endl;
+        } else {
+            daos = std::make_unique<DaosRuntime>();
+            daosPool = std::make_unique<DaosPool>(pool);
+            daosCont = std::make_unique<DaosContainer>(*daosPool, cont, /*createIfMissing=*/true);
+            kv = std::make_unique<DaosKV>(*daosCont, oidLo, 0, oclass);
 
-        std::cout << "DAOS pool/container:  " << pool << "/" << cont
-                  << (daosCont.created() ? " (created)" : " (existing)") << std::endl
-                  << "KV object id:         " << std::hex << "0x" << kv.oid().hi << ".0x" << kv.oid().lo
-                  << std::dec << std::endl
-                  << "Key prefix:           " << prefix << std::endl
-                  << "Chunk size:           " << (chunkKiB ? std::to_string(chunkKiB) + " KiB" : "whole event") << std::endl
-                  << "Dequeue threads:      " << deqThreads << " x " << inflight << " in-flight puts" << std::endl;
+            std::cout << "DAOS pool/container:  " << pool << "/" << cont
+                      << (daosCont->created() ? " (created)" : " (existing)") << std::endl
+                      << "KV object id:         " << std::hex << "0x" << kv->oid().hi << ".0x" << kv->oid().lo
+                      << std::dec << std::endl
+                      << "Key prefix:           " << prefix << std::endl
+                      << "Chunk size:           " << (chunkKiB ? std::to_string(chunkKiB) + " KiB" : "whole event") << std::endl
+                      << "Dequeue threads:      " << deqThreads << " x " << inflight << " in-flight puts" << std::endl;
+        }
 
         Reassembler::ReassemblerFlags rflags;
         rflags.useCP = withCP;  // E2SAR >= 0.4 expects the LB header iff the control plane is off
@@ -512,10 +623,15 @@ int main(int argc, char** argv) {
         }
         std::cout << "Receiving; Ctrl-C to stop" << std::endl;
 
-        const WriterConfig cfg{prefix, chunkKiB * 1024, inflight, vm["verbose"].as<bool>()};
+        const WriterConfig cfg{prefix, chunkKiB * 1024, inflight, vm["verbose"].as<bool>(), outDir,
+                               vm["fsync"].as<bool>()};
         std::vector<std::thread> workers;
-        for (size_t i = 0; i < deqThreads; i++)
-            workers.emplace_back(dequeueLoop, reas.get(), &kv, cfg, static_cast<int>(i));
+        for (size_t i = 0; i < deqThreads; i++) {
+            if (dfuseMode)
+                workers.emplace_back(dfuseLoop, reas.get(), cfg, static_cast<int>(i));
+            else
+                workers.emplace_back(dequeueLoop, reas.get(), kv.get(), cfg, static_cast<int>(i));
+        }
         std::thread reporter;
         if (reportSec > 0)
             reporter = std::thread(reportLoop, reas.get(), reportSec);
@@ -531,8 +647,8 @@ int main(int argc, char** argv) {
         if (dereg.has_error())
             std::cerr << "Unable to deregister worker: " << dereg.error().message() << std::endl;
         reas->stopThreads();
-        printFinalStats(*reas);
-        printTiming();
+        printFinalStats(*reas, dfuseMode);
+        printTiming(dfuseMode);
         if (timing.csv.is_open()) {
             timing.csv.close();
             std::cout << "Per-event timing written to " << timingCsv << std::endl;
