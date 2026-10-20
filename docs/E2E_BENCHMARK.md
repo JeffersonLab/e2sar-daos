@@ -99,7 +99,7 @@ The same as one JSON line goes to `$RUN/bench/results.jsonl`. The exit status is
 | `-C` | recv | 1024 | DAOS chunk size in KiB (0: whole event in one value). KV sink only |
 | `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Where events go: the DAOS KV object (all results here), or files through dfuse. See [DFUSE_TESTING.md](DFUSE_TESTING.md) |
 
-Environment overrides: `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS=--stagger`).
+Environment overrides: `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS="-b 8388608"` for an 8 MiB send socket buffer).
 
 - **Check that the nodes are idle first,** as in [ESNET_LB_TESTING.md step 4](ESNET_LB_TESTING.md). The receiver refuses to start if `PORT` is in use.
 - **Clean-up is built in.** The receiver destroys the container after reading it back. There are no source files: the sender builds its events in memory. Each run leaves only its logs and CSVs in `$RUN/bench/<TAG>/`. For 100,000 events that's about 10 MB.
@@ -257,7 +257,7 @@ They differ only for bigger events. Compared with 1.5 MB events (4096 frames, 16
 ### 7. Node-to-node rate sweep, 20–50 Gbps (2026-10-20)
 
 16 Segmenters × 1 socket, 95 KB events (`-f 256`), 100,000 events per run, 32 receive threads, **32 dequeue threads** (`-D 32`, since 16 cap at ~40 Gbps, [section 3](#3-dequeue-threads-the-hidden-bottleneck)), 1 MiB chunks, KV sink.
-Six runs per rate: three with the sender as before, three with `SEND_ARGS=--stagger` (see below), taken in turn across the rates (20, 25, …, 50, then again), 13:30–14:46 on an otherwise idle testbed.
+Six runs per rate: three with the sender as it is, three with a sender that staggered its Segmenters' start (see below), taken in turn across the rates (20, 25, …, 50, then again), 13:30–14:46 on an otherwise idle testbed.
 Node-to-node only: LB 638 had another worker registered (indra-s2) that would have taken part of the events, so the LB was not rerun.
 
 ```bash
@@ -324,14 +324,14 @@ All events of the same runs, as the bench prints them (`latency_ms`), and the ev
 
 #### Staggered Segmenter start: no effect
 
-All of the sender's Segmenters used to send their first event at the same instant and then stay in phase, so the first 16 events left as one 1.5 MB burst. `e2sar_evio_send --stagger` starts Segmenter i i/P of an event interval after Segmenter 0, so their events interleave from the start.
+The first suspicion was the sender: if all 16 Segmenters sent their first event at the same instant and stayed in phase, the first events would leave as one 1.5 MB burst. For half of the runs, the sender delayed Segmenter i's schedule by i/P of an event interval in a test build, so their events would interleave.
 
 | Sender | Runs | Lossless | Lost events, all runs | Runs with a loss after the first 0.5 s |
 |---|---|---|---|---|
-| All Segmenters at once (default) | 21 | 3 | 278 | 2 |
-| `--stagger` | 21 | 1 | 161 | 1 |
+| As it is | 21 | 3 | 278 | 2 |
+| Staggered start | 21 | 1 | 161 | 1 |
 
-No real difference. The loss at the start isn't the Segmenters' aligned first events, so `--stagger` stays off by default.
+No real difference, and `send.csv` shows why: even without the stagger, the 16 producing threads start 2.0–2.8 ms apart, longer than one event interval (0.6 ms per Segmenter at 20 Gbps, 0.24 ms at 50). The Segmenters were never in phase, so the stagger was left out of `e2sar_evio_send`. The loss at the start is not the sender's first events.
 
 #### Next steps
 

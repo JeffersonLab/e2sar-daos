@@ -38,9 +38,6 @@
 
     --rate is the total for all Segmenters, paced by the producing threads (the Segmenter's
     own rate limit works in whole microseconds per event, too coarse for small events).
-    --stagger starts Segmenter i i/P of an event interval after Segmenter 0, so the Segmenters'
-    events interleave instead of leaving at the same instant. It made no difference to the loss
-    at the start of node-to-node runs (docs/E2E_BENCHMARK.md, section 7).
 */
 
 #include <signal.h>
@@ -248,15 +245,14 @@ struct Worker {
 };
 
 // Pace to `gbps` (total over all workers, so each gets gbps / nWorkers); < 0 = unlimited.
-// The first event is due `offsetNs` after the start.
-void produce(Worker& w, uint64_t events, double gbps, double offsetNs) {
+void produce(Worker& w, uint64_t events, double gbps) {
     const auto t0 = std::chrono::steady_clock::now();
     uint64_t sentBytes = 0;
     for (uint64_t e = 0; e < events && running; e++) {
         const uint64_t n = e + 1;   // event number; always passed explicitly (0 = "continue")
         auto& ev = w.pool[n % w.pool.size()];
         if (gbps > 0) {
-            const double due = offsetNs + sentBytes * 8.0 / gbps;   // ns since t0
+            const double due = sentBytes * 8.0 / gbps;   // ns since t0
             while (std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() < due)
                 ;
         }
@@ -294,7 +290,6 @@ int main(int argc, char** argv) {
     FrameShape shape;
     double rate;
     int sndBuf;
-    bool stagger;
 
     opts("help,h", "show this help message");
     opts("uri,u", po::value<std::string>(&uriStr), "EJFAT URI (default: $EJFAT_URI)");
@@ -302,7 +297,6 @@ int main(int argc, char** argv) {
     opts("ip", po::value<std::string>(&senderIP), "sender IP to add to the LB (required with --withcp)");
     opts("novalidate,v", po::bool_switch()->notifier([&](bool b) { validate = !b; }), "don't validate the LB TLS certificate");
     opts("port-per-segmenter", po::bool_switch(&multiPort), "without --withcp: Segmenter i sends to the URI data port + i, one receive thread each");
-    opts("stagger", po::bool_switch(&stagger), "start Segmenter i i/P of an event interval after Segmenter 0, not all at once");
     opts("mtu,m", po::value<uint16_t>(&mtu)->default_value(9000), "MTU");
     opts("segmenters,P", po::value<size_t>(&segmenters)->default_value(16), "number of Segmenters, each with its own producing thread");
     opts("sockets,s", po::value<size_t>(&sockets)->default_value(1), "send sockets/threads per Segmenter");
@@ -418,11 +412,8 @@ int main(int argc, char** argv) {
 
     const uint64_t t0 = nowNs();
     std::vector<std::thread> producers;
-    const double perSeg = rate > 0 ? rate / segmenters : -1.0;
-    const double interval = rate > 0 ? meanEvent * 8.0 / perSeg : 0;   // ns between one Segmenter's events
-    for (size_t i = 0; i < workers.size(); i++)
-        producers.emplace_back(produce, std::ref(*workers[i]), events, perSeg,
-                               stagger ? interval * i / segmenters : 0.0);
+    for (auto& w : workers)
+        producers.emplace_back(produce, std::ref(*w), events, rate > 0 ? rate / segmenters : -1.0);
     for (auto& t : producers)
         t.join();
 

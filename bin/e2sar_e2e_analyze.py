@@ -112,6 +112,9 @@ def main():
         for key, st in (("latency_ms", stages), ("latency_steady_ms", steady)):
             out[key] = {}
             for name, v in st.items():
+                if not v:   # run shorter than --warmup
+                    out[key][name] = None
+                    continue
                 v.sort()
                 out[key][name] = {"p50": round(pct(v, 50), 3), "p90": round(pct(v, 90), 3),
                                   "p99": round(pct(v, 99), 3), "max": round(v[-1], 3) if v else None}
@@ -147,7 +150,7 @@ def summary(a):
                      f"sender {g('sender_goodput_gbps', 0):.2f} Gbps")
     for k, v in g("latency_ms", {}).items():
         lines.append(f"  latency {k:8s} p50 {v['p50']:9.3f}  p90 {v['p90']:9.3f}  p99 {v['p99']:9.3f}  max {v['max']} ms")
-    if "latency_steady_ms" in a:
+    if (a.get("latency_steady_ms") or {}).get("total"):
         v = a["latency_steady_ms"]["total"]
         lines.append(f"  after {a['warmup_s']} s: total p50 {v['p50']:.3f}  p90 {v['p90']:.3f}  p99 {v['p99']:.3f}  max {v['max']} ms, "
                      f"lost {a['lost_after_warmup']} of {len(a['lost_queued_s'])}")
