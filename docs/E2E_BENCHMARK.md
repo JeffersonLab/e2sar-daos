@@ -34,7 +34,8 @@ e2sar_evio_send                                                  e2sar_daos_recv
 | [`bin/e2sar_evio_send`](../bin/e2sar_evio_send.cpp) | Builds synthetic EVIO v6 events and sends them with P E2SAR Segmenters, paced to a total rate. Writes per-event send times and the SHA-256 of every event it can send |
 | [`bin/e2sar_daos_recv`](../bin/README.md#e2sar_daos_recv) | The existing receiver, unchanged except that it now prints its clock start so its per-event times can be matched with the sender's |
 | [`bin/e2sar_e2e_bench.sh`](../bin/e2sar_e2e_bench.sh) | Runs one test: starts the receiver, waits for it (and the LB) to be ready, sends, waits for every commit, reads every event back from DAOS, analyzes, cleans up |
-| [`bin/e2sar_e2e_analyze.py`](../bin/e2sar_e2e_analyze.py) | Joins the two hosts' per-event times, checks every digest, computes throughput and latency per stage |
+| [`bin/e2sar_e2e_analyze.py`](../bin/e2sar_e2e_analyze.py) | Joins the two hosts' per-event times, checks every digest, computes throughput and latency per stage. `--profile S` shows latency and loss per S-second slice of the run |
+| [`bin/e2sar_e2e_sweep.sh`](../bin/e2sar_e2e_sweep.sh) | Runs a rate sweep of the bench from a machine that can SSH to both nodes |
 
 You don't need a different receiver. `e2sar_daos_recv` stores any event, and the bench checks that what it stored is byte-for-byte what was sent.
 
@@ -266,6 +267,9 @@ Node-to-node only: LB 638 had another worker registered (indra-s2) that would ha
 $B recv TAG -m n2n -T 32 -D 32                               $B send TAG -m n2n -P 16 -s 1 -n 6250 -f 256 -r RATE
 ```
 
+The sweep ran from a laptop with SSH to both nodes, with [`bin/e2sar_e2e_sweep.sh`](../bin/e2sar_e2e_sweep.sh): `e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3`.
+Every run's result, with the warm-up fields of the current analyzer, is in [`data/e2e_sweep_2026-10-20.jsonl`](data/e2e_sweep_2026-10-20.jsonl) (54 runs: `"sweep"` is `kv`, `kv-staggered-start` or `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
+
 | Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
 |---|---|---|---|---|---|---|
 | 20 | 1 / 6 | 20.09–20.13 | 19.95 | 0, 1, 3, 5, 6, 8 | 4 / 6 | 0–23 |
@@ -278,8 +282,7 @@ $B recv TAG -m n2n -T 32 -D 32                               $B send TAG -m n2n 
 
 - **Highest lossless E2E: 29.9 Gbps**, in 1 of 6 runs at 30 Gbps. No rate was lossless in every run, not even 20 Gbps (1 of 6), as in [section 5](#5-confirmation-runs-with-the-defaults).
 - **The sender and the receiver kept up at every rate.** The sender reached its rate to within 0.35%, and DAOS took events as fast as they came (received ≈ rate). What failed was always a few events lost to NIC port discards, never a backlog. No socket drops, ring overflows or failed DAOS writes.
-- **The loss is at the start.** In 39 of the 42 runs, every lost event was queued in the first 0.5 s, nearly all in the first 0.1 s. The three exceptions: 1 event at 0.92 s (20 Gbps), 5 at 2.4 s (20 Gbps) and 35 at 1.8 s (30 Gbps). After the first 0.5 s, every run from 35 to 50 Gbps was lossless.
-- The lost events come in clusters of 3–24 queued at the same instant, from different Segmenters: one short overflow of ebpf2203's port buffer per cluster.
+- **The loss is at the start.** In 39 of the 42 runs, every lost event was queued in the first 0.5 s, nearly all in the first 0.1 s. The three exceptions: 1 event at 0.92 s and 5 at 2.4 s (both 20 Gbps), and one 30 Gbps run that lost 61 events in 10 clusters from 0 to 1.8 s. After the first 0.5 s, every run from 35 to 50 Gbps was lossless. See [the lost events](#the-lost-events).
 
 #### Latency per stage, node-to-node (ms)
 
@@ -322,6 +325,101 @@ All events of the same runs, as the bench prints them (`latency_ms`), and the ev
 - At a higher rate more events arrive during the slow start, so more of them wait: by 40 Gbps over 10% of a 1.9 s run, which is why the whole-run p90 jumps from ~1 ms (20 Gbps) to 59–109 ms (40–50 Gbps). The p99 of 116–167 ms is the start of the run at every rate.
 - **This is also when the events are lost** (above). It's the one part of the run where DAOS is slow, and where the receiver opens its DAOS connections, so it fits the shared-adapter idea ([cause 2](#possible-causes)) better than bursts alone. Not proven: the counters in [Counters to record](#counters-to-record-in-every-diagnosis-run) weren't recorded per moment.
 - A receiver that runs for hours goes through this once. For a DAQ it's the steady-state numbers that count, but the start should be fixed or warmed up before data arrives (see the next steps).
+
+#### Latency and loss over a run
+
+`e2sar_e2e_analyze.py RUNDIR --pool 64 --expected 100000 --profile 0.1` splits a run by when each event was queued. Three runs (lost events / total p50 / daos p99, ms):
+
+| Queued at (s) | kv, 20 Gbps (`r20_1_1020a`) | kv, 50 Gbps (`r50_2_1020a`) | pil4dfs, 20 Gbps (`r20_1_1020p`) |
+|---|---|---|---|
+| 0.0–0.1 | **6** / 122 / 48 | **30** / 146 / 43 | 0 / 48 / 19 |
+| 0.1–0.2 | 0 / 67 / 5.6 | 0 / 107 / 1.4 | 0 / 48 / 2.2 |
+| 0.2–0.3 | 0 / 0.47 / 2.5 | 0 / 61 / 1.4 | 0 / 58 / 2.4 |
+| 0.3–0.4 | 0 / 0.44 / 0.36 | 0 / 18 / 3.9 | 0 / 73 / 2.3 |
+| 0.4–0.5 | 0 / 0.45 / 0.40 | 0 / 0.90 / 0.75 | 0 / 83 / 2.3 |
+| 1.0–1.1 | 0 / 0.45 / 0.38 | 0 / 0.91 / 0.49 | 0 / 164 / 2.4 |
+| 2.0–2.1 | 0 / 0.42 / 0.28 | (ended at 1.53 s) | 0 / 409 / 2.6 |
+| 3.0–3.1 | 0 / 0.45 / 0.28 | | 0 / 620 / 2.5 |
+| 3.7–3.8 (last) | 0 / 0.43 / 1.45 | | 0 / 582 / 1.7 |
+
+- **kv:** all of the loss and all of the waiting are in the first 0.1–0.4 s. The events of the first 0.1 s wait 120–150 ms, the first DAOS writes take up to ~45 ms (p99), and the backlog takes longer to drain at 50 Gbps (0.4 s) than at 20 (0.2 s). From then on, every 0.1 s slice looks the same to the end of the run. (The 0.9 ms at 50 Gbps against 0.45 ms at 20 is the clock offset, as above: that run was in a later pass.)
+- **pil4dfs:** its start is milder (48 ms, no loss), but then the wait grows by ~200 ms for each second of sending, to 640 ms when the sender stops. That's a sink slower than the arrival rate, not a warm-up. Each file still takes only ~2.5 ms (p99).
+
+#### The lost events
+
+Grouping the lost events of each run into clusters queued within 1 ms of each other:
+
+| Sink | Runs with loss | Clusters | In the first 0.1 s | Events per cluster (median, range) | NIC discards per lost event (median, range) |
+|---|---|---|---|---|---|
+| kv (42 runs) | 38 | 71 | **57** | 6 (1–17) | 4.6 (1.0–7.1) |
+| pil4dfs (12 runs) | 8 | 52 | 18 | 5 (1–15) | 5.1 (2.3–7.8) |
+
+- **A cluster is one short overflow of ebpf2203's port buffer.** Its events were queued at the same instant by different Segmenters, so they arrived together. About 6 events of 95 KB are 0.1–0.2 ms of traffic at 20–50 Gbps.
+- **One lost event costs about 5 dropped frames** of its 11 (9000-byte MTU): the overflow takes out most of each event that arrives during it, not single frames from many events.
+- **The loss outside the first 0.1 s is mostly two runs**, both at 30 Gbps: kv `r30_3_1020a` (10 clusters spread over 1.8 s) and pil4dfs `r30_3_1020p` (32 clusters over 2.5 s). In those, the overflow repeated every 0.1–0.2 s throughout the run. Of the other 41 kv runs, 6 lost 1–10 events after the first 0.1 s, in a single cluster each.
+- **Short runs have it too.** Three runs of only 3,200 events (0.15 s at 20 Gbps), made while testing the scripts, lost 8, 0 and 6 events, all at the start.
+
+<details>
+<summary>Every run: lost events as count × the time they were queued (s after the first event)</summary>
+
+| Run | Sink | Rate | Lost | NIC discards | Lost events: count × queued at (s) |
+|---|---|---|---|---|---|
+| r20_1 | kv | 20 | 6 | 6 | 6 × 0.002 |
+| r20_2 | kv | 20 | 1 | 2 | 1 × 0.923 |
+| r20_3 | kv | 20 | 0 | 0 | – |
+| r25_1 | kv | 25 | 0 | 0 | – |
+| r25_2 | kv | 25 | 2 | 5 | 2 × 0.045 |
+| r25_3 | kv | 25 | 4 | 4 | 1 × 0.002, 3 × 0.004 |
+| r30_1 | kv | 30 | 9 | 18 | 5 × 0.002, 4 × 0.045 |
+| r30_2 | kv | 30 | 0 | 0 | – |
+| r30_3 | kv | 30 | 61 | 350 | 10 × 0.002, 4 × 0.033, 7 × 0.394, 5 × 0.441, 7 × 0.546, 4 × 0.682, 5 × 0.783, 7 × 0.979, 5 × 0.984, 7 × 1.791 |
+| r35_1 | kv | 35 | 10 | 61 | 2 × 0.001, 8 × 0.049 |
+| r35_2 | kv | 35 | 19 | 43 | 16 × 0.001, 3 × 0.048 |
+| r35_3 | kv | 35 | 4 | 4 | 4 × 0.001 |
+| r40_1 | kv | 40 | 33 | 185 | 1 × 0.004, 4 × 0.008, 11 × 0.010, 17 × 0.012 |
+| r40_2 | kv | 40 | 8 | 43 | 8 × 0.053 |
+| r40_3 | kv | 40 | 10 | 43 | 10 × 0.016 |
+| r45_1 | kv | 45 | 19 | 35 | 9 × 0.002, 10 × 0.107 |
+| r45_2 | kv | 45 | 18 | 103 | 8 × 0.055, 10 × 0.297 |
+| r45_3 | kv | 45 | 19 | 88 | 7 × 0.001, 1 × 0.015, 1 × 0.016, 10 × 0.020 |
+| r50_1 | kv | 50 | 7 | 45 | 7 × 0.040 |
+| r50_2 | kv | 50 | 30 | 187 | 6 × 0.007, 2 × 0.010, 5 × 0.012, 15 × 0.014, 2 × 0.016 |
+| r50_3 | kv | 50 | 18 | 71 | 9 × 0.001, 9 × 0.047 |
+| r20_1 | kv, staggered | 20 | 8 | 10 | 8 × 0.005 |
+| r20_2 | kv, staggered | 20 | 5 | 23 | 5 × 2.395 |
+| r20_3 | kv, staggered | 20 | 3 | 3 | 3 × 0.004 |
+| r25_1 | kv, staggered | 25 | 4 | 24 | 4 × 0.198 |
+| r25_2 | kv, staggered | 25 | 0 | 0 | – |
+| r25_3 | kv, staggered | 25 | 4 | 16 | 4 × 0.043 |
+| r30_1 | kv, staggered | 30 | 4 | 9 | 4 × 0.042 |
+| r30_2 | kv, staggered | 30 | 11 | 11 | 11 × 0.003 |
+| r30_3 | kv, staggered | 30 | 5 | 26 | 5 × 0.207 |
+| r35_1 | kv, staggered | 35 | 3 | 14 | 3 × 0.053 |
+| r35_2 | kv, staggered | 35 | 4 | 24 | 4 × 0.062 |
+| r35_3 | kv, staggered | 35 | 10 | 47 | 10 × 0.013 |
+| r40_1 | kv, staggered | 40 | 9 | 36 | 9 × 0.013 |
+| r40_2 | kv, staggered | 40 | 7 | 38 | 7 × 0.017 |
+| r40_3 | kv, staggered | 40 | 5 | 18 | 5 × 0.079 |
+| r45_1 | kv, staggered | 45 | 14 | 69 | 5 × 0.001, 9 × 0.041 |
+| r45_2 | kv, staggered | 45 | 9 | 51 | 9 × 0.045 |
+| r45_3 | kv, staggered | 45 | 8 | 57 | 8 × 0.042 |
+| r50_1 | kv, staggered | 50 | 24 | 91 | 7 × 0.001, 1 × 0.009, 1 × 0.011, 6 × 0.012, 9 × 0.050 |
+| r50_2 | kv, staggered | 50 | 12 | 48 | 4 × 0.001, 8 × 0.083 |
+| r50_3 | kv, staggered | 50 | 12 | 74 | 3 × 0.001, 9 × 0.053 |
+| r20_1 | pil4dfs | 20 | 0 | 0 | – |
+| r20_2 | pil4dfs | 20 | 0 | 0 | – |
+| r20_3 | pil4dfs | 20 | 0 | 0 | – |
+| r30_1 | pil4dfs | 30 | 0 | 0 | – |
+| r30_2 | pil4dfs | 30 | 27 | 98 | 15 × 0.002, 3 × 0.379, 3 × 0.780, 1 × 0.880, 5 × 0.886 |
+| r30_3 | pil4dfs | 30 | 145 | 737 | 4 × 0.077, 4 × 0.078, 7 × 0.178, 9 × 0.184, 5 × 0.206, 4 × 0.397, 2 × 0.503, 7 × 0.526, 6 × 0.626, 5 × 0.633, 4 × 0.771, 5 × 0.885, 3 × 0.886, 2 × 0.983, 3 × 1.091, 3 × 1.162, 3 × 1.425, 4 × 1.534, 2 × 1.758, 5 × 1.794, 4 × 1.930, 5 × 2.030, 3 × 2.106, 6 × 2.206, 5 × 2.213, 3 × 2.257, 8 × 2.357, 6 × 2.366, 5 × 2.376, 5 × 2.476, 4 × 2.483, 4 × 2.492 |
+| r40_1 | pil4dfs | 40 | 24 | 89 | 14 × 0.001, 10 × 0.023 |
+| r40_2 | pil4dfs | 40 | 12 | 28 | 5 × 0.002, 7 × 0.019 |
+| r40_3 | pil4dfs | 40 | 12 | 29 | 2 × 0.002, 3 × 0.004, 6 × 0.016, 1 × 0.017 |
+| r50_1 | pil4dfs | 50 | 28 | 219 | 6 × 0.006, 4 × 0.009, 6 × 0.010, 12 × 0.013 |
+| r50_2 | pil4dfs | 50 | 13 | 67 | 4 × 0.003, 9 × 0.033 |
+| r50_3 | pil4dfs | 50 | 8 | 45 | 8 × 0.019 |
+
+</details>
 
 #### KV vs files through pil4dfs
 
