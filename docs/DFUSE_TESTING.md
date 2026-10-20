@@ -192,8 +192,13 @@ What this shows:
 - **No sink lost or corrupted an event.** In every run, committed events plus the reassembler's "lost in reassembly" count equal the events sent, no sink reported a failed write or put, and every committed event's SHA-256 matched. 11 of the 17 runs are marked FAIL only because events were lost on the network: each of those runs had frames dropped at the receiving NIC port (`rx_discards_phy`, 19–2,826 per run), the port-buffer overflow described in [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). One dropped frame loses one event.
 - **With 1.5 MB events, all three sinks keep up with 40 Gbps.** Plain dfuse costs more per file (p50 2–4 ms, p99 25–35 ms, against about 1 ms for kv and pil4dfs), but 16 writers hide that.
 - **With small events, plain dfuse is the bottleneck.** It commits only about 3,200 files/s (2.5 Gbps), so a 3-second burst takes 12 s to drain. kv and pil4dfs keep up at 13,200 events/s.
-- **pil4dfs is as fast as the native KV path** and had the fewest network losses. dfuse lost a few events even at 10 Gbps, perhaps because the FUSE threads compete with the receive threads for CPU on the receiver.
+- **pil4dfs is as fast as the native KV path** at these event rates (up to ~13,200 events/s) and had the fewest network losses. With 95 KB events at 20–50 Gbps (26–66k events/s) it is not: see below. dfuse lost a few events even at 10 Gbps, perhaps because the FUSE threads compete with the receive threads for CPU on the receiver.
 - **32 writers is worse than 16** for both dfuse sinks.
+
+### Small events at 20–50 Gbps: kv vs pil4dfs, 2026-10-20
+
+The node-to-node sweep of [E2E_BENCHMARK.md section 7](E2E_BENCHMARK.md#kv-vs-files-through-pil4dfs) with `-S pil4dfs`: 16 segmenters, 95 KB events, 100,000 per run, `-T 32 -D 32`.
+pil4dfs takes 0.9–1.7 ms per file (kv: 0.23–0.30 ms per event) and commits at most 18–33k files/s, 13–25 Gbps. It falls behind from 20 Gbps up, and events wait up to 2.9 s. At this event size, use kv.
 
 ### Smoke test, 2026-10-19
 

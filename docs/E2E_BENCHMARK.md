@@ -9,6 +9,7 @@ Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 
 |---|---|
 | **Highest lossless E2E, through the LB** | **33.7 Gbps** E2E (35.3 Gbps received into DAOS). Lossless in 2 of 2 runs at 35 Gbps. Every run at 40 and 45 lost events |
 | Highest lossless E2E, node-to-node | **29.9 Gbps** E2E (30.3 received), in 1 of 6 runs at 30 Gbps. 25 Gbps: 2 of 6. No run at 35–50 Gbps was lossless, and no rate was lossless in every run. See [section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20) |
+| KV vs files through pil4dfs, 95 KB events | **KV.** pil4dfs (one file per event, `-S pil4dfs`, 32 writers) takes 0.9–1.7 ms per file and commits at most 18–33k events/s (13–25 Gbps). From 20 Gbps up it falls behind, and events queue for seconds. KV takes 0.23–0.30 ms and keeps up to 50 Gbps. See [section 7](#kv-vs-files-through-pil4dfs) |
 | Node-to-node after the first 0.5 s | **No loss up to 50 Gbps in 39 of 42 runs.** Almost all lost events were queued in the first 0.1 s of a run, while the receiver's first DAOS writes are slow |
 | Lossless in every run | **20 Gbps through the LB (3 of 3)**, the new defaults. Node-to-node the same settings passed 1 of 3 |
 | Highest with any loss | 61.2 Gbps received (59.8 E2E), node-to-node, 99.96% of events delivered |
@@ -321,6 +322,30 @@ All events of the same runs, as the bench prints them (`latency_ms`), and the ev
 - At a higher rate more events arrive during the slow start, so more of them wait: by 40 Gbps over 10% of a 1.9 s run, which is why the whole-run p90 jumps from ~1 ms (20 Gbps) to 59–109 ms (40–50 Gbps). The p99 of 116–167 ms is the start of the run at every rate.
 - **This is also when the events are lost** (above). It's the one part of the run where DAOS is slow, and where the receiver opens its DAOS connections, so it fits the shared-adapter idea ([cause 2](#possible-causes)) better than bursts alone. Not proven: the counters in [Counters to record](#counters-to-record-in-every-diagnosis-run) weren't recorded per moment.
 - A receiver that runs for hours goes through this once. For a DAQ it's the steady-state numbers that count, but the start should be fixed or warmed up before data arrives (see the next steps).
+
+#### KV vs files through pil4dfs
+
+The same sweep with `-S pil4dfs`: one file per event through dfuse with `libpil4dfs.so` preloaded (see [DFUSE_TESTING.md](DFUSE_TESTING.md)), the same 32 dequeue threads, each a blocking writer. 3 runs per rate, 15:00–15:21.
+The KV rows are the 6 runs per rate above. "Committed" is the rate at which events landed in DAOS. "daos" is the write of one event (KV: its puts; pil4dfs: open, write, close).
+
+| Rate | Sink | Lossless | Committed (Gbps) | Events/s | daos p50 / p99 (ms) | total p50 (ms) | Lost events per run | NIC discards |
+|---|---|---|---|---|---|---|---|---|
+| 20 | kv | 1 / 6 | 20.09–20.13 | 26,400 | 0.23–0.26 / 0.3–0.5 | 0.44–0.91 | 0, 1, 3, 5, 6, 8 | 0–23 |
+| | pil4dfs | **3 / 3** | **13.4–17.7** | 17,700–23,300 | 1.31–1.72 / 2.4–3.4 | **374–1,188** | 0, 0, 0 | 0, 0, 0 |
+| 30 | kv | 1 / 6 | 30.22–30.36 | 39,700 | 0.23 / 0.3–0.9 | 0.23–0.85 | 0, 4, 5, 9, 11, 61 | 0–350 |
+| | pil4dfs | 1 / 3 | 22.3–25.4 | 29,200–33,400 | 0.90–1.02 / 1.6–2.1 | 239–464 | 0, 27, 145 | 0–737 |
+| 40 | kv | 0 / 6 | 40.40–40.72 | 53,000 | 0.23–0.24 / 0.4–1.0 | 0.35–1.00 | 5–33 | 18–185 |
+| | pil4dfs | 0 / 3 | 19.8–20.5 | 26,000–26,900 | 1.11–1.17 / 2.1–2.2 | 886–1,079 | 12, 12, 24 | 28–89 |
+| 50 | kv | 0 / 6 | 50.73–51.06 | 66,600 | 0.24–0.30 / 0.3–1.0 | 0.53–1.01 | 7–30 | 45–187 |
+| | pil4dfs | 0 / 3 | 17.3–18.7 | 22,800–24,600 | 1.22–1.32 / 2.4–2.6 | 1,148–1,289 | 8, 13, 28 | 45–219 |
+
+(KV daos and total from the events after the first 0.5 s. For pil4dfs, all events: it never catches up within a run.)
+
+- **KV is the better sink for these events.** One KV write takes 0.23–0.30 ms. One pil4dfs file takes 0.9–1.7 ms, 4–6× longer, so 32 writers manage only ~18–33k files/s, against the 26k/s that 20 Gbps needs and the 66k/s of 50 Gbps.
+- **pil4dfs can't sustain 20 Gbps.** Its 20 Gbps runs pass only because the receiver holds the backlog in memory: the 100,000 events took 4.3–5.7 s to commit after 3.8 s of sending, and waited up to 1.9 s. A continuous stream at that rate would grow the queue until events are lost. At 40 and 50 Gbps it committed less than at 30 (18–20 vs 22–25 Gbps), as the larger backlog seems to slow the writers down.
+- **The lost events are again at the start** (all within 0.08 s except two runs at 30 Gbps). The 20 Gbps pil4dfs runs had no NIC discards at all, where KV had some in 5 of 6. They also wrote to DAOS at a lower rate, which fits [cause 2](#possible-causes), but the 40–50 Gbps runs wrote at about the same rate and still had discards.
+- This doesn't contradict [DFUSE_TESTING.md](DFUSE_TESTING.md), where pil4dfs matched KV: those were 1.5 MB events (16× fewer files per byte), and 95 KB events only at 10 Gbps (13,200 files/s), below what pil4dfs can take.
+- Untested: more pil4dfs writers (`-D 64`; with 1.5 MB events 32 was no better than 16), and larger events per file.
 
 #### Staggered Segmenter start: no effect
 
