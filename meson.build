@@ -13,7 +13,7 @@ e2sar_dep = dependency('e2sar', required: true)
 e2sar_version = e2sar_dep.version()
 
 # Manually include DAOS since there is no *.pc for DAOS
-# Currently DAOS is only for RHEL systems.
+# Assume DAOS headers (daos.h, daos_fs.h, gurt/*.h from daos-devel) are installed at /usr/include.
 daos_include_dir = include_directories('/usr/include')
 
 daos_lib = cpp_compiler.find_library('daos', required: false, dirs: '/usr/lib64')
