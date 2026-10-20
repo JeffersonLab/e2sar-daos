@@ -51,7 +51,7 @@ Record header (14 words, magic 0xc0da0100, bit info 0x80004206) + index array wh
 - A frame is ~423 bytes on average (the cosmics data: 426). Frame n has timestamp n × 65,536 ns.
 - 256 frames make a ~95 KB event, and 4096 frames ~1.5 MB.
 - Each Segmenter sends events numbered 1…N. Event n is copy n mod 64 of 64 distinct events built at start, so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
-- Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`.
+- Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`. See the [example of the keys of a bench run](../bin/README.md#example-events-from-e2sar_evio_send).
 - Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
 - `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
 - To stream real time frames, with a different frame count in every record, see the proposal in [STREAMING_SENDER.md](STREAMING_SENDER.md).
