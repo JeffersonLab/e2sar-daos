@@ -19,6 +19,8 @@ For how to run the tests, see [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 | NFS source read | **2.2 Gbps when not cached** | Copying 33 GB uncached took 124 s. Stage the source on `/scratch` |
 | Network | Not the bottleneck | 100 Gb/s link. 88 Gbps went out with no sender errors |
 | DAOS KV writes | **Not the bottleneck up to at least ~48 Gbps** | `Lost in enqueue` was 0 in every run. Four ~2.1 GiB events (8.6 GB) committed and read back with matching digests (table 7) |
+| DAOS dequeue threads (`--deq`) | **Limit with many smaller events** | With 95 KB synthetic EVIO events, 4 dequeue threads capped the receiver at ~24 Gbps while each DAOS write still took 0.3 ms. 16 threads reached 40 Gbps, 32 reached 61. Now the default is 16 ([E2E_BENCHMARK.md](E2E_BENCHMARK.md#3-dequeue-threads-the-hidden-bottleneck)) |
+| Reassembler, events per second | **~85k events/s** | The same ceiling for 424 B and 95 KB events, and with 32 or 64 dequeue threads ([E2E_BENCHMARK.md](E2E_BENCHMARK.md)) |
 
 ## Setup
 

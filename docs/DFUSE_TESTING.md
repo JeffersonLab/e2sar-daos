@@ -28,7 +28,7 @@ The bench script adds two receiver options:
 | Option | Meaning |
 |---|---|
 | `-S kv\|dfuse\|pil4dfs` | Sink. Default `kv` |
-| `-D N` | Dequeue threads (`e2sar_daos_recv --deq`), the same option as for the kv sink. For `dfuse`/`pil4dfs` each one is a blocking file writer, and the default is 16 instead of 4 |
+| `-D N` | Dequeue threads (`e2sar_daos_recv --deq`), the same option as for the kv sink. For `dfuse`/`pil4dfs` each one is a blocking file writer. The default is 16 for every sink ([E2E_BENCHMARK.md](E2E_BENCHMARK.md#3-dequeue-threads-the-hidden-bottleneck)) |
 | `-I N` | In-flight puts per dequeue thread (`--inflight`), kv only. Default 128 |
 
 For `dfuse` and `pil4dfs`, the receiver creates `$CONT` as a POSIX container, mounts it at `$MNT`, and starts `e2sar_daos_recv --dfuse $MNT`.
