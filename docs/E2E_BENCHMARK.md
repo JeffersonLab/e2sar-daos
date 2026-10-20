@@ -54,7 +54,7 @@ Record header (14 words, magic 0xc0da0100, bit info 0x80004206) + index array wh
 - Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`.
 - Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
 - `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
-- To send real EVIO files, with a different frame count in every record, see the proposal in [EVIO_FILE_SENDER.md](EVIO_FILE_SENDER.md).
+- To stream real time frames, with a different frame count in every record, see the proposal in [STREAMING_SENDER.md](STREAMING_SENDER.md).
 
 ## How to run
 
