@@ -23,6 +23,12 @@
     with blocking open/write/close on each dequeue thread. Meant for a dfuse mount of a
     POSIX container, to compare against the native KV path; the pool/container options
     are then ignored. "Committed" means close() (and fsync() with --fsync) returned.
+
+    Synthetic mode (--synthetic N): no network and no Reassembler. The dequeue threads take
+    N events of --event-size bytes from an in-memory generator, optionally paced to --rate
+    Gbps, and store them exactly as received events (same sink, threads, keys, timing).
+    This measures the storage side of the receiver on its own: the most the sink can
+    commit with these settings, which the network path then can't exceed.
 */
 
 #include <fcntl.h>
@@ -105,6 +111,102 @@ void updateMax(std::atomic<int64_t>& a, int64_t v) {
 
 void onSignal(int) { running = false; }
 
+// In-memory events for --synthetic: N events of one size, numbered 0..N-1, optionally
+// paced to a fixed rate. Each event is a fresh new[] buffer (like the Reassembler's), filled
+// from a pseudo-random template with the event number in its first 8 bytes.
+class SyntheticSource {
+public:
+    SyntheticSource(uint64_t total, size_t size, double gbps)
+        : total_(total), size_(size), template_(size),
+          intervalNs_(gbps > 0 ? size * 8.0 / gbps : 0.0) {
+        uint64_t x = 0x9E3779B97F4A7C15ull;  // xorshift64: not compressible, not all zeros
+        for (auto& b : template_) {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            b = static_cast<uint8_t>(x);
+        }
+    }
+
+    void start() { t0Ns_ = sinceStartNs(); }
+    size_t size() const { return size_; }
+
+    enum Result { Got, NotYet, Done };
+
+    // Claim the next event if it is due, waiting up to waitMs for it.
+    Result next(uint8_t** buf, EventNum_t* evtNum, int waitMs) {
+        for (;;) {
+            uint64_t idx = next_.load();
+            if (idx >= total_)
+                return Done;
+            if (intervalNs_ > 0) {
+                const int64_t wait = t0Ns_ + static_cast<int64_t>(idx * intervalNs_) - sinceStartNs();
+                if (wait > 0) {
+                    if (waitMs <= 0)
+                        return NotYet;
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(
+                        std::min<int64_t>(wait, waitMs * 1000000ll)));
+                    waitMs = 0;  // one wait, then check again without sleeping
+                    continue;
+                }
+            }
+            if (!next_.compare_exchange_weak(idx, idx + 1))
+                continue;
+            *buf = new uint8_t[size_];
+            std::memcpy(*buf, template_.data(), size_);
+            std::memcpy(*buf, &idx, std::min(size_, sizeof(idx)));
+            *evtNum = idx;
+            return Got;
+        }
+    }
+
+private:
+    const uint64_t total_;
+    const size_t size_;
+    std::vector<uint8_t> template_;
+    const double intervalNs_;  // 0 = as fast as the sink takes them
+    int64_t t0Ns_ = 0;
+    std::atomic<uint64_t> next_{0};
+};
+
+// Where the dequeue threads get events: the E2SAR Reassembler, or --synthetic.
+// No events are handed out until main sets `go`, after every dequeue thread has called
+// ready(): creating a DAOS event queue while another thread's puts are in flight can crash
+// in libfabric (ibv_get_async_event), which --synthetic hit right away.
+struct EventSource {
+    Reassembler* reas = nullptr;
+    SyntheticSource* synth = nullptr;
+    std::atomic<size_t> readyThreads{0};
+    std::atomic<bool> go{false};
+
+    enum Result { Got, NotYet, Error, Done };
+
+    void ready() { readyThreads++; }
+
+    // waitMs > 0: block up to that long for an event; 0: just poll.
+    Result next(uint8_t** buf, size_t* size, EventNum_t* evtNum, uint16_t* dataId, int waitMs) {
+        if (!go) {
+            if (waitMs > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return NotYet;
+        }
+        if (synth) {
+            *size = synth->size();
+            *dataId = 0;
+            switch (synth->next(buf, evtNum, waitMs)) {
+                case SyntheticSource::Got: return Got;
+                case SyntheticSource::NotYet: return NotYet;
+                default: return Done;
+            }
+        }
+        auto res = waitMs > 0 ? reas->recvEvent(buf, size, evtNum, dataId, waitMs)
+                              : reas->getEvent(buf, size, evtNum, dataId);
+        if (res.has_error())
+            return Error;
+        return res.value() == -1 ? NotYet : Got;  // -1: nothing queued (or stopping)
+    }
+};
+
 struct WriterConfig {
     std::string prefix;
     size_t chunkSize;    // 0 = whole event in one value
@@ -136,7 +238,7 @@ struct PendingEvent {
 };
 
 // Receive -> chunk -> async put -> commit metadata. Runs on one thread.
-void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, int tid) {
+void dequeueLoop(EventSource* src, const DaosKV* kv, const WriterConfig cfg, int tid) {
     try {
         // Events whose chunk puts all completed; handled outside the callbacks,
         // since callbacks must not submit. Declared before the writer so it outlives
@@ -144,6 +246,7 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
         std::vector<std::shared_ptr<PendingEvent>> done;
         LatencyHistogram eventLatency;  // per thread; merged into timing at the end
         AsyncKVWriter writer(*kv, cfg.maxInflight);
+        src->ready();
 
         auto commitDone = [&]() {
             while (!done.empty()) {
@@ -195,13 +298,14 @@ void dequeueLoop(Reassembler* reas, const DaosKV* kv, const WriterConfig cfg, in
             // With puts in flight, don't sleep in recvEvent: poll the Reassembler and wait
             // on the DAOS event queue instead, so completions are reaped (and timed) promptly.
             const bool busy = writer.inflight() > 0;
-            auto res = busy ? reas->getEvent(&buf, &size, &evtNum, &dataId)
-                            : reas->recvEvent(&buf, &size, &evtNum, &dataId, 100);
-            if (res.has_error()) {
+            const auto res = src->next(&buf, &size, &evtNum, &dataId, busy ? 0 : 100);
+            if (res == EventSource::Done)
+                break;
+            if (res == EventSource::Error) {
                 stats.recvErrors++;
                 continue;
             }
-            if (res.value() == -1) {  // nothing queued (or stopping)
+            if (res == EventSource::NotYet) {
                 if (busy)
                     writer.progress(1000);  // up to 1 ms
                 continue;
@@ -283,19 +387,22 @@ int writeFile(const std::string& path, const uint8_t* buf, size_t size, bool doF
 }
 
 // dfuse mode: receive -> write one file -> commit. Runs on one thread.
-void dfuseLoop(Reassembler* reas, const WriterConfig cfg, int tid) {
+void dfuseLoop(EventSource* src, const WriterConfig cfg, int tid) {
     LatencyHistogram eventLatency, writeLatency;  // per thread; merged into timing at the end
+    src->ready();
     while (running) {
         uint8_t* raw = nullptr;
         size_t size = 0;
         EventNum_t evtNum = 0;
         uint16_t dataId = 0;
-        auto res = reas->recvEvent(&raw, &size, &evtNum, &dataId, 100);
-        if (res.has_error()) {
+        const auto res = src->next(&raw, &size, &evtNum, &dataId, 100);
+        if (res == EventSource::Done)
+            break;
+        if (res == EventSource::Error) {
             stats.recvErrors++;
             continue;
         }
-        if (res.value() == -1)  // nothing queued (or stopping)
+        if (res == EventSource::NotYet)
             continue;
         std::unique_ptr<uint8_t[]> buf(raw);  // E2SAR allocates events with new[]
 
@@ -349,15 +456,17 @@ void reportLoop(Reassembler* reas, unsigned intervalSec) {
         const double dt = std::chrono::duration<double>(now - lastT).count();
         const uint64_t bytes = stats.bytesCommitted, events = stats.eventsCommitted;
         const uint64_t rcvdBytes = stats.bytesReceived;
-        const auto rs = reas->getStats();
 
         std::cout << std::fixed << std::setprecision(2)
                   << "in " << stats.eventsReceived << " evts, " << (rcvdBytes - lastRcvdBytes) * 8.0 / dt / 1e9
                   << " Gbps | committed " << events << " evts, " << bytes / 1048576.0 << " MiB, "
                   << (bytes - lastBytes) * 8.0 / dt / 1e9 << " Gbps, "
-                  << (events - lastEvents) / dt << " evt/s | failed " << stats.eventsFailed
-                  << " | reassembly loss " << rs.reassemblyLoss
-                  << ", enqueue loss " << rs.enqueueLoss << std::endl;
+                  << (events - lastEvents) / dt << " evt/s | failed " << stats.eventsFailed;
+        if (reas) {  // null with --synthetic
+            const auto rs = reas->getStats();
+            std::cout << " | reassembly loss " << rs.reassemblyLoss << ", enqueue loss " << rs.enqueueLoss;
+        }
+        std::cout << std::endl;
 
         lastBytes = bytes;
         lastRcvdBytes = rcvdBytes;
@@ -379,14 +488,16 @@ result<int> prepareToReceive(Reassembler& r) {
     return r.openAndStart();
 }
 
-void printFinalStats(Reassembler& r, bool dfuseMode) {
-    const auto rs = r.getStats();
-    std::cout << "Reassembler:" << std::endl
-              << "\tEvents reassembled:        " << rs.eventSuccess << std::endl
-              << "\tLost in reassembly:        " << rs.reassemblyLoss << std::endl
-              << "\tLost in enqueue:           " << rs.enqueueLoss << std::endl
-              << "\tData errors:               " << rs.dataErrCnt << std::endl
-              << "\tgRPC errors:               " << rs.grpcErrCnt << std::endl;
+void printFinalStats(Reassembler* r, bool dfuseMode) {
+    if (r) {  // null with --synthetic
+        const auto rs = r->getStats();
+        std::cout << "Reassembler:" << std::endl
+                  << "\tEvents reassembled:        " << rs.eventSuccess << std::endl
+                  << "\tLost in reassembly:        " << rs.reassemblyLoss << std::endl
+                  << "\tLost in enqueue:           " << rs.enqueueLoss << std::endl
+                  << "\tData errors:               " << rs.dataErrCnt << std::endl
+                  << "\tgRPC errors:               " << rs.grpcErrCnt << std::endl;
+    }
     std::cout << (dfuseMode ? "dfuse:" : "DAOS:") << std::endl
               << "\tEvents received:           " << stats.eventsReceived << std::endl
               << "\tEvents committed:          " << stats.eventsCommitted << std::endl
@@ -441,18 +552,41 @@ void printTiming(bool dfuseMode) {
               << fmtLatency(timing.putLatency) << std::endl;
 }
 
+// "95K", "1.5M", "4096": bytes with an optional binary K/M/G suffix; 0 if invalid.
+size_t parseSize(const std::string& s) {
+    size_t pos = 0;
+    double v = 0;
+    try {
+        v = std::stod(s, &pos);
+    } catch (const std::exception&) {
+        return 0;
+    }
+    const std::string unit = s.substr(pos);
+    double mult = 1;
+    if (unit == "K" || unit == "k")
+        mult = 1024.0;
+    else if (unit == "M" || unit == "m")
+        mult = 1024.0 * 1024;
+    else if (unit == "G" || unit == "g")
+        mult = 1024.0 * 1024 * 1024;
+    else if (!unit.empty())
+        return 0;
+    return v > 0 ? static_cast<size_t>(v * mult) : 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
 
-    std::string uriStr, recvIP, pool, cont, oclass, prefix, timingCsv, outDir;
+    std::string uriStr, recvIP, pool, cont, oclass, prefix, timingCsv, outDir, eventSizeStr;
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB;
     std::vector<int> coreList;
     int sockBufSize, eventTimeoutMS, numaNode;
-    uint64_t oidLo;
+    uint64_t oidLo, synthEvents;
     unsigned reportSec;
+    double synthGbps;
 
     auto opts = od.add_options();
     opts("help,h", "show this help message");
@@ -482,6 +616,10 @@ int main(int argc, char** argv) {
     // dfuse mode (POSIX container mounted with dfuse)
     opts("dfuse", po::value<std::string>(&outDir), "dfuse mount point: write each event as a file under DIR/<prefix>/ instead of the KV object; --pool/--cont/--oid/--oclass/--chunk/--inflight are ignored");
     opts("fsync", po::bool_switch()->default_value(false), "with --dfuse: fsync each file before closing it");
+    // synthetic mode (no network)
+    opts("synthetic", po::value<uint64_t>(&synthEvents)->default_value(0), "store N in-memory events instead of receiving (0 = off): measures the sink without a sender; the E2SAR options are ignored");
+    opts("event-size", po::value<std::string>(&eventSizeStr)->default_value("95K"), "with --synthetic: bytes per event, with an optional K/M/G suffix");
+    opts("rate", po::value<double>(&synthGbps)->default_value(0), "with --synthetic: pace events to this many Gbps (0 = as fast as the sink takes them)");
     opts("report", po::value<unsigned>(&reportSec)->default_value(1), "progress report interval in seconds (0 = off)");
     opts("verbose", po::bool_switch()->default_value(false), "print every committed event");
     opts("timing-csv", po::value<std::string>(&timingCsv), "write one CSV row of timing per committed event to this file");
@@ -499,13 +637,22 @@ int main(int argc, char** argv) {
         std::cout << od << std::endl
                   << "Example (pairs with `e2sar_ft -s -u <uri> --ip <sender ip> /path/to/files`):\n"
                   << "  e2sar_daos_recv -u 'ejfat://...@host:port/lb/1?data=<recv ip>' --ip <recv ip> \\\n"
-                  << "      --pool sc26 --cont e2sar --prefix run42" << std::endl;
+                  << "      --pool sc26 --cont e2sar --prefix run42\n"
+                  << "Example without a sender (100,000 x 95 KB events, as fast as DAOS takes them):\n"
+                  << "  e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont e2sar-test --prefix synth1"
+                  << std::endl;
         return 0;
     }
 
+    const bool synthMode = synthEvents > 0;
+    const size_t synthSize = parseSize(eventSizeStr);
+    if (synthMode && (synthSize == 0 || synthGbps < 0)) {
+        std::cerr << "--event-size must be a positive size (e.g. 95K, 1.5M) and --rate >= 0" << std::endl;
+        return 1;
+    }
     const bool withCP = vm["withcp"].as<bool>();
     const bool autoIP = vm["autoip"].as<bool>();
-    if (autoIP == !recvIP.empty()) {
+    if (!synthMode && autoIP == !recvIP.empty()) {
         std::cerr << "Specify exactly one of --ip or --autoip" << std::endl;
         return 1;
     }
@@ -537,12 +684,16 @@ int main(int argc, char** argv) {
     const bool preferV6 = vm.count("ipv6") > 0;
     const bool preferHostAddr = vm.count("ipv4") || vm.count("ipv6");
 
-    auto uriRes = vm.count("uri")
-        ? EjfatURI::getFromString(uriStr, EjfatURI::TokenType::instance, preferV6)
-        : EjfatURI::getFromEnv("EJFAT_URI", EjfatURI::TokenType::instance, preferV6);
-    if (uriRes.has_error()) {
-        std::cerr << "Unable to parse EJFAT URI: " << uriRes.error().message() << std::endl;
-        return 1;
+    std::unique_ptr<EjfatURI> uri;  // not needed with --synthetic
+    if (!synthMode) {
+        auto uriRes = vm.count("uri")
+            ? EjfatURI::getFromString(uriStr, EjfatURI::TokenType::instance, preferV6)
+            : EjfatURI::getFromEnv("EJFAT_URI", EjfatURI::TokenType::instance, preferV6);
+        if (uriRes.has_error()) {
+            std::cerr << "Unable to parse EJFAT URI: " << uriRes.error().message() << std::endl;
+            return 1;
+        }
+        uri = std::make_unique<EjfatURI>(uriRes.value());
     }
 
     if (!timingCsv.empty()) {
@@ -594,60 +745,80 @@ int main(int argc, char** argv) {
                       << "Dequeue threads:      " << deqThreads << " x " << inflight << " in-flight puts" << std::endl;
         }
 
-        Reassembler::ReassemblerFlags rflags;
-        rflags.useCP = withCP;  // E2SAR >= 0.4 expects the LB header iff the control plane is off
-        rflags.rcvSocketBufSize = sockBufSize;
-        rflags.useHostAddress = preferHostAddr;
-        rflags.validateCert = !vm.count("novalidate");
-        rflags.eventTimeout_ms = eventTimeoutMS;
-
         std::unique_ptr<Reassembler> reas;
-        const auto& uri = uriRes.value();
-        if (vm.count("cores")) {
-            reas = autoIP ? std::make_unique<Reassembler>(uri, recvStartPort, coreList, rflags)
-                          : std::make_unique<Reassembler>(uri, ip::make_address(recvIP), recvStartPort, coreList, rflags);
+        std::unique_ptr<SyntheticSource> synth;
+        EventSource src;
+        if (synthMode) {
+            synth = std::make_unique<SyntheticSource>(synthEvents, synthSize, synthGbps);
+            src.synth = synth.get();
+            std::cout << "Synthetic events:     " << synthEvents << " x " << synthSize << " bytes, ";
+            if (synthGbps > 0)
+                std::cout << synthGbps << " Gbps";
+            else
+                std::cout << "unpaced";
+            std::cout << " (no network)" << std::endl;
         } else {
-            reas = autoIP ? std::make_unique<Reassembler>(uri, recvStartPort, numRecvThreads, rflags)
-                          : std::make_unique<Reassembler>(uri, ip::make_address(recvIP), recvStartPort, numRecvThreads, rflags);
-        }
+            Reassembler::ReassemblerFlags rflags;
+            rflags.useCP = withCP;  // E2SAR >= 0.4 expects the LB header iff the control plane is off
+            rflags.rcvSocketBufSize = sockBufSize;
+            rflags.useHostAddress = preferHostAddr;
+            rflags.validateCert = !vm.count("novalidate");
+            rflags.eventTimeout_ms = eventTimeoutMS;
 
-        std::cout << "Control plane:        " << (withCP ? "ON" : "OFF") << std::endl
-                  << "Listening on:         " << reas->get_dataIP() << " ports "
-                  << reas->get_recvPorts().first << ":" << reas->get_recvPorts().second << std::endl;
+            if (vm.count("cores")) {
+                reas = autoIP ? std::make_unique<Reassembler>(*uri, recvStartPort, coreList, rflags)
+                              : std::make_unique<Reassembler>(*uri, ip::make_address(recvIP), recvStartPort, coreList, rflags);
+            } else {
+                reas = autoIP ? std::make_unique<Reassembler>(*uri, recvStartPort, numRecvThreads, rflags)
+                              : std::make_unique<Reassembler>(*uri, ip::make_address(recvIP), recvStartPort, numRecvThreads, rflags);
+            }
+            src.reas = reas.get();
 
-        auto prep = prepareToReceive(*reas);
-        if (prep.has_error()) {
-            std::cerr << "Unable to start reassembler: " << prep.error().message() << std::endl;
-            reas->stopThreads();
-            return 1;
+            std::cout << "Control plane:        " << (withCP ? "ON" : "OFF") << std::endl
+                      << "Listening on:         " << reas->get_dataIP() << " ports "
+                      << reas->get_recvPorts().first << ":" << reas->get_recvPorts().second << std::endl;
+
+            auto prep = prepareToReceive(*reas);
+            if (prep.has_error()) {
+                std::cerr << "Unable to start reassembler: " << prep.error().message() << std::endl;
+                reas->stopThreads();
+                return 1;
+            }
+            std::cout << "Receiving; Ctrl-C to stop" << std::endl;
         }
-        std::cout << "Receiving; Ctrl-C to stop" << std::endl;
 
         const WriterConfig cfg{prefix, chunkKiB * 1024, inflight, vm["verbose"].as<bool>(), outDir,
                                vm["fsync"].as<bool>()};
         std::vector<std::thread> workers;
         for (size_t i = 0; i < deqThreads; i++) {
             if (dfuseMode)
-                workers.emplace_back(dfuseLoop, reas.get(), cfg, static_cast<int>(i));
+                workers.emplace_back(dfuseLoop, &src, cfg, static_cast<int>(i));
             else
-                workers.emplace_back(dequeueLoop, reas.get(), kv.get(), cfg, static_cast<int>(i));
+                workers.emplace_back(dequeueLoop, &src, kv.get(), cfg, static_cast<int>(i));
         }
+        while (running && src.readyThreads < deqThreads)  // a thread that fails to start sets running = false
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (synth)
+            synth->start();
+        src.go = true;
         std::thread reporter;
         if (reportSec > 0)
             reporter = std::thread(reportLoop, reas.get(), reportSec);
 
         for (auto& t : workers)
-            t.join();  // returns after Ctrl-C, once all in-flight puts are flushed
+            t.join();  // returns after Ctrl-C (or the last synthetic event), once all in-flight puts are flushed
         running = false;
         if (reporter.joinable())
             reporter.join();
 
-        std::cout << "Stopping reassembler" << std::endl;
-        auto dereg = reas->deregisterWorker();
-        if (dereg.has_error())
-            std::cerr << "Unable to deregister worker: " << dereg.error().message() << std::endl;
-        reas->stopThreads();
-        printFinalStats(*reas, dfuseMode);
+        if (reas) {
+            std::cout << "Stopping reassembler" << std::endl;
+            auto dereg = reas->deregisterWorker();
+            if (dereg.has_error())
+                std::cerr << "Unable to deregister worker: " << dereg.error().message() << std::endl;
+            reas->stopThreads();
+        }
+        printFinalStats(reas.get(), dfuseMode);
         printTiming(dfuseMode);
         if (timing.csv.is_open()) {
             timing.csv.close();

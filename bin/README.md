@@ -152,7 +152,35 @@ DAOS options:
 | `--verbose` | off | Print every committed event |
 | `--timing-csv FILE` | — | Write one row of timing per committed event (see [Timing and throughput](#timing-and-throughput)) |
 
+Synthetic mode (no sender, no network):
+
+| Option | Default | |
+|---|---|---|
+| `--synthetic N` | 0 (off) | Store N events made in memory instead of receiving. The E2SAR options are ignored and `--ip` is not needed |
+| `--event-size` | `95K` | Bytes per event, with an optional `K`/`M`/`G` suffix (binary), e.g. `1.5M` |
+| `--rate` | 0 | Pace events to this many Gbps. 0 = as fast as the sink takes them |
+
 Exit status: 0 if every received event was committed, 2 if any event failed, 1 on a setup error.
+
+### Synthetic mode: the sink's ceiling without a sender
+
+`--synthetic N` replaces the network and the Reassembler with an in-memory generator. Everything after that is the normal receiver: the same `--deq` threads, `--inflight` puts, `--chunk` layout, keys, `--dfuse` sink and `Timing:` block. The run ends by itself after the last event is committed.
+
+```bash
+# KV sink, 100,000 x 95 KiB events, as fast as DAOS takes them
+e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont e2sar-test --prefix synth1
+# the same paced at 20 Gbps, to see latency at a given load
+e2sar_daos_recv --synthetic 100000 --rate 20 --pool sc26 --cont e2sar-test --prefix synth2
+# dfuse sink
+e2sar_daos_recv --synthetic 50000 --dfuse /tmp/$USER-dfuse --prefix synth3
+```
+
+Unpaced, `DAOS commit throughput` is the most this sink commits with these settings. An end-to-end run with the same settings can't do better, so the gap between the two is what the network and reassembly cost. This is a closer reference than `fio --ioengine=dfs`, which writes byte ranges of a few large files rather than one KV put (or one file) per event.
+
+- Each event is a new buffer, filled with a copy of a fixed pseudo-random pattern, like the Reassembler's copy of an incoming event. Its first 8 bytes are the event number (little-endian), and the data id is 0. `e2sar_daos_read` reads the events back as usual.
+- `Ingest throughput` is the generation rate: how fast the dequeue threads took events. Unpaced, it only tracks the sink.
+- The Reassembler counters and the progress line's loss counters are left out.
+- With `--rate`, event *i* is released at *i* × size × 8 / rate after start. If the sink falls behind, events are released late, never dropped, and the commit throughput shows the shortfall.
 
 ### Timing and throughput
 
