@@ -270,6 +270,7 @@ $B recv TAG -m n2n -T 32 -D 32                               $B send TAG -m n2n 
 
 The sweep ran from a laptop with SSH to both nodes, with [`bin/e2sar_e2e_sweep.sh`](../bin/e2sar_e2e_sweep.sh): `e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3`.
 Every run's result, with the warm-up fields of the current analyzer, is in [`data/e2e_sweep_2026-10-20.jsonl`](data/e2e_sweep_2026-10-20.jsonl) (54 runs: `"sweep"` is `kv`, `kv-staggered-start` or `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
+The tables below can be rebuilt from it with [`data/e2sar_e2e_sweep_report.py`](data/e2sar_e2e_sweep_report.py): `--merge` groups kv and kv-staggered-start, `--sweep pil4dfs` shows only pil4dfs, `--csv runs.csv` gives one row per run for plotting.
 
 | Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
 |---|---|---|---|---|---|---|
