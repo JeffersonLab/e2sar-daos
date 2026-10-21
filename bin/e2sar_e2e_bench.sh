@@ -41,6 +41,7 @@
 : "${POOL:=sc26}"
 : "${CONT:=e2sar-bench}"                 # DAOS container, destroyed after every run
 : "${NIC:=enp1s0f1np1}"                  # receiver data-plane NIC, for drop counters
+: "${SEND_ARGS:=}"                        # extra e2sar_evio_send options, e.g. "-b 8388608" (send buffer)
 : "${RUN:=$HOME/e2sar_run}"              # shared: logs and rendezvous files
 : "${MNT:=/tmp/$USER-dfuse}"             # dfuse mount point for -S dfuse|pil4dfs (node-local)
 # dfuse defaults to at most 16 threads and one event queue; more of both lets the
@@ -105,7 +106,8 @@ if [ "$ROLE" = send ]; then
     else
         ARGS=(--port-per-segmenter)
     fi
-    "$BIN/e2sar_evio_send" -u "$URI" "${ARGS[@]}" --mtu 9000 -P "$SEGS" -s "$SOCKETS" -n "$EVENTS" \
+    # shellcheck disable=SC2086  # SEND_ARGS is a list of options
+    "$BIN/e2sar_evio_send" -u "$URI" "${ARGS[@]}" $SEND_ARGS --mtu 9000 -P "$SEGS" -s "$SOCKETS" -n "$EVENTS" \
         -f "$FRAMES" -r "$RATE" --pool "$POOLSZ" --timing-csv "$D/send.csv" --digests "$D/digests" \
         > "$D/send.log" 2>&1
     RC=$?

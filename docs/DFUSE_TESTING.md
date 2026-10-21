@@ -116,15 +116,16 @@ Raise the rate and the number of segmenters, and run the same sweep for each sin
 ```bash
 STAMP=<same number on both nodes>
 # ebpf2203
-for S in kv dfuse pil4dfs; do for R in 5 10 20 30; do
-  $B recv tput_${S}_r${R}_$STAMP -m n2n -T 32 -S $S
+for S in kv dfuse pil4dfs; do for R in 10 20 30 40; do
+  $B recv tput_${S}_r${R}_$STAMP -m n2n -T 4 -S $S
 done; done
 # ebpf2201, same order and TAGs
-for S in kv dfuse pil4dfs; do for R in 5 10 20 30; do
+for S in kv dfuse pil4dfs; do for R in 10 20 30 40; do
   $B send tput_${S}_r${R}_$STAMP -m n2n -P 4 -s 1 -n 2500 -f 4096 -r $R
 done; done
 ```
 `-r` is the total sender rate in Gbps. Each run sends 4 × 2500 = 10,000 events of about 1.5 MB (15 GB).
+For small events, use `-n 10000 -f 256` (about 95 KB each). The results in step 7 came from this loop plus `-D 32` at 40 Gbps and the small-event runs at 10 Gbps.
 Use `-D` to change the number of dequeue (writer) threads (for example `-D 32`), and `DFUSE_OPTS` to try other dfuse settings. Both are recorded in each run's JSON line.
 
 Results go to `$RUN/bench/<TAG>/` (logs, `timing.csv`, `fetch.txt`, `result.json`) and one JSON line per run to `$RUN/bench/results.jsonl`. To compare sinks:
@@ -150,20 +151,67 @@ mount | grep dfuse; daos cont list sc26         # neither should show e2sar-dfus
 ```
 Keep `$RUN`, which holds the logs and results.
 
-## 7. Results from 2026-10-19 (smoke test)
+## 7. Results
+
+### Throughput sweep, 2026-10-20
+
+ebpf2201 → ebpf2203, n2n, MTU 9000, 4 segmenters to 4 receive ports (`-P 4 -s 1`, receiver `-T 4`), dfuse mounted with `--thread-count=32 --eq-count=8`, pil4dfs with `D_IL_MAX_EQ=0`.
+The testbed was otherwise idle (03:40–04:07, after the nightly iperf3 job).
+Commit throughput is the bytes committed by the sink divided by the time between the first and last commit. "Write latency" is the time from the reassembled event to its last put (kv) or to `close()` returning (dfuse).
+
+**Large events: 10,000 events of about 1.5 MB (15 GB per run)**
+
+| Sink | Writers | Sender | Commit throughput | Committed | Lost on the network | Write latency p50 / p99 |
+|---|---|---|---|---|---|---|
+| kv | 4 × 128 puts | 10 Gbps | 10.0 Gbps | 10,000 | 0 | 1.1 / 1.5 ms |
+| kv | 4 × 128 puts | 20 Gbps | 20.1 Gbps | 9,981 | 19 | 0.5 / 3.3 ms |
+| kv | 4 × 128 puts | 30 Gbps | 30.1 Gbps | 9,956 | 44 | 0.5 / 4.1 ms |
+| kv | 4 × 128 puts | 35.8 Gbps ¹ | 35.3 Gbps | 9,857 | 143 | 0.6 / 4.6 ms |
+| dfuse | 16 | 10 Gbps | 10.0 Gbps | 9,987 | 13 | 2.5 / 32.3 ms |
+| dfuse | 16 | 20 Gbps | 20.2 Gbps | 9,973 | 27 | 2.5 / 34.7 ms |
+| dfuse | 16 | 30 Gbps | 30.2 Gbps | 9,992 | 8 | 2.2 / 31.4 ms |
+| dfuse | 16 | 40 Gbps | 39.7 Gbps | 9,985 | 15 | 4.1 / 25.1 ms |
+| dfuse | 32 | 40 Gbps | 37.8 Gbps | 9,797 | 203 | 8.3 / 76.9 ms |
+| pil4dfs | 16 | 10 Gbps | 10.0 Gbps | 10,000 | 0 | 1.1 / 1.7 ms |
+| pil4dfs | 16 | 20 Gbps | 20.1 Gbps | 10,000 | 0 | 0.6 / 0.9 ms |
+| pil4dfs | 16 | 30 Gbps | 30.1 Gbps | 9,983 | 17 | 0.5 / 1.3 ms |
+| pil4dfs | 16 | 40 Gbps | 40.1 Gbps | 9,965 | 35 | 0.6 / 1.1 ms |
+| pil4dfs | 32 | 40 Gbps | 39.4 Gbps | 9,884 | 116 | 0.6 / 1.0 ms |
+
+¹ This run's sender reached only 35.8 of the requested 40 Gbps.
+
+**Small events: 40,000 events of about 95 KB (3.8 GB per run), sender at 10 Gbps**
+
+| Sink | Writers | Commit throughput | Events/s | Committed | Write latency p50 / p99 |
+|---|---|---|---|---|---|
+| kv | 4 × 128 puts | 10.0 Gbps | 13,200 | 40,000 | 0.3 / 0.5 ms |
+| dfuse | 16 | **2.5 Gbps** | **3,240** | 40,000 | 4.8 / 11.9 ms |
+| pil4dfs | 16 | 10.0 Gbps | 13,200 | 40,000 | 0.4 / 0.8 ms |
+
+What this shows:
+- **No sink lost or corrupted an event.** In every run, committed events plus the reassembler's "lost in reassembly" count equal the events sent, no sink reported a failed write or put, and every committed event's SHA-256 matched. 11 of the 17 runs are marked FAIL only because events were lost on the network: each of those runs had frames dropped at the receiving NIC port (`rx_discards_phy`, 19–2,826 per run), the port-buffer overflow described in [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). One dropped frame loses one event.
+- **With 1.5 MB events, all three sinks keep up with 40 Gbps.** Plain dfuse costs more per file (p50 2–4 ms, p99 25–35 ms, against about 1 ms for kv and pil4dfs), but 16 writers hide that.
+- **With small events, plain dfuse is the bottleneck.** It commits only about 3,200 files/s (2.5 Gbps), so a 3-second burst takes 12 s to drain. kv and pil4dfs keep up at 13,200 events/s.
+- **pil4dfs is as fast as the native KV path** at these event rates (up to ~13,200 events/s) and had the fewest network losses. With 95 KB events at 20–50 Gbps (26–66k events/s) it is not: see below. dfuse lost a few events even at 10 Gbps, perhaps because the FUSE threads compete with the receive threads for CPU on the receiver.
+- **32 writers is worse than 16** for both dfuse sinks.
+
+### Small events at 20–50 Gbps: kv vs pil4dfs, 2026-10-20
+
+The node-to-node sweep of [E2E_BENCHMARK.md section 7](E2E_BENCHMARK.md#kv-vs-files-through-pil4dfs) with `-S pil4dfs`: 16 segmenters, 95 KB events, 100,000 per run, `-T 32 -D 32`.
+pil4dfs takes 0.9–1.7 ms per file (kv: 0.23–0.30 ms per event) and commits at most 18–33k files/s, 13–25 Gbps. It falls behind from 20 Gbps up, and events wait up to 2.9 s. At this event size, use kv.
+
+### Smoke test, 2026-10-19
 
 ebpf2201 → ebpf2203, n2n, MTU 9000, 1 segmenter at 2 Gbps, 300 events of about 1.5 MB, 1 receive port.
 Another n2n sweep was running on port 20600 at the same time, so these show correctness and per-event write cost, not peak throughput.
 
-| Sink | Writer threads | Result | Received | Write latency p50 / p90 / p99 |
+| Sink | Writers | Result | Received | Write latency p50 / p90 / p99 |
 |---|---|---|---|---|
-| kv | 4 (128 in-flight puts each) | PASS 300/300 | 2.03 Gbps | 1.0 / 12.9 / 22.6 ms |
+| kv | 4 × 128 puts | PASS 300/300 | 2.03 Gbps | 1.0 / 12.9 / 22.6 ms |
 | dfuse (`-t 32 -e 8`) | 16 | PASS 300/300 | 2.04 Gbps | 9.1 / 28.7 / 53.7 ms |
 | pil4dfs (`D_IL_MAX_EQ=0`) | 16 | PASS 300/300 | 2.02 Gbps | 1.0 / 1.1 / 13.1 ms |
 
-Through FUSE, each 1.5 MB file costs about 9 ms. With pil4dfs it costs about 1 ms, the same as the native KV path.
 A single `dd` stream (4 MiB blocks, `conv=fsync`) into the dfuse mount ran at 446 MB/s.
-The throughput sweep (step 5) still needs an idle testbed.
 
 ## Troubleshooting
 

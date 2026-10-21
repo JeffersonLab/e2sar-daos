@@ -6,7 +6,8 @@
 | `e2sar_daos_read` | Lists what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
 | `e2sar_evio_send` | Test sender: synthetic EVIO v6 streaming time frames through several E2SAR Segmenters, paced, with per-event timing and digests |
 | `e2sar_e2e_bench.sh` | One end-to-end run (`e2sar_evio_send` → [LB] → `e2sar_daos_recv` → DAOS): throughput, latency per stage, full digest check. See [docs/E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md) |
-| `e2sar_e2e_analyze.py` | The analysis step of `e2sar_e2e_bench.sh` |
+| `e2sar_e2e_analyze.py` | The analysis step of `e2sar_e2e_bench.sh`. `--profile 0.1` shows latency and loss per 0.1 s of a run |
+| `e2sar_e2e_sweep.sh` | A rate sweep of `e2sar_e2e_bench.sh`, run from a machine that can SSH to both nodes. See [docs/E2E_BENCHMARK.md section 7](../docs/E2E_BENCHMARK.md#7-node-to-node-rate-sweep-2050-gbps-2026-10-20) |
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
 
