@@ -224,6 +224,9 @@ def plot(runs, path):
     a_lat.set_title(f"Total latency after the first {warm} s (filled p50, hollow p99)")
     a_lat.set_ylabel("ms (log)")
     a_lat.set_yscale("log")
+    plain = matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}")   # not 7.6x10^1 on a narrow range
+    a_lat.yaxis.set_major_formatter(plain)
+    a_lat.yaxis.set_minor_formatter(plain)
     a_lat.legend(frameon=False, fontsize=8, ncol=2, loc="center right")
     a_disc.set_title("NIC port discards per run (rx_discards_phy)")
     a_disc.set_ylabel("Frames")
@@ -231,7 +234,9 @@ def plot(runs, path):
     a_disc.set_ylim(bottom=-0.5)
     a_disc.legend(frameon=False, loc="upper left")
     allv = all(r["verified"] == r["committed"] and r.get("digest_mismatch", 0) == 0 for r in runs)
-    fig.suptitle(f"Node-to-node rate sweep: {len(runs)} runs, {runs[0]['expected']:,} events each"
+    modes = {"n2n": "Node-to-node", "lb": "Through the LB"}
+    mode = " + ".join(modes.get(m, m) for m in sorted({r.get("mode", "n2n") for r in runs}))
+    fig.suptitle(f"{mode} rate sweep: {len(runs)} runs, {runs[0]['expected']:,} events each"
                  + (" (every committed event verified by SHA-256)" if allv else ""),
                  fontsize=12, color="#0b0b0b")
     fig.tight_layout()

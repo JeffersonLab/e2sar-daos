@@ -1,13 +1,13 @@
 # End-to-end benchmark: synthetic EVIO frames → E2SAR → DAOS
 
 How fast synthetic EVIO streaming time frames go from a sender on **ebpf2201**, through E2SAR (node-to-node or through the ESnet EJFAT load balancer), to `e2sar_daos_recv` on **ebpf2203** and into DAOS, without losing any. Also where each event's time goes on the way.
-Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 on `ejfat-lb.es.net`. The node-to-node rate sweep from 20 to 50 Gbps ([section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20)) is from 2026-10-20.
+Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 on `ejfat-lb.es.net`. The node-to-node rate sweep from 20 to 50 Gbps ([section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20)) is from 2026-10-20, and the LB rate sweep ([section 9](#9-lb-rate-sweep-2045-gbps-2026-10-21)) from 2026-10-21 on LB 640.
 
 ## Summary
 
 | | Result |
 |---|---|
-| **Highest lossless E2E, through the LB** | **33.7 Gbps** E2E (35.3 Gbps received into DAOS). Lossless in 2 of 2 runs at 35 Gbps. Every run at 40 and 45 lost events |
+| **Highest lossless E2E, through the LB** | **24.3 Gbps** E2E (25.2 received) on LB 640, 2026-10-21: 1 of 2 runs at 25 Gbps, and every run at 30–45 Gbps lost 3–20 events, all in the first 0.5 s. See [section 9](#9-lb-rate-sweep-2045-gbps-2026-10-21). On 2026-10-19 (LB 638, 16 dequeue threads), 35 Gbps (33.7 E2E) was lossless in 2 of 2 runs |
 | Highest lossless E2E, node-to-node | **29.9 Gbps** E2E (30.3 received), in 1 of 6 runs at 30 Gbps. 25 Gbps: 2 of 6. No run at 35–50 Gbps was lossless, and no rate was lossless in every run. See [section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20) |
 | KV vs files through pil4dfs, 95 KB events | **KV.** pil4dfs (one file per event, `-S pil4dfs`, 32 writers) takes 0.9–1.7 ms per file and commits at most 18–33k events/s (13–25 Gbps). From 20 Gbps up it falls behind, and events queue for seconds. KV takes 0.23–0.30 ms and keeps up to 50 Gbps. See [section 7](#kv-vs-files-through-pil4dfs) |
 | Node-to-node after the first 0.5 s | **No loss up to 50 Gbps in 39 of 42 runs.** Almost all lost events were queued in the first 0.1 s of a run, while the receiver's first DAOS writes are slow |
@@ -462,7 +462,7 @@ No real difference, and `send.csv` shows why: even without the stagger, the 16 p
 
 1. **Warm up the receiver before data arrives:** have `e2sar_daos_recv` write and remove a few values on each dequeue thread before it reports ready, then repeat this sweep. If the loss at the start goes away, node-to-node is lossless to 50 Gbps in practice.
 2. Record `rx_discards_phy`, `outbound_pci_stalled_*` and the IB `port_xmit_data` every 10 ms during a run, to see whether the discards coincide with the DAOS connection setup ([cause 2](#possible-causes)).
-3. Rerun the sweep through LB 638 when it has no other worker.
+3. ~~Rerun the sweep through the LB with no other worker.~~ Done on LB 640: [section 9](#9-lb-rate-sweep-2045-gbps-2026-10-21).
 4. Longer runs (1,000,000 events) at 30–50 Gbps, to measure how often a loss happens in the steady state: 3 such losses in ~80 s of steady sending here.
 ### 8. The sink without a sender (`--synthetic`)
 
@@ -495,7 +495,39 @@ What this says about the E2E results:
 
 `--synthetic --rate R` is also a cleaner DAOS load for run 2 of the [diagnosis plan](#runs-cheapest-first) than fio: the same write pattern as the receiver, at a fixed rate.
 
-## Why the lossless ceiling is ~25 Gbps node-to-node and ~35 through the LB
+### 9. LB rate sweep, 20–45 Gbps (2026-10-21)
+
+The settings of [section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20), through the LB: 16 Segmenters × 1 socket, 95 KB events, 100,000 events per run, 32 receive threads, 32 dequeue threads, 1 MiB chunks, KV sink.
+LB instance 640, freshly reserved, with no other sender or worker registered. Two runs per rate from 25 to 45 Gbps, taken in turn across the rates, plus one 20 Gbps run before them, 17:15–17:47 on an otherwise idle testbed.
+
+```bash
+MODE=lb RECV_OPTS="-T 32 -D 32" \
+BENCH="bash -c 'source ~/e2sar-instance.env; exec bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh \"\$0\" \"\$@\"'" \
+  bin/e2sar_e2e_sweep.sh 1021a "25 30 35 40 45" 2
+```
+`BENCH` sources the instance URI, since `~/.bashrc` doesn't set `EJFAT_URI`.
+The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10-21.jsonl) (`"sweep": "kv-lb"`). The tables and plots come from `data/e2sar_e2e_sweep_report.py data/e2e_sweep_2026-10-21.jsonl [--plot FILE | --plot-loss FILE]`.
+
+| Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
+|---|---|---|---|---|---|---|
+| 20 | **1 / 1** | 20.09 | 19.58 | 0 | 1 / 1 | 0 |
+| 25 | **1 / 2** | 25.12–25.17 | **24.34** | 0, 1 | 2 / 2 | 0, 4 |
+| 30 | 0 / 2 | 30.21–30.27 | 29.06–29.08 | 3, 6 | 2 / 2 | 27, 29 |
+| 35 | 0 / 2 | 35.35–35.36 | 33.72–33.74 | 3, 16 | 2 / 2 | 15, 77 |
+| 40 | 0 / 2 | 40.40–40.48 | 38.37 | 10, 20 | 2 / 2 | 54, 139 |
+| 45 | 0 / 2 | 45.56–45.61 | 42.94 | 4, 9 | 2 / 2 | 8, 45 |
+
+![LB sweep: E2E throughput, lost events, latency after the warm-up, NIC discards](data/e2e_sweep_2026-10-21.png)
+
+![LB sweep: lossless runs, and the loss rate of the others](data/e2e_sweep_2026-10-21_loss.png)
+
+- **Highest lossless E2E through the LB: 24.3 Gbps**, in 1 of 2 runs at 25 Gbps (25.2 Gbps received). The other 25 Gbps run lost 1 event. 20 Gbps was lossless.
+- **Unlike on 2026-10-19 ([section 4](#4-highest-lossless-rate)), 30 and 35 Gbps lost events in every run.** Then 35 Gbps passed 2 of 2, with 16 dequeue threads on LB 638. With 2 runs per rate, both days fit a threshold that varies from run to run between 25 and 35 Gbps, not a sharp ceiling.
+- **Every lost event was queued in the first 0.5 s**, as node-to-node: after the warm-up all 11 runs lost nothing, up to 45 Gbps. The loss is at the start of a run in both modes, and the LB doesn't remove it.
+- **The losses come with NIC port discards on ebpf2203** (4–139 per run), as before. No socket drops, ring overflows, reassembly loss or failed DAOS writes. The sender reached its rate within 0.3%, and the receiver kept up at every rate.
+- **Latency is the WAN round trip:** 70–76 ms p50 and 75–76 ms p99 after the warm-up at every rate. Over the whole run, p99 is 194–235 ms, set by the first 0.5 s.
+
+## Why the lossless ceiling is ~25 Gbps node-to-node and 25–35 through the LB
 
 - **Node-to-node, most of the loss is at the start of a run** ([section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20)): after the first 0.5 s, 39 of 42 runs at 20–50 Gbps lost nothing. The ceiling for a whole 100,000-event run is set by those first moments.
 

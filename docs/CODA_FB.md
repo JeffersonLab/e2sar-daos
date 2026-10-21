@@ -78,7 +78,7 @@ The difference that matters most for e2sar-daos is **frames per record**. coda-f
 | S_E = S_hdr + 4·F·[F>1] + F·S_F | Event size | 407 B at F = 1; ~90 KB at F = 256 |
 | S_seg | E2SAR payload per packet at MTU 9000 | 9000 − 20 (IP) − 8 (UDP) − 16 (LB) − 20 (RE) = 8,936 B |
 | R_max | Reassembler event rate limit | ~85k events/s, any size ([E2E_BENCHMARK.md](E2E_BENCHMARK.md), section 1) |
-| B_max | Highest lossless rate measured | ~35 Gbps through the LB, ~25–30 node-to-node |
+| B_max | Highest lossless rate measured | ~25–35 Gbps through the LB (varies by run and day), ~25–30 node-to-node |
 
 ### Real-time rate of one coda-fb
 
