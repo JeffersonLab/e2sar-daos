@@ -5,12 +5,14 @@ The receiver writes each event into DAOS, and `e2sar_daos_read` restores the fil
 Every command runs on the nodes themselves. Open one terminal on each node, and start `bash` in each, since the login shell is tcsh.
 Last run on 2026-10-19 against `feature/daos-kv-recv-apps`, using LB instance 638 on `ejfat-lb.es.net`. See [Results](#results-from-2026-10-19).
 
+**Use the `stable4` LB from now on (ESnet's recommendation, 2026-10-26):** control plane `192.188.29.6:18048`, data plane `192.188.29.54`. The commands below use it. The results (LB 638 and 640) were measured on the older control plane `ejfat-lb.es.net:18008`, data plane `192.188.29.16`.
+
 ```
 ebpf2201 (129.57.178.85)          ESnet LB                              ebpf2203 (129.57.178.86)
 /scratch/<user>/e2sar_src_lb                                            DAOS sc26/e2sar-lb ──▶ /scratch/<user>/e2sar_out_lb
-e2sar_ft -s --withcp ──UDP──▶ data 192.188.29.16:16384-32767 ──UDP──▶ e2sar_daos_recv --withcp :20600[..+N-1]
-          ├── sync UDP ─────▶ sync 192.188.29.6:19016
-          └── gRPC ─────────▶ ejfat-lb.es.net:18008 ◀──────── gRPC ──── (register, state, deregister)
+e2sar_ft -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP──▶ e2sar_daos_recv --withcp :20600[..+N-1]
+          ├── sync UDP ─────▶ sync=<ip:port> from the instance URI
+          └── gRPC ─────────▶ stable4 192.188.29.6:18048 ◀──── gRPC ──── (register, state, deregister)
               (add/remove sender)
 ```
 
@@ -56,7 +58,7 @@ export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
 export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin   # not on PATH; call the tools as $E2SAR_BIN/<tool>
 
 ## ESnet EJFAT LB (secrets: keep this file private, never copy into git)
-export EJFAT_ADMIN_URI='ejfats://<admin token>@ejfat-lb.es.net:18008/lb/0'   # admin token: reserve/free/overview only
+export EJFAT_ADMIN_URI='ejfats://<admin token>@192.188.29.6:18048/lb/0'   # stable4; admin token: reserve/free/overview only
 ```
 `meson` and `ninja` must be on `PATH` too (`export PATH=$HOME/.local/bin:$PATH`).
 
@@ -66,7 +68,7 @@ Next, reserve an LB instance with the admin URI. `-e` prints only `export EJFAT_
 bash                                       # from tcsh; this reads ~/.bashrc
 ls -l ~/e2sar-instance.env 2>/dev/null     # must not exist: '>' would overwrite the only copy of an older instance token
 (umask 077; $E2SAR_BIN/lbadm --reserve -v -u "$EJFAT_ADMIN_URI" -l <name> -a 129.57.178.85 -d 24:00:00 -e > ~/e2sar-instance.env)
-cut -d@ -f2 ~/e2sar-instance.env           # expect: ejfat-lb.es.net:18008/lb/<id>?sync=...'
+cut -d@ -f2 ~/e2sar-instance.env           # expect: 192.188.29.6:18048/lb/<id>?sync=...&data=192.188.29.54:...'
 source ~/e2sar-instance.env
 $E2SAR_BIN/lbadm --status                  # the new LB ID, with 129.57.178.85 under Registered senders
 ```
@@ -94,7 +96,7 @@ mkdir -p $RUN
 
 `EJFAT_URI` is now the LB instance URI in this shell. Check it before using the LB. The command prints only the part after the token:
 ```bash
-echo "$EJFAT_URI" | cut -d@ -f2        # expect: ejfat-lb.es.net:18008/lb/<id>?sync=...
+echo "$EJFAT_URI" | cut -d@ -f2        # expect: 192.188.29.6:18048/lb/<id>?sync=...&data=192.188.29.54:...
 ```
 The node-to-node procedure exports a placeholder, `ejfat://useless@10.10.10.10:1234/lb/1?data=...`, which overrides it for that shell. With the placeholder set, `lbadm --status` fails with `failed to connect ... 10.10.10.10:1234`. Use a separate shell for LB tests, or run `source ~/e2sar-instance.env` again.
 Scripts run as `bash -s` or `bash script.sh` don't read `~/.bashrc`. Start them with `source ~/.bashrc; source ~/e2sar-instance.env`.
@@ -129,11 +131,11 @@ The admin URI lives in `~/.bashrc`. The instance URI lives in `~/e2sar-instance.
 
 | URI | Token | Used for |
 |---|---|---|
-| **Admin** `$EJFAT_ADMIN_URI`, `ejfats://<admin token>@ejfat-lb.es.net:18008/lb/0` | admin (`ALL` or `LOAD_BALANCER`) | `--reserve`, `--overview` and token management. The apps don't need it |
-| **Instance** `$EJFAT_URI`, `ejfats://<instance token>@ejfat-lb.es.net:18008/lb/<id>?sync=...&data=...` | reservation, for one LB | `--status`, `--addsenders`, `--removesenders`, `--register`, `--deregister`, `--free`, and both apps |
+| **Admin** `$EJFAT_ADMIN_URI`, `ejfats://<admin token>@192.188.29.6:18048/lb/0` | admin (`ALL` or `LOAD_BALANCER`) | `--reserve`, `--overview` and token management. The apps don't need it |
+| **Instance** `$EJFAT_URI`, `ejfats://<instance token>@192.188.29.6:18048/lb/<id>?sync=...&data=...` | reservation, for one LB | `--status`, `--addsenders`, `--removesenders`, `--register`, `--deregister`, `--free`, and both apps |
 | Session | issued to one worker by `--register` | That worker's `--state` and `--deregister`. With `-s <session id>`, the instance URI works for both |
 
-An example instance URI, for LB 638 as used in these tests, with the token replaced by a placeholder:
+An example instance URI, for LB 638 on the older control plane as used in these tests, with the token replaced by a placeholder. On stable4 the host is `192.188.29.6:18048` and `data=` is `192.188.29.54`; take the rest exactly as `--reserve` prints it:
 
 ```
 ejfats://<instance token>@ejfat-lb.es.net:18008/lb/638?sync=192.188.29.6:19016&sync=[2001:400:a300::6]:19016&data=192.188.29.16:16384-32767&data=[2001:400:a300::16]:16384-32767
@@ -141,12 +143,12 @@ ejfats://<instance token>@ejfat-lb.es.net:18008/lb/638?sync=192.188.29.6:19016&s
 
 | Part | Example | Meaning |
 |---|---|---|
-| Scheme | `ejfats://` | gRPC over TLS. Use the hostname, not an IP, so the certificate validates |
+| Scheme | `ejfats://` | gRPC over TLS. stable4 is addressed by IP; if its certificate doesn't validate for that IP, add `-v` (`--novalidate`) to `lbadm`, `e2sar_ft` and `e2sar_daos_recv` |
 | Token | `<instance token>` | Printed once by `--reserve` (3.3). It's a secret: keep it in `~/e2sar-instance.env` only |
-| Control plane | `ejfat-lb.es.net:18008` | Where `lbadm` and the apps send gRPC calls |
+| Control plane | `ejfat-lb.es.net:18008` (stable4: `192.188.29.6:18048`) | Where `lbadm` and the apps send gRPC calls |
 | LB ID | `/lb/638` | The reserved instance. The admin URI uses `/lb/0` |
 | `sync=` | `192.188.29.6:19016`, `[2001:400:a300::6]:19016` | Where the sender sends sync packets, IPv4 and IPv6. The port is specific to this instance |
-| `data=` | `192.188.29.16:16384-32767`, `[2001:400:a300::16]:16384-32767` | The LB's data-plane address and port range, IPv4 and IPv6. The sender sends events here |
+| `data=` | `192.188.29.16:16384-32767`, `[2001:400:a300::16]:16384-32767` (stable4: `192.188.29.54`) | The LB's data-plane address and port range, IPv4 and IPv6. The sender sends events here |
 
 `--reserve -e` writes it wrapped in single quotes, which the shell needs because `&` and `[` mean something to it. Keep the quotes if you edit the file by hand. A different instance has a different token, LB ID and `sync=` port. Always take the URI exactly as `--reserve` printed it.
 
@@ -156,7 +158,7 @@ In the node-to-node case the URI needs `data=<ip>:<port>`. Here, keep the `data=
 
 ```bash
 $E2SAR_BIN/lbadm --status                            # this instance ($EJFAT_URI)
-$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --overview    # every LB on ejfat-lb.es.net
+$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --overview    # every LB on this control plane (stable4)
 ```
 
 `--status` prints:
@@ -173,7 +175,7 @@ Registered workers:
 
 ### 3.3 Reserve an instance (or reuse one)
 
-**If you already have an instance** (LB 638 was reserved for the 2026-10-19 tests), put its URI in `~/e2sar-instance.env` as `export EJFAT_URI='<instance URI>'` instead of reserving, source it, check that it hasn't expired and go to 3.4:
+**If you already have an instance** on stable4, put its URI in `~/e2sar-instance.env` as `export EJFAT_URI='<instance URI>'` instead of reserving, source it, check that it hasn't expired and go to 3.4:
 ```bash
 $E2SAR_BIN/lbadm --status | grep -E 'LB ID|expiresat'
 ```
@@ -182,7 +184,7 @@ $E2SAR_BIN/lbadm --status | grep -E 'LB ID|expiresat'
 ```bash
 (umask 077; $E2SAR_BIN/lbadm --reserve -v -u "$EJFAT_ADMIN_URI" -l <name> -a 129.57.178.85 -d 24:00:00 -e > ~/e2sar-instance.env)
 cat ~/e2sar-instance.env
-# export EJFAT_URI='ejfats://<new instance token>@ejfat-lb.es.net:18008/lb/<id>?sync=...&data=...'
+# export EJFAT_URI='ejfats://<new instance token>@192.188.29.6:18048/lb/<id>?sync=...&data=192.188.29.54:...'
 ```
 - `-l` is a name of your choice. It shows up in `--overview`.
 - `-a` puts sender IPs on the allowlist at once. Repeat it for several senders, or leave it out and use 3.4 later.
@@ -221,7 +223,7 @@ $E2SAR_BIN/lbadm --addsenders -a 129.57.178.85                     # repeat -a f
 $E2SAR_BIN/lbadm --status | grep 'Registered senders'              # check
 $E2SAR_BIN/lbadm --removesenders -a 129.57.178.85                  # when done
 ```
-- Without `-a`, `lbadm` uses the address of the interface it would use to reach the LB. Pass `-a` explicitly. Use the address from `ip route get 192.188.29.16` (step 4), the one the data actually leaves from.
+- Without `-a`, `lbadm` uses the address of the interface it would use to reach the LB. Pass `-a` explicitly. Use the address from `ip route get 192.188.29.54` (step 4), the one the data actually leaves from.
 - Remove only the IPs you added. LB 638 also lists JLab and NERSC senders that belong to other people.
 - If a `--withcp` sender was killed before it could clean up, its IP stays on the list. Remove it with `--removesenders -a <ip>`.
 
@@ -281,9 +283,9 @@ $E2SAR_BIN/lbadm --free && rm ~/e2sar-instance.env
 
 **LB path** (on each node, once per session):
 ```bash
-ip route get 192.188.29.16                        # expect: dev enp1s0f1np1 src 129.57.178.8x
-ping -c2 -M do -s 8972 192.188.29.16              # MTU 9000 works; RTT ~71 ms
-timeout 5 bash -c '</dev/tcp/ejfat-lb.es.net/18008' && echo CP-OK
+ip route get 192.188.29.54                        # expect: dev enp1s0f1np1 src 129.57.178.8x
+ping -c2 -M do -s 8972 192.188.29.54              # MTU 9000 works (RTT was ~71 ms to the older data plane)
+timeout 5 bash -c '</dev/tcp/192.188.29.6/18048' && echo CP-OK
 ```
 
 **LB state:**
@@ -549,11 +551,11 @@ Rows marked † happened in these runs. The others are what to check first, base
 | † NIC counters grew far more than the frames sent | Other traffic is reaching the NIC. Either another user's test is running on the node, or another allowlisted sender on the LB is sending: LB 638 carried a ~15k pps stream with a v2 RE header from an external sender, which the Reassembler discards as bad headers. Compare `rx_discards_phy`/`rx_out_of_buffer`, not `rx_packets_phy` |
 | Receiver runs, but `lbadm --status` lists no worker | It was started without `--withcp`, or it exited. Read its output |
 | Worker listed with `slotsassigned=0` | The LB hasn't recomputed the schedule yet. Wait a few seconds before sending |
-| Sender shows `0 errors`, but the receiver gets nothing | The sender's `--ip` isn't the address the packets leave from, so the LB drops them. Check `ip route get 192.188.29.16`. Also check that inbound UDP to the receiver ports isn't firewalled |
+| Sender shows `0 errors`, but the receiver gets nothing | The sender's `--ip` isn't the address the packets leave from, so the LB drops them. Check `ip route get 192.188.29.54`. Also check that inbound UDP to the receiver ports isn't firewalled |
 | `lbadm --status`: `failed to connect to all addresses ... 10.10.10.10:1234` | The shell still has the node-to-node placeholder `EJFAT_URI`. Run `source ~/e2sar-instance.env` |
 | `lbadm --overview`: `Error in parsing URI from command-line` | `$EJFAT_ADMIN_URI` is empty in this shell. Run `source ~/.bashrc` |
 | A worker stays in `--status` after its receiver was killed | Wait about 10 s for the LB to drop it, or `lbadm --deregister -s <SID>` if you have the session ID (3.5) |
 | `e2sar_ft` or `lbadm` can't find libraries, or `EJFAT_URI` is empty | The shell didn't read `~/.bashrc` or the instance file: tcsh, or a `bash -s` script. Run `bash`, then `source ~/.bashrc; source ~/e2sar-instance.env` |
 | Large file missing, `Lost in reassembly: 1`, no drops anywhere | The event wasn't complete within `--timeout`. Use `--timeout 10000`, `--mtu 9000` and no `--smooth` |
-| gRPC or certificate errors | The URI must be `ejfats://` with the hostname. Use `-v` (`--novalidate`) only if the CA isn't installed |
+| gRPC or certificate errors | The URI must be `ejfats://`. If the certificate doesn't match the stable4 IP `192.188.29.6`, or the CA isn't installed, add `-v` (`--novalidate`) to `lbadm`, `e2sar_ft` and `e2sar_daos_recv` |
 | Either app exits: `NUMA management not available` | This E2SAR build has no NUMA support. Drop `--numa` |
