@@ -7,8 +7,11 @@
 #                                   (it waits for that RUNID). Ctrl-C stops the receiver, and the
 #                                   script then does step 7's drop checks on this node.
 #   e2sar_pm_recv.sh status         both workers' LB slots (step 5); send only when both are > 0
-#   e2sar_pm_recv.sh verify N [L]   step 8, once on either node after both receivers stopped:
-#                                   N events of L bytes (default 1048576), each exactly once
+#   e2sar_pm_recv.sh verify N [L]   step 8, once on either node after both receivers stopped, for a
+#                                   send of N events of L bytes (default 1048576). Reports the loss
+#                                   rate (events that never reached DAOS) without failing on it.
+#                                   FAIL only if a stored event is wrong: size, digest, an event
+#                                   number >= N, or an event written twice
 #   e2sar_pm_recv.sh clean          step 9: destroy the DAOS container, show the LB state
 #
 # Every LB command uses -v (--novalidate). The LB instance URI comes from $ENV_FILE
@@ -140,13 +143,31 @@ cmd_verify() {
     local fail=0
     "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$runid" > "$d/events.list" || die "e2sar_daos_read failed"
     tail -1 "$d/events.list"
-    local got
-    got=$(awk '$1 ~ /^[0-9]+$/' "$d/events.list" | wc -l)
-    [ "$got" -eq "$n" ] && echo "OK   $got events" || { echo "FAIL $got events, expected $n"; fail=1; }
-    awk '$1 ~ /^[0-9]+$/' "$d/events.list" | cut -f1 | sort -n | awk '$1!=NR-1{print "FAIL missing near", $1; exit 1}' \
-        && echo "OK   numbered 0..$((n - 1))" || fail=1
+
+    # Loss is reported, not failed: events lost on the way never reach DAOS.
+    # event rows only: 5 tab-separated columns (not the header or the "N committed events" line)
+    awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/' "$d/events.list" | cut -f1 | sort -n > "$d/events.nums"
+    local got bad_num dup
+    got=$(wc -l < "$d/events.nums")
+    bad_num=$(awk -v n="$n" '$1 >= n' "$d/events.nums" | wc -l)
+    dup=$(uniq -d "$d/events.nums" | wc -l)
+    [ "$got" -gt 0 ] || { echo "FAIL no events in DAOS under '$runid/'"; exit 1; }
+    [ "$bad_num" -eq 0 ] || { echo "FAIL $bad_num event numbers >= $n: wrong N, or two sends under one RUNID"; fail=1; }
+    [ "$dup" -eq 0 ] || { echo "FAIL $dup event numbers listed twice"; fail=1; }
+    comm -23 <(seq 0 $((n - 1)) | sort) <(sort -u "$d/events.nums") | sort -n > "$d/missing.txt"
+    local lost
+    lost=$(wc -l < "$d/missing.txt")
+    local loss_line
+    loss_line=$(awk -v g="$((n - lost))" -v n="$n" -v m="$lost" \
+        'BEGIN {printf "%d of %d events (%d lost, %.2f%%)", g, n, m, 100 * m / n}')
+    if [ "$lost" -eq 0 ]; then
+        echo "OK   $loss_line"
+    else
+        echo "LOSS $loss_line; missing event numbers in $d/missing.txt, first ones: $(head -10 "$d/missing.txt" | tr '\n' ' ')"
+    fi
+
     local bad
-    bad=$(awk -v L="$l" '$1 ~ /^[0-9]+$/ && $3!=L' "$d/events.list" | wc -l)
+    bad=$(awk -F'\t' -v L="$l" 'NF==5 && $1 ~ /^[0-9]+$/ && $3!=L' "$d/events.list" | wc -l)
     [ "$bad" -eq 0 ] && echo "OK   every event $l bytes" || { echo "FAIL $bad events not $l bytes"; fail=1; }
     "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$runid" --fetch > "$d/events.sha" || fail=1
     tail -1 "$d/events.sha"
@@ -156,8 +177,18 @@ cmd_verify() {
     local sum
     sum=$(grep -h 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null | awk '{s += $NF} END {print s + 0}')
     grep -H 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null
-    [ "$sum" -eq "$n" ] && echo "OK   receivers committed $sum in total" || { echo "FAIL receivers committed $sum, expected $n"; fail=1; }
-    [ $fail -eq 0 ] && echo "PASS" || { echo "FAIL (details in $d)"; exit 1; }
+    # More commits than events in DAOS: an event was written twice (delivered to both receivers,
+    # or two sends under one RUNID) and the later write overwrote the earlier one.
+    if [ "$sum" -eq "$got" ]; then
+        echo "OK   receivers committed $sum in total, as in DAOS"
+    else
+        echo "FAIL receivers committed $sum in total, DAOS has $got"; fail=1
+    fi
+    if [ $fail -eq 0 ]; then
+        echo "PASS: every stored event is complete and correct; $loss_line"
+    else
+        echo "FAIL (details in $d); $loss_line"; exit 1
+    fi
 }
 
 cmd_clean() {
