@@ -12,6 +12,7 @@ Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 
 | KV vs files through pil4dfs, 95 KB events | **KV.** pil4dfs (one file per event, `-S pil4dfs`, 32 writers) takes 0.9–1.7 ms per file and commits at most 18–33k events/s (13–25 Gbps). From 20 Gbps up it falls behind, and events queue for seconds. KV takes 0.23–0.30 ms and keeps up to 50 Gbps. See [section 7](#kv-vs-files-through-pil4dfs) |
 | Node-to-node after the first 0.5 s | **No loss up to 50 Gbps in 39 of 42 runs.** Almost all lost events were queued in the first 0.1 s of a run, while the receiver's first DAOS writes are slow |
 | Lossless in every run | **20 Gbps through the LB (3 of 3)**, the new defaults. Node-to-node the same settings passed 1 of 3 |
+| E2SAR alone (`e2sar_perf`, no DAOS), 16 sockets → 32 threads | **Lossless at 10 Gbps through the LB** (4 of 4). At 20 Gbps every LB run lost 0.2–0.4%, while node-to-node 20 Gbps was lossless. From 30 to 90 Gbps both paths lose about 0.01–0.2% per run, mostly at start-up. `recvmmsg` avoids the 1–2% node-to-node spikes through the LB. See [section 10](#10-e2sar_perf-without-daos-node-to-node-vs-lb-1090-gbps-2026-10-26-and-2026-10-28) |
 | Highest with any loss | 61.2 Gbps received (59.8 E2E), node-to-node, 99.96% of events delivered |
 | What loses events | Frames dropped at ebpf2203's NIC port (`rx_discards_phy`). The LB path smooths the bursts, so loss starts later through it than node-to-node. Never DAOS, never the sockets. Why the port overflows is not settled yet: see [Diagnosing the port discards](#diagnosing-the-port-discards) |
 | What limits the rate | 1. The DAOS dequeue threads: 4 cap at ~24 Gbps, 16 reach 40, 32 reach 61. 2. Then the Reassembler at ~85k events/s, whatever the event size |
@@ -527,6 +528,57 @@ The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10
 - **The losses come with NIC port discards on ebpf2203** (4–139 per run), as before. No socket drops, ring overflows, reassembly loss or failed DAOS writes. The sender reached its rate within 0.3%, and the receiver kept up at every rate.
 - **Latency is the WAN round trip:** 70–76 ms p50 and 75–76 ms p99 after the warm-up at every rate. Over the whole run, p99 is 194–235 ms, set by the first 0.5 s.
 
+### 10. `e2sar_perf` without DAOS: node-to-node vs LB, 10–90 Gbps (2026-10-26 and 2026-10-28)
+
+This sweep uses E2SAR's own `e2sar_perf` at both ends, so there is **no DAOS and no `e2sar_daos_recv`**. It measures only the E2SAR transport into ebpf2203, with and without the `recvmmsg` receive optimization.
+
+Settings, the same on both days:
+- Sender on ebpf2201: 16 sockets, 1 MiB events, rate × 1000 events per run (about 8.5 s of sending), `--smooth`, 1 GiB socket buffer.
+  A second sender adds a 2 Gbps keep-alive stream (data id 1111), started 3 s before the main stream (data id 4321) and running past its end.
+- Receiver on ebpf2203: `e2sar_perf -r` with 32 threads (ports 20600–20631), `--deq 4`, 1 GiB socket buffer, 500 ms reassembly timeout.
+- Two modes: plain, and `-o recvmmsg --rcviovecsize 1024`.
+- Two runs (a, b) per rate and mode.
+
+The two paths:
+- **Node-to-node (2026-10-26):** no control plane. Only the 16 even ports get traffic, one per send socket.
+- **LB (2026-10-28):** LB instance 86 on `stable4`, data plane `192.188.29.48`, 71–76 ms RTT, no other sender or worker registered, both nodes otherwise idle.
+  - The receiver uses `--withcp` and registers 32 ports. The LB spreads events over all of them.
+  - The main sender uses `--withcp`, so it sends sync packets. The keep-alive relies on `129.57.178.85` being added to the allowlist by hand before each run.
+
+The scripts and logs are in `~/e2sar_perf_tune` on the shared testbed home:
+- Node-to-node: `recv.sh` and `send_overlap.sh`, logs `logs/F_T32_*`.
+- LB: `recv_lb2.sh` and `send_lb.sh`, logs `logs/L_T32_*`.
+
+Each cell is the events of the main stream lost in reassembly, as run a · run b, with the share of the events sent. *crash* means that run produced no result, because the receiver died at startup.
+
+| Rate (Gbps) | Node-to-node, plain | **LB, plain** | Node-to-node, recvmmsg 1024 | **LB, recvmmsg 1024** |
+|---|---|---|---|---|
+| 10 | 0 · *crash* | **0 · 0** | 0 · 0 | **0 · 0** |
+| 20 | 0 · *crash* | 78 (0.39%) · 40 (0.20%) | *crash* · 0 | 42 (0.21%) · 77 (0.39%) |
+| 30 | 17 (0.06%) · 11 (0.04%) | 16 (0.05%) · 54 (0.18%) | 9 (0.03%) · 46 (0.15%) | 5 (0.02%) · **0** |
+| 40 | 48 (0.12%) · 48 (0.12%) | 16 (0.04%) · 4 (0.01%) | **840 (2.1%)** · 52 (0.13%) | 6 (0.02%) · 5 (0.01%) † |
+| 60 | 46 (0.08%) · 32 (0.05%) | 15 (0.03%) · 26 (0.04%) | *crash* · 45 (0.08%) | 21 (0.04%) · **266 (0.44%)** |
+| 80 | 47 (0.06%) · *crash* | 34 (0.04%) · 17 (0.02%) | **1951 (2.4%)** · 60 (0.08%) | 27 (0.03%) · 35 (0.04%) |
+| 90 | 41 (0.05%) · 48 (0.05%) | 25 (0.03%) † · 27 (0.03%) | **1226 (1.4%)** · 46 (0.05%) | 52 (0.06%) · 35 (0.04%) |
+| Sent at 80 / 90 | 75 / 87 | 78–79 / 89.6 | 76 / 88 | 80.4 / 89.5–89.9 |
+
+† A rerun (`r40c`, `r90c`). In the first try, the receiver stopped a few seconds after registering, before any data arrived, without an error message and without a segfault in `dmesg`.
+
+The LB runs also lost 2–109 keep-alive events each, counted separately and left out of the table.
+Most of them are probably keep-alive events cut off when the main sender removed `129.57.178.85` from the allowlist on exit, with the keep-alive still running.
+
+- **Lossless only at 10 Gbps through the LB**: all 4 runs. recvmmsg also had one lossless run at 30.
+  Node-to-node, 20 Gbps was lossless in both runs that didn't crash.
+- **At 20–30 Gbps through the LB, the loss is spread over the whole run.** The lost event ids reach ~20,000, and ebpf2203's NIC discarded 35–640 frames per run (`rx_discards_phy`).
+  This differs from the DAOS sweeps, where the loss was in the first 0.5 s ([section 9](#9-lb-rate-sweep-2045-gbps-2026-10-21)).
+- **From 40 Gbps up, most loss is start-up loss** (event ids below ~100) on both paths.
+  The rate stays at 0.01–0.06% per run, except one LB recvmmsg run at 60 Gbps with 266 events (0.44%), spread over the run.
+- **recvmmsg has no large loss through the LB.** The 1.4–2.4% runs node-to-node at 40, 80 and 90 Gbps didn't happen through the LB.
+- **The sender reaches its rate through the LB**: 78–80 Gbps at 80, and 89.5–89.9 at 90. Node-to-node it topped out at 75–76 and 87–88.
+- **The node-to-node *crash* runs were probably receiver segfaults.** ebpf2203's `dmesg` has `e2sar_perf` segfaults (`error 6`) from 2026-10-26 at about the time of those runs.
+  The sender then reported `Connection refused`, from ICMP port-unreachable replies.
+  Through the LB, ICMP replies don't reach the sender, so a receiver that dies shows up only as an empty receiver log.
+
 ## Why the lossless ceiling is ~25 Gbps node-to-node and 25–35 through the LB
 
 - **Node-to-node, most of the loss is at the start of a run** ([section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20)): after the first 0.5 s, 39 of 42 runs at 20–50 Gbps lost nothing. The ceiling for a whole 100,000-event run is set by those first moments.
@@ -535,6 +587,7 @@ The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10
 - **Bursts, not the average rate.** Each event leaves the sender as a line-rate burst. Node-to-node, those bursts reach ebpf2203 as they are. Through the LB (ESnet WAN and the LB's data plane) they arrive smoothed, so the same average rate drops fewer frames: 20 Gbps passed 3 of 3 through the LB but 1 of 3 node-to-node.
 - **Possibly made worse by DAOS on the same adapter.** E2SAR arrives on `enp1s0f1np1` (Ethernet, 100 Gb/s) and DAOS writes go out on `ibp1s0f0` (InfiniBand HDR, 200 Gb/s). They're the two ports of **one ConnectX-6** (PCI `01:00.0` and `01:00.1`, PCIe Gen4 x16, NUMA node 0), so they share its host interface and on-card buffers.
   The one paced 40 Gbps run that had 0 discards wrote to DAOS at only 24 Gbps (4 dequeue threads). At 25 Gbps and more written to DAOS, there were nearly always some. This is a correlation, not a proof.
+  `e2sar_perf` with no DAOS at all also gets discards from 30 Gbps node-to-node ([section 10](#10-e2sar_perf-without-daos-node-to-node-vs-lb-1090-gbps-2026-10-26-and-2026-10-28)), so DAOS isn't needed for them.
 - **Not the cause:** DAOS (writes take 0.2–0.5 ms p50 at every rate, no failed puts), socket buffers (1 GiB, no `RcvbufErrors`), the RX ring (8192, no `rx_out_of_buffer`).
 
 To go higher without loss: flow control or a deeper buffer at ebpf2203's switch port, pacing inside each event (the staged E2SAR's `--smooth` is too slow, below 1 Gbps), DAOS on a separate adapter (worth testing), or several receiver nodes behind the LB.
@@ -568,6 +621,8 @@ The receive ring always had buffers (`rx_out_of_buffer` 0), so software wasn't h
 | The same 20 Gbps traffic: lossless in 3 of 3 runs through the LB, 1 of 3 node-to-node | [section 5](#5-confirmation-runs-with-the-defaults) | Bursts matter, not the average rate |
 | ebpf2203 has sent pause frames (820), ebpf2201 has received none | [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md#8-parallel-senders-with-rx-ring-8192-and-pinned-receive-threads) | Node-to-node traffic also crosses a switch. ebpf2203 asks for backpressure but it doesn't reach the sender. Pause is per hop, so enabling it on the hosts alone can't fix this. Not known whether the switch honors the pause and buffers, or ignores it |
 | 40 Gbps on the wire. With 4 dequeue threads (24 Gbps into DAOS): 0 discards. With 16 (40 Gbps into DAOS): 92 | [section 3](#3-dequeue-threads-the-hidden-bottleneck) | Points to DAOS writes on the other port of the same ConnectX-6. One run each |
+| `e2sar_perf` without DAOS, 16 × 1 MiB streams: every run that lost events had `rx_discards_phy` > 0, and nothing else dropped. Node-to-node without recvmmsg, from 30 to 90 Gbps nearly all loss is among the first ~100 events | [section 10](#10-e2sar_perf-without-daos-node-to-node-vs-lb-1090-gbps-2026-10-26-and-2026-10-28), [BOTTLENECK_ANALYSIS.md table 9](BOTTLENECK_ANALYSIS.md#9-e2sar-alone-without-daos-e2sar_perf-node-to-node-vs-lb) | The discards don't need DAOS writes on the same adapter (cause 2 isn't necessary, though it may add to them). Start-up loss happens without DAOS too |
+| `e2sar_perf` through LB 86 at 20–30 Gbps: 40–78 events lost per run, all through the run, with 35–640 discards. Node-to-node 20 Gbps: lossless | same | Goes against "the LB smooths the bursts" for this setup (32 ports, a different LB instance). Open |
 | 1.5 MB events, node-to-node: 4,215 and 1,187 discards at 20 Gbps, but 267 and 121 at 40 Gbps | [section 6](#6-daos-layout-chunks-or-one-value-per-event) | Unexplained. Fewer discards at the higher rate goes against a simple rate effect. Possibly the Segmenters' bursts line up more often at 20 Gbps. Needs repeats |
 
 ### Possible causes
@@ -630,6 +685,7 @@ Counter names depend on the mlx5 firmware. A counter that `ethtool -S` doesn't l
 | The switch (4) | Flow control on the switch port, or a switch with deeper buffers. Only this would make node-to-node loss turn into backpressure |
 
 A null sink in `e2sar_daos_recv` (receive and reassemble, skip the DAOS write) would make run 3 cleaner: the same wire traffic with no DAOS traffic at all, and no events queued in memory.
+`e2sar_perf -r` is already such a sink, with E2SAR's own sender instead of `e2sar_evio_send`. Section 10 used it and still saw discards. Running `e2sar_evio_send` into `e2sar_perf -r` at the section 7 settings would give the direct comparison.
 
 ## Recommended settings
 
