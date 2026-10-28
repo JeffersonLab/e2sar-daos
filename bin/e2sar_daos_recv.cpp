@@ -443,9 +443,25 @@ void dfuseLoop(EventSource* src, const WriterConfig cfg, int tid) {
     timing.putLatency.merge(writeLatency);
 }
 
-void reportLoop(Reassembler* reas, unsigned intervalSec) {
+// Local wall-clock time with ms, e.g. "2026-10-27 14:03:12.345 ", to line up with other logs
+void printTimestamp() {
+    const auto wall = std::chrono::system_clock::now();
+    const std::time_t wallSec = std::chrono::system_clock::to_time_t(wall);
+    const auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000;
+    std::tm tmLocal{};
+    localtime_r(&wallSec, &tmLocal);
+    std::cout << std::put_time(&tmLocal, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << wallMs
+              << std::setfill(' ') << ' ';
+}
+
+// Zero suppression (unless logIdle): an interval with nothing new (no event received,
+// committed or failed, no new loss) prints no line. The first such interval prints one
+// "idle" line instead, so the log shows when the traffic stopped.
+void reportLoop(Reassembler* reas, unsigned intervalSec, bool logIdle) {
     using clock = std::chrono::steady_clock;
     uint64_t lastBytes = 0, lastEvents = 0, lastRcvdBytes = 0;
+    uint64_t lastRcvd = 0, lastFailed = 0, lastLoss = 0;
+    bool idle = false;
     auto lastT = clock::now();
     while (running) {
         for (unsigned i = 0; i < intervalSec * 10 && running; i++)
@@ -456,33 +472,43 @@ void reportLoop(Reassembler* reas, unsigned intervalSec) {
         const auto now = clock::now();
         const double dt = std::chrono::duration<double>(now - lastT).count();
         const uint64_t bytes = stats.bytesCommitted, events = stats.eventsCommitted;
-        const uint64_t rcvdBytes = stats.bytesReceived;
-
-        // Wall-clock timestamp (local time, ms precision) to line up with other logs
-        const auto wall = std::chrono::system_clock::now();
-        const std::time_t wallSec = std::chrono::system_clock::to_time_t(wall);
-        const auto wallMs =
-            std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000;
-        std::tm tmLocal{};
-        localtime_r(&wallSec, &tmLocal);
-
-        std::cout << std::put_time(&tmLocal, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3)
-                  << wallMs << std::setfill(' ') << ' ';
-        std::cout << std::fixed << std::setprecision(2)
-                  << "in " << stats.eventsReceived << " evts, " << (rcvdBytes - lastRcvdBytes) * 8.0 / dt / 1e9
-                  << " Gbps | committed " << events << " evts, " << bytes / 1048576.0 << " MiB, "
-                  << (bytes - lastBytes) * 8.0 / dt / 1e9 << " Gbps, "
-                  << (events - lastEvents) / dt << " evt/s | failed " << stats.eventsFailed;
+        const uint64_t rcvdBytes = stats.bytesReceived, rcvd = stats.eventsReceived, failed = stats.eventsFailed;
+        uint64_t reasLoss = 0, enqLoss = 0;
         if (reas) {  // null with --synthetic
             const auto rs = reas->getStats();
-            std::cout << " | reassembly loss " << rs.reassemblyLoss << ", enqueue loss " << rs.enqueueLoss;
+            reasLoss = rs.reassemblyLoss;
+            enqLoss = rs.enqueueLoss;
         }
+        const bool changed = rcvd != lastRcvd || events != lastEvents || failed != lastFailed ||
+                             reasLoss + enqLoss != lastLoss;
+        lastT = now;
+
+        if (!changed && !logIdle) {
+            if (!idle) {
+                printTimestamp();
+                std::cout << "idle: no new events; progress lines resume when events arrive" << std::endl;
+                idle = true;
+            }
+            continue;
+        }
+        idle = false;
+
+        printTimestamp();
+        std::cout << std::fixed << std::setprecision(2)
+                  << "in " << rcvd << " evts, " << (rcvdBytes - lastRcvdBytes) * 8.0 / dt / 1e9
+                  << " Gbps | committed " << events << " evts, " << bytes / 1048576.0 << " MiB, "
+                  << (bytes - lastBytes) * 8.0 / dt / 1e9 << " Gbps, "
+                  << (events - lastEvents) / dt << " evt/s | failed " << failed;
+        if (reas)
+            std::cout << " | reassembly loss " << reasLoss << ", enqueue loss " << enqLoss;
         std::cout << std::endl;
 
         lastBytes = bytes;
         lastRcvdBytes = rcvdBytes;
         lastEvents = events;
-        lastT = now;
+        lastRcvd = rcvd;
+        lastFailed = failed;
+        lastLoss = reasLoss + enqLoss;
     }
 }
 
@@ -632,6 +658,7 @@ int main(int argc, char** argv) {
     opts("event-size", po::value<std::string>(&eventSizeStr)->default_value("95K"), "with --synthetic: bytes per event, with an optional K/M/G suffix");
     opts("rate", po::value<double>(&synthGbps)->default_value(0), "with --synthetic: pace events to this many Gbps (0 = as fast as the sink takes them)");
     opts("report", po::value<unsigned>(&reportSec)->default_value(1), "progress report interval in seconds (0 = off)");
+    opts("log-idle", po::bool_switch()->default_value(false), "print a progress line every interval, even with no new events (default: skip idle intervals)");
     opts("verbose", po::bool_switch()->default_value(false), "print every committed event");
     opts("timing-csv", po::value<std::string>(&timingCsv), "write one CSV row of timing per committed event to this file");
 
@@ -814,7 +841,7 @@ int main(int argc, char** argv) {
         src.go = true;
         std::thread reporter;
         if (reportSec > 0)
-            reporter = std::thread(reportLoop, reas.get(), reportSec);
+            reporter = std::thread(reportLoop, reas.get(), reportSec, vm["log-idle"].as<bool>());
 
         for (auto& t : workers)
             t.join();  // returns after Ctrl-C (or the last synthetic event), once all in-flight puts are flushed
