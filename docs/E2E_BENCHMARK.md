@@ -34,9 +34,9 @@ e2sar_evio_send                                                  e2sar_daos_recv
 |---|---|
 | [`bin/e2sar_evio_send`](../bin/e2sar_evio_send.cpp) | Builds synthetic EVIO v6 events and sends them with P E2SAR Segmenters, paced to a total rate. Writes per-event send times and the SHA-256 of every event it can send |
 | [`bin/e2sar_daos_recv`](../bin/README.md#e2sar_daos_recv) | The existing receiver. It now prints its clock start so its per-event times can be matched with the sender's. `--synthetic` measures it without a sender ([section 7](#7-the-sink-without-a-sender---synthetic)) |
-| [`bin/e2sar_e2e_bench.sh`](../bin/e2sar_e2e_bench.sh) | Runs one test: starts the receiver, waits for it (and the LB) to be ready, sends, waits for every commit, reads every event back from DAOS, analyzes, cleans up |
+| [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh) | Runs one test: starts the receiver, waits for it (and the LB) to be ready, sends, waits for every commit, reads every event back from DAOS, analyzes, cleans up |
 | [`bin/e2sar_e2e_analyze.py`](../bin/e2sar_e2e_analyze.py) | Joins the two hosts' per-event times, checks every digest, computes throughput and latency per stage. `--profile S` shows latency and loss per S-second slice of the run |
-| [`bin/e2sar_e2e_sweep.sh`](../bin/e2sar_e2e_sweep.sh) | Runs a rate sweep of the bench from a machine that can SSH to both nodes |
+| [`scripts/e2sar_e2e_sweep.sh`](../scripts/e2sar_e2e_sweep.sh) | Runs a rate sweep of the bench from a machine that can SSH to both nodes |
 
 You don't need a different receiver. `e2sar_daos_recv` stores any event, and the bench checks that what it stored is byte-for-byte what was sent.
 
@@ -68,9 +68,9 @@ The nodes can't SSH to each other, so start the two roles in two terminals, one 
 
 ```bash
 # ebpf2203 (receiver), start first
-bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh recv run1 -m lb
+bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh recv run1 -m lb
 # ebpf2201 (sender)
-bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh send run1 -m lb
+bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh send run1 -m lb
 ```
 
 `-m lb` goes through the LB in `$EJFAT_URI` (both sides `--withcp`). `-m n2n` sends straight to ebpf2203.
@@ -268,7 +268,7 @@ Node-to-node only: LB 638 had another worker registered (indra-s2) that would ha
 $B recv TAG -m n2n -T 32 -D 32                               $B send TAG -m n2n -P 16 -s 1 -n 6250 -f 256 -r RATE
 ```
 
-The sweep ran from a laptop with SSH to both nodes, with [`bin/e2sar_e2e_sweep.sh`](../bin/e2sar_e2e_sweep.sh): `e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3`.
+The sweep ran from a laptop with SSH to both nodes, with [`scripts/e2sar_e2e_sweep.sh`](../scripts/e2sar_e2e_sweep.sh): `e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3`.
 Every run's result, with the warm-up fields of the current analyzer, is in [`data/e2e_sweep_2026-10-20.jsonl`](data/e2e_sweep_2026-10-20.jsonl) (54 runs: `"sweep"` is `kv`, `kv-staggered-start` or `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
 The tables below can be rebuilt from it with [`data/e2sar_e2e_sweep_report.py`](data/e2sar_e2e_sweep_report.py): `--merge` groups kv and kv-staggered-start, `--sweep pil4dfs` shows only pil4dfs, `--csv runs.csv` gives one row per run for plotting.
 
@@ -502,8 +502,8 @@ LB instance 640, freshly reserved, with no other sender or worker registered. Tw
 
 ```bash
 MODE=lb RECV_OPTS="-T 32 -D 32" \
-BENCH="bash -c 'source ~/e2sar-instance.env; exec bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh \"\$0\" \"\$@\"'" \
-  bin/e2sar_e2e_sweep.sh 1021a "25 30 35 40 45" 2
+BENCH="bash -c 'source ~/e2sar-instance.env; exec bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh \"\$0\" \"\$@\"'" \
+  scripts/e2sar_e2e_sweep.sh 1021a "25 30 35 40 45" 2
 ```
 `BENCH` sources the instance URI, since `~/.bashrc` doesn't set `EJFAT_URI`.
 The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10-21.jsonl) (`"sweep": "kv-lb"`). The tables and plots come from `data/e2sar_e2e_sweep_report.py data/e2e_sweep_2026-10-21.jsonl [--plot FILE | --plot-loss FILE]`.

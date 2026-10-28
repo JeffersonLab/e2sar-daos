@@ -57,7 +57,7 @@ source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset v
 set -u
 : "${E2SAR_BIN:?E2SAR_BIN not set (see docs/ESNET_LB_TESTING.md step 1)}"
 BIN=$E2SAR_DAOS_BUILD/bin
-HERE=$(cd "$(dirname "$0")" && pwd)
+ANALYZE=$(cd "$(dirname "$0")/../bin" && pwd)/e2sar_e2e_analyze.py   # stays in bin/ next to the apps
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -180,7 +180,7 @@ fi
 unmount; trap - EXIT
 
 GP=$(grep -oP 'Sender goodput:\s+\K[0-9.]+' "$D/send.log")
-R=$(python3 -I "$HERE/e2sar_e2e_analyze.py" "$D" --pool "$S_pool" --expected "$S_events" --set \
+R=$(python3 -I "$ANALYZE" "$D" --pool "$S_pool" --expected "$S_events" --set \
     tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" frames_per_event="$S_frames" \
     rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" chunk_kib="$CHUNK" sink="$SINK" \
     dfuse_opts="$([ "$SINK" = kv ] || echo "${DFUSE_OPTS// /_}")" \
