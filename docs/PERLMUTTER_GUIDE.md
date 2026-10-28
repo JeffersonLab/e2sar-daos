@@ -140,7 +140,6 @@ echo "$EJFAT_URI" | cut -d@ -f2          # expect: 192.188.29.6:18048/lb/<id>?sy
 ip -4 -br addr show hsn0                  # both addresses, e.g. 10.249.44.10/.. 128.55.84.3/..
 export SEND_IP=$(ip -4 -o addr show hsn0 | awk '{print $4}' | cut -d/ -f1 | grep '^128\.')
 echo $SEND_IP                             # one 128.55.x.x address; empty means this node has none: stop
-ip route get 192.188.29.54                # expect: dev hsn0 src 128.55.x.x
 ```
 
 - Pass `--ip $SEND_IP` to `e2sar_perf` (step 6) and, if you add the sender by hand, `-v -a $SEND_IP` to `lbadm`.
@@ -150,8 +149,8 @@ ip route get 192.188.29.54                # expect: dev hsn0 src 128.55.x.x
 
 ```bash
 timeout 5 bash -c '</dev/tcp/192.188.29.6/18048' && echo CP-OK        # control plane (gRPC)
-ping -c3 -M do -s 8972 192.188.29.54                                  # does MTU 9000 pass unfragmented? note the RTT
-ping -c3 -M do -s 1472 192.188.29.54                                  # MTU 1500, if 9000 fails
+ping -c3 -M do -s 8972 192.188.29.xx                                  # does MTU 9000 pass unfragmented? note the RTT
+ping -c3 -M do -s 1472 192.188.29.xx                                  # MTU 1500, if 9000 fails
 lbadm -v --status                                                     # the instance, as seen from Perlmutter
 ```
 
