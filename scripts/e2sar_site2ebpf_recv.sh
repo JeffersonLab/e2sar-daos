@@ -1,29 +1,29 @@
 #!/bin/bash
-# e2sar_2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/PERLMUTTER_GUIDE.md
+# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/PERLMUTTER_GUIDE.md
 # (remote sender ──▶ ESnet LB ──▶ e2sar_daos_recv on ebpf2201 and ebpf2203 ──▶ DAOS; the sender is
 # on Perlmutter by default, or on Lux with SITE=lux, see below).
 #
-#   e2sar_2ebpf_recv.sh start          steps 4-5: pre-flight checks, run directory, start the receiver.
-#                                      Run on ebpf2201 first (it makes the new RUNID), then on ebpf2203
-#                                      (it waits for that RUNID). Ctrl-C stops the receiver, and the
-#                                      script then does step 7's drop checks on this node.
-#   e2sar_2ebpf_recv.sh status         both workers' LB slots (step 5); send only when both are > 0
-#   e2sar_2ebpf_recv.sh verify N [L]   step 8, once on either node after both receivers stopped, for a
-#                                      send of N events of L bytes (default 1048576). Reports the loss
-#                                      rate (events that never reached DAOS) without failing on it.
-#                                      FAIL only if a stored event is wrong: size, digest, an event
-#                                      number >= N, or an event written twice
-#   e2sar_2ebpf_recv.sh runs           the runs in the DAOS container (its run catalog), with each
-#                                      run's committed and lost events
-#   e2sar_2ebpf_recv.sh clean [RUNID]  step 9: delete run RUNID (its DAOS object), or without RUNID
-#                                      destroy the whole container; then show the LB state
+#   e2sar_site2ebpf_recv.sh start          steps 4-5: pre-flight checks, run directory, start the receiver.
+#                                          Run on ebpf2201 first (it makes the new RUNID), then on ebpf2203
+#                                          (it waits for that RUNID). Ctrl-C stops the receiver, and the
+#                                          script then does step 7's drop checks on this node.
+#   e2sar_site2ebpf_recv.sh status         both workers' LB slots (step 5); send only when both are > 0
+#   e2sar_site2ebpf_recv.sh verify N [L]   step 8, once on either node after both receivers stopped, for a
+#                                          send of N events of L bytes (default 1048576). Reports the loss
+#                                          rate (events that never reached DAOS) without failing on it.
+#                                          FAIL only if a stored event is wrong: size, digest, an event
+#                                          number >= N, or an event written twice
+#   e2sar_site2ebpf_recv.sh runs           the runs in the DAOS container (its run catalog), with each
+#                                          run's committed and lost events
+#   e2sar_site2ebpf_recv.sh clean [RUNID]  step 9: delete run RUNID (its DAOS object), or without RUNID
+#                                          destroy the whole container; then show the LB state
 #
 # Another sender site (e.g. Lux): set SITE on both nodes, for every command. Runs are then named
 # lux_<date>_<time>, in container e2sar-lux and directory ~/e2sar_run/lux. Unset CONT and RUN
 # first if they were exported for Perlmutter, or they override SITE.
 #   unset CONT RUN; export SITE=lux
-#   e2sar_2ebpf_recv.sh start          (ebpf2201 first, then ebpf2203)
-#   e2sar_2ebpf_recv.sh verify 100     (status, runs and clean the same way)
+#   e2sar_site2ebpf_recv.sh start          (ebpf2201 first, then ebpf2203)
+#   e2sar_site2ebpf_recv.sh verify 100     (status, runs and clean the same way)
 #
 # Every LB command uses -v (--novalidate). The LB instance URI comes from $ENV_FILE
 # (~/e2sar_instance.env, shared $HOME). This script never reserves or frees the instance.

@@ -20,7 +20,7 @@ e2sar_perf -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP�
 | [1](#1-e2sar-on-perlmutter-once) | Perlmutter | E2SAR 0.4.0rc1 in `~/daq/e2sar-install`: environment in `~/.bashrc` (once) |
 | [2](#2-the-lb-instance-jlab-then-perlmutter) | ebpf, then Perlmutter | The current LB instance URI (`~/e2sar_instance.env` at JLab, don't free it); copy it to Perlmutter |
 | [3](#3-get-a-perlmutter-node-and-check-the-path) | Perlmutter compute node | Get a node, find the sender IP, check the path to the LB |
-| [script](#the-receiver-script) | ebpf2201, ebpf2203 | `scripts/e2sar_2ebpf_recv.sh` does steps 4, 5, 7, 8 and 9 |
+| [script](#the-receiver-script) | ebpf2201, ebpf2203 | `scripts/e2sar_site2ebpf_recv.sh` does steps 4, 5, 7, 8 and 9 |
 | [4](#4-pre-flight-checks-on-the-ebpf-nodes) | ebpf2201, ebpf2203 | LB state, nodes idle |
 | [5](#5-start-the-two-receivers-ebpf2201-and-ebpf2203) | ebpf2201, ebpf2203 | Start one receiver on each; both register with the LB |
 | [6](#6-send-perlmutter) | Perlmutter | Send with `e2sar_perf` |
@@ -162,17 +162,17 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 
 ## The receiver script
 
-[`scripts/e2sar_2ebpf_recv.sh`](../scripts/e2sar_2ebpf_recv.sh) does steps 4, 5, 7, 8 and 9 on the ebpf nodes. The manual commands follow below, for reference and for when something needs a closer look.
+[`scripts/e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) does steps 4, 5, 7, 8 and 9 on the ebpf nodes. The manual commands follow below, for reference and for when something needs a closer look.
 
 ```bash
 # ebpf2201 first, then ebpf2203 (each in bash, in its own terminal)
-~/daq/e2sar-daos/scripts/e2sar_2ebpf_recv.sh start  # checks, run directory, receiver; Ctrl-C after the send
+~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh start  # checks, run directory, receiver; Ctrl-C after the send
 # a second ebpf terminal
-~/daq/e2sar-daos/scripts/e2sar_2ebpf_recv.sh status # both workers with slotsassigned > 0: now send (step 6)
+~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh status # both workers with slotsassigned > 0: now send (step 6)
 # after Ctrl-C on both receivers, once, on either node
-~/daq/e2sar-daos/scripts/e2sar_2ebpf_recv.sh verify 10000   # N = the sender's -n; loss rate, then PASS or FAIL
-~/daq/e2sar-daos/scripts/e2sar_2ebpf_recv.sh runs        # the runs in DAOS: committed, failed and lost events per run
-~/daq/e2sar-daos/scripts/e2sar_2ebpf_recv.sh clean <RUNID>  # delete that run, show the LB state ('clean' alone: the whole container)
+~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh verify 10000   # N = the sender's -n; loss rate, then PASS or FAIL
+~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh runs        # the runs in DAOS: committed, failed and lost events per run
+~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh clean <RUNID>  # delete that run, show the LB state ('clean' alone: the whole container)
 ```
 
 - `start` reads the instance URI from `~/e2sar_instance.env` and listens on `$MY_IP` from `~/.bashrc` (else the address of `enp1s0f1np1`). It stops if an e2sar process is already running, a receive port is in use, or someone else's worker is on the LB instance.
@@ -180,7 +180,7 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 - Ctrl-C stops only the receiver. Its final statistics stay in `<node>.recv.log`, and the script then prints step 7's drop checks for that node.
 - Each run is its own DAOS object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
 - Every LB command uses `-v`. The script never reserves or frees the instance.
-- Settings such as `CONT`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_2ebpf_recv.sh start`. See the top of the script.
+- Settings such as `CONT`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_site2ebpf_recv.sh start`. See the top of the script.
 
 ## 4. Pre-flight checks on the ebpf nodes
 
