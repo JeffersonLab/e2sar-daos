@@ -261,15 +261,15 @@ Start with a short, slow run to prove the path, then a longer one:
 cd $SCRATCH
 # 1. smoke test: 100 events of 1 MiB at 1 Gbps
 e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 100 --rate 1 \
-    --sockets 8 -b 67108864 2>&1 | tee pm_smoke.send.log
+    --sockets 4 -b 67108864 2>&1 | tee pm_smoke.send.log
 
 # 2. the run: 10,000 events of 1 MiB (10.5 GB) at 5 Gbps
 e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 10000 --rate 5 \
-    --sockets 8 -b 67108864 2>&1 | tee pm_run.send.log
+    --sockets 4 -b 67108864 2>&1 | tee pm_run.send.log
 
 # 3. the run: 48,000 events of 1 MiB (48 GB) at 40 Gbps
 e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 48000 --rate 40 \
-    --sockets 16 -b 67108864 2>&1 | tee pm_r40.send.log
+    --sockets 8 -b 67108864 2>&1 | tee pm_r40.send.log
 ```
 
 Each run needs its own `RUNID` on the receivers (step 5), so restart the receivers between the two sends, or note that the smoke test's events 0–99 get overwritten by the second run's events 0–99 under the same prefix.
@@ -279,7 +279,7 @@ Expected output:
 Adding senders to LB: 128.55.x.x ... done
 Control plane:                 ON
 ...
-Sending sockets/threads:       8
+Sending sockets/threads:       4
 Using LB Header Version:       2
 Sending average bit rate is:   5 Gbps (with 1048576 B line-rate bursts)
 Event size is 1048576 bytes or 8388608 bits
@@ -292,7 +292,7 @@ Removing senders: 128.55.x.x
 
 - With `--withcp`, `e2sar_perf` adds `--ip` to the LB allowlist when it starts and removes it when it exits. If it's killed before that, remove it by hand (step 9).
 - Run only one `--withcp` sender per IP at a time: the first one to exit removes the shared IP while the other is still sending.
-- `-l` is the event size in bytes, `-n` the number of events, `--rate` the total send rate in Gbps (`-1`: no limit). `--sockets` is the number of send threads: 8 here, twice `e2sar_perf`'s default of 4, since a Perlmutter CPU node has cores to spare. `-b` is the send socket buffer; the node allows up to 2 GiB.
+- `-l` is the event size in bytes, `-n` the number of events, `--rate` the total send rate in Gbps (`-1`: no limit). `--sockets` is the number of send threads: 4 for up to 10 Gbps (`e2sar_perf`'s default) and 8 above that. `-b` is the send socket buffer; the node allows up to 2 GiB.
 - Every event has the same content: one buffer, with `This is a start of event payload` at its start and `...the end` at its end, reused for all events. Step 8 uses that. Don't pass `--realmalloc`, which gives each event a new buffer with undefined content in the middle.
 - Keep `-v` (`--novalidate`), as for every LB command (step 2). If the MTU check in step 3 failed, use `--mtu 1500`.
 
@@ -364,12 +364,12 @@ Repeat steps 5–9 with a new `RUNID` each time, raising `--rate`. Keep `-l 1048
 
 | Rate (Gbps) | `--sockets` | Runs | Sender goodput | Committed (ebpf2201 / ebpf2203) | Lost | `rx_discards_phy` (2201 / 2203) | Result |
 |---|---|---|---|---|---|---|---|
-| 1 | 8 | | | | | | |
-| 5 | 8 | | | | | | |
-| 10 | 8 | | | | | | |
-| 20 | 16 | | | | | | |
-| 30 | 16 | | | | | | |
-| 40 | 16 | | | | | | |
+| 1 | 4 | | | | | | |
+| 5 | 4 | | | | | | |
+| 10 | 4 | | | | | | |
+| 20 | 8 | | | | | | |
+| 30 | 8 | | | | | | |
+| 40 | 8 | | | | | | |
 
 What to expect, from the JLab runs:
 - One ebpf receiver lost events above about 25 Gbps to NIC port discards ([E2E_BENCHMARK.md](E2E_BENCHMARK.md#summary)). With two receivers each one gets half, so the pair may hold about twice that, if the Perlmutter side and the WAN keep up.
