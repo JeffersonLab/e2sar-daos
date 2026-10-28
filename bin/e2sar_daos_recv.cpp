@@ -1,5 +1,5 @@
 /**
-    e2sar_daos_recv: receive events from an E2SAR sender (e.g. `e2sar_ft -s`) and store
+    e2sar_daos_recv: receive events from an E2SAR sender (e.g. `e2sar_perf -s`) and store
     them in DAOS key-value objects using asynchronous puts on DAOS event queues.
 
     The pool must exist; the container is created on first use if it does not exist.
@@ -678,7 +678,7 @@ int main(int argc, char** argv) {
     opts("cont", po::value<std::string>(&cont)->default_value("e2sar"), "DAOS container label (created if missing)");
     opts("oid", po::value<uint64_t>(&oidLo), "write into one shared KV object with this id (low 64 bits; 0xE25A = 57946 is the one used before per-run objects), without the run catalog (default: one object per --prefix)");
     opts("oclass", po::value<std::string>(&oclass)->default_value(""), "DAOS object class, e.g. SX or RP_2G1 (default: container default); all receivers of a run must use the same");
-    opts("prefix", po::value<std::string>(&prefix)->default_value("run"), "run name: its own KV object and catalog entry, and the key prefix; use a new value per run, since e2sar_ft restarts event numbers at 0");
+    opts("prefix", po::value<std::string>(&prefix)->default_value("run"), "run name: its own KV object and catalog entry, and the key prefix; use a new value per run, since e2sar_perf and e2sar_ft restart event numbers at 0");
     opts("chunk", po::value<size_t>(&chunkKiB)->default_value(1024), "chunk size in KiB for splitting events into KV values (0 = one value per event)");
     opts("inflight", po::value<size_t>(&inflight)->default_value(128), "max concurrent async puts per dequeue thread");
     opts("deq", po::value<size_t>(&deqThreads)->default_value(16), "number of dequeue threads, each with its own DAOS event queue");
@@ -705,7 +705,7 @@ int main(int argc, char** argv) {
 
     if (vm.count("help")) {
         std::cout << od << std::endl
-                  << "Example (pairs with `e2sar_ft -s -u <uri> --ip <sender ip> /path/to/files`):\n"
+                  << "Example (pairs with `e2sar_perf -s -u <uri> --ip <sender ip> -l 1048576 -n 100 --rate 5`):\n"
                   << "  e2sar_daos_recv -u 'ejfat://...@host:port/lb/1?data=<recv ip>' --ip <recv ip> \\\n"
                   << "      --pool sc26 --cont e2sar --prefix run42\n"
                   << "Example without a sender (100,000 x 95 KB events, as fast as DAOS takes them):\n"
