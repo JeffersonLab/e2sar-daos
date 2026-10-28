@@ -1,11 +1,11 @@
 # The DAOS interface for E2SAR
 A C++ library and applications for storing E2SAR data streams in [DAOS](https://docs.daos.io).
 
-- `libe2sar-daos` ([include/e2sar_daos/](./include/e2sar_daos/)) provides RAII handles for the DAOS runtime, pool, container (created if missing) and KV object, plus `AsyncKVWriter`, which issues non-blocking `daos_kv_put`s on a DAOS event queue with a bounded number in flight.
+- `libe2sar-daos` ([include/e2sar_daos/](./include/e2sar_daos/)) provides RAII handles for the DAOS runtime, pool, container (created if missing) and KV object, the run catalog (`RunCatalog`: one object per run, ids derived from the run's prefix), plus `AsyncKVWriter`, which issues non-blocking `daos_kv_put`s on a DAOS event queue with a bounded number in flight.
 - [Applications](./bin/README.md):
     - `e2sar_daos_recv` receives events from `e2sar_ft` on another node and writes them to DAOS.
-    - `e2sar_daos_read` lists the stored events, verifies them and reads them back.
-    - Events are stored in one DAOS KV object as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key per event. See [Data layout in DAOS](./bin/README.md#data-layout-in-daos), with examples for an EVIO file and for `e2sar_evio_send` events.
+    - `e2sar_daos_read` lists the runs and their stored events, verifies them, reads them back and deletes runs.
+    - Each run (`--prefix`) is stored in its own DAOS KV object as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key per event, and listed in a run catalog object in the same container. See [Data layout in DAOS](./bin/README.md#data-layout-in-daos), with examples for an EVIO file and for `e2sar_evio_send` events.
 - [Scripts](./scripts/README.md) that drive the applications on the JLab test nodes: the end-to-end bench, its rate sweep, and the Perlmutter receiver.
 
 - Refer to [containers](./containers/rocky-dev/) for the Rocky 9 + DAOS 2.6 development environment. It runs on JLab testbeds and on Macs.

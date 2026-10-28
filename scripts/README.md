@@ -6,7 +6,7 @@ Bash scripts that drive the [applications](../bin/README.md) for tests on the JL
 |---|---|---|
 | [`e2sar_e2e_bench.sh`](e2sar_e2e_bench.sh) | Receiver and sender node, one role each | One end-to-end run: `e2sar_evio_send` → [LB] → `e2sar_daos_recv` → DAOS. Throughput, latency per stage, and a digest check of every event. See [docs/E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md) |
 | [`e2sar_e2e_sweep.sh`](e2sar_e2e_sweep.sh) | A machine that can SSH to both nodes | A rate sweep: runs `e2sar_e2e_bench.sh` on both nodes for each rate and repetition. See [docs/E2E_BENCHMARK.md section 7](../docs/E2E_BENCHMARK.md#7-node-to-node-rate-sweep-2050-gbps-2026-10-20) |
-| [`e2sar_pm_recv.sh`](e2sar_pm_recv.sh) | ebpf2201 and ebpf2203 | Runs one node as a receiver for the Perlmutter test: pre-flight checks, shared run directory, `e2sar_daos_recv` (with `-v`), drop checks after Ctrl-C, then `verify N` and `clean`. See [docs/PERLMUTTER_GUIDE.md](../docs/PERLMUTTER_GUIDE.md#the-receiver-script) |
+| [`e2sar_pm_recv.sh`](e2sar_pm_recv.sh) | ebpf2201 and ebpf2203 | Runs one node as a receiver for the Perlmutter test: pre-flight checks, shared run directory, `e2sar_daos_recv` (with `-v`), drop checks after Ctrl-C, then `verify N`, `runs` (the runs in DAOS, from the run catalog) and `clean [RUNID]` (delete one run, or the whole container). See [docs/PERLMUTTER_GUIDE.md](../docs/PERLMUTTER_GUIDE.md#the-receiver-script) |
 
 ## Before running them
 

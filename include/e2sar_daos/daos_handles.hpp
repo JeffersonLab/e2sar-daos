@@ -6,7 +6,7 @@
         DaosRuntime  -> daos_init() / daos_fini()
         DaosPool     -> daos_pool_connect() / daos_pool_disconnect()
         DaosContainer-> daos_cont_open() (optionally create) / daos_cont_close()
-        DaosKV       -> daos_kv_open() / daos_kv_close()
+        DaosKV       -> daos_kv_open() / daos_kv_close()   (RunCatalog holds one too)
 
     All handles are non-copyable. Failures throw DaosError carrying the DER_* code.
     Pool, container and KV handles may be shared across threads; event queues may not
@@ -102,6 +102,15 @@ public:
 
     /** Blocking put/get helpers for small values (metadata, tools, tests). */
     void put(const std::string& key, const void* buf, size_t size);
+    /**
+        Put only if the key doesn't exist yet (DAOS_COND_KEY_INSERT). Returns false, and
+        changes nothing, if it does. Of several writers racing on one key, exactly one wins.
+    */
+    bool putIfAbsent(const std::string& key, const void* buf, size_t size);
+    /** Remove one key and its value. */
+    void remove(const std::string& key);
+    /** Punch the whole object: every key and value in it. */
+    void destroy();
     /** Returns the size of the value; 0 if the key does not exist. */
     size_t valueSize(const std::string& key);
     /** Reads up to *size bytes; on return *size is the value size. */

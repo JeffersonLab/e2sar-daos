@@ -2,8 +2,8 @@
 
 | App | What it does |
 |---|---|
-| `e2sar_daos_recv` | Receives events from an E2SAR sender (e.g. `e2sar_ft -s`) and writes them to a DAOS KV object with asynchronous puts |
-| `e2sar_daos_read` | Lists what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
+| `e2sar_daos_recv` | Receives events from an E2SAR sender (e.g. `e2sar_perf -s` or `e2sar_ft -s`) and writes them to DAOS with asynchronous puts: one KV object per run, listed in a run catalog |
+| `e2sar_daos_read` | Lists the runs in a container and what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
 | `e2sar_evio_send` | Test sender: synthetic EVIO v6 streaming time frames through several E2SAR Segmenters, paced, with per-event timing and digests |
 | `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
 | [`docs/data/e2sar_e2e_sweep_report.py`](../docs/data/e2sar_e2e_sweep_report.py) | Summarizes a sweep's `.jsonl` (one result per run) as Markdown tables per sweep and rate: loss, throughput, latency per stage, warm-up. `--csv` writes one flat row per run. E.g. `docs/data/e2sar_e2e_sweep_report.py docs/data/e2e_sweep_2026-10-20.jsonl --merge` |
@@ -22,14 +22,26 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 
 ## Data layout in DAOS
 
-Everything goes into one KV object (`DAOS_OT_KV_HASHED`) in `<pool>/<cont>`, identified by `--oid` (default `0xE25A`):
+Each run (`--prefix`) goes into its own KV object (`DAOS_OT_KV_HASHED`) in `<pool>/<cont>`. A catalog object in the same container lists the runs:
 
 ```
-pool                  --pool, e.g. sc26
-└── container         --cont, e.g. e2sar (created on first use)
-    └── KV object     DAOS_OT_KV_HASHED, OID low bits --oid (default 0xE25A), class --oclass
-        └── keys      <prefix>/<evtNum>/<dataId>[/<chunk>], one KV value each
+pool                    --pool, e.g. sc26
+└── container           --cont, e.g. e2sar (created on first use)
+    ├── run catalog     KV object, OID 0xE25A0000.0x0
+    │   ├── run/<prefix>           oid, oclass, chunk size, creation time, receiver that created it
+    │   ├── oid/<object id>        <prefix>  (claims the id)
+    │   └── recv/<prefix>/<host>   that receiver's final statistics, written when it stops
+    └── run object      one per --prefix: OID 0xE25A0001.<FNV-1a 64-bit hash of the prefix>, class --oclass
+        └── keys        <prefix>/<evtNum>/<dataId>[/<chunk>], one KV value each
 ```
+
+- **One object per run, shared by its receivers:** the object id is a hash of the prefix, so receivers on several nodes (e.g. ebpf2201 and ebpf2203 behind the LB) write the same run into the same object without talking to each other. The first one creates the catalog entry; the others find it.
+- **Same object class on every receiver of a run:** the class is part of the DAOS object id, so a receiver that joins a run with a different `--oclass` stops with an error.
+- **Hash collisions:** two prefixes with the same hash would share an object. The catalog entry `oid/<id>` claims the id for one prefix, and a receiver with another prefix and the same id stops with an error.
+- **Why:** listing the runs reads only the small catalog (`e2sar_daos_read --prefixes`), reading one run scans only that run's keys instead of every run's, and deleting a run deletes one object (`e2sar_daos_read --prefix P --delete`) instead of the container.
+- **Before per-run objects** everything went into one shared object, `--oid` (default `0xE25A`). `e2sar_daos_read` still reads such data: a prefix that isn't in the catalog is read from that object. `e2sar_daos_recv --oid` still writes that way, without the catalog.
+
+The layout is defined in [`include/e2sar_daos/run_catalog.hpp`](../include/e2sar_daos/run_catalog.hpp) (objects and catalog) and [`include/e2sar_daos/event_layout.hpp`](../include/e2sar_daos/event_layout.hpp) (events).
 
 Each reassembled event is stored as follows. With `e2sar_ft`, one event is one file.
 
@@ -46,11 +58,9 @@ Each reassembled event is stored as follows. With `e2sar_ft`, one event is one f
     - Each chunk is one async `daos_kv_put`, so one KV value.
     - An event smaller than the chunk size is a single value. `--chunk 0` stores every event as a single value.
 - **Commit marker:** the metadata key is written only after all of an event's chunks have been stored successfully. An event that is listed with metadata is complete. Chunks without metadata come from a failed or interrupted write. `e2sar_daos_read` reports them as *incomplete*.
-- **Key prefix:** `e2sar_ft` numbers events from 0 on every run, so use a new `--prefix` for each run (e.g. `run42`). Otherwise new data overwrites old data under the same keys.
+- **Key prefix:** `e2sar_perf` and `e2sar_ft` number events from 0 on every run, so use a new `--prefix` for each run (e.g. `run42`). Otherwise new data overwrites old data under the same keys. A receiver that already wrote to a prefix warns when it starts again with it.
 - **Key parts:** `prefix` is the run, `evtNum` is the E2SAR event number, and `dataId` is the sender stream. A Segmenter sends with its own dataId, so events from different streams with the same number don't collide.
-- **Placement:** the object is hashed, so DAOS places each key on a target by its hash, according to the object class (`--oclass`, e.g. `SX` or `RP_2G1`). The chunks of one event usually land on different targets and are written in parallel. Keys have no order in DAOS: `e2sar_daos_read` lists them all and groups them into events.
-
-The layout is defined in [`include/e2sar_daos/event_layout.hpp`](../include/e2sar_daos/event_layout.hpp).
+- **Placement:** the object is hashed, so DAOS places each key on a target by its hash, according to the object class (`--oclass`, e.g. `SX` or `RP_2G1`). The chunks of one event usually land on different targets and are written in parallel. Keys have no order in DAOS: `e2sar_daos_read` lists all of the run's keys and groups them into events.
 
 ### Example: an EVIO file sent with `e2sar_ft`
 
@@ -108,14 +118,15 @@ With `e2sar_daos_recv --dfuse DIR` (the bench's `-S dfuse`), there is no KV obje
 ```
 Reassembler ──recvEvent──▶ dequeue thread 0 ──▶ AsyncKVWriter (own DAOS event queue, ≤ --inflight puts)
             ──recvEvent──▶ dequeue thread 1 ──▶ AsyncKVWriter (own DAOS event queue, ≤ --inflight puts)
-                                                       └──────────── shared pool / container / KV handle
+                                                       └──────────── shared pool / container / run object handle
 ```
 
+- At start, the receiver finds or creates the run in the container's run catalog and opens the run's own KV object. All dequeue threads share that handle.
 - Each dequeue thread (`--deq`) owns one DAOS event queue, because DAOS event queues must be polled by a single thread.
 - A thread keeps up to `--inflight` puts outstanding (default 128, so 128 MiB per thread with 1 MiB chunks). It reaps completions between `recvEvent` calls.
 - The event buffer is freed once all of its chunks have completed.
 - When all slots are busy, the thread blocks on the event queue. That is the back-pressure: if DAOS can't keep up, the Reassembler queue fills, and the loss shows up as *enqueue loss* in the progress line.
-- On Ctrl-C the threads stop receiving and drain every outstanding put, including pending metadata commits. Then the worker is deregistered and the final stats are printed.
+- On Ctrl-C the threads stop receiving and drain every outstanding put, including pending metadata commits. Then the worker is deregistered, the final stats are printed and written to the run catalog as `recv/<prefix>/<host>`.
 
 ## `e2sar_daos_recv`
 
@@ -143,9 +154,9 @@ DAOS options:
 |---|---|---|
 | `--pool` | `sc26` | Pool label (must exist) |
 | `--cont` | `e2sar` | Container label (created if missing) |
-| `--oid` | `0xE25A` | Low 64 bits of the KV object id |
-| `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1` |
-| `--prefix` | `run` | Key prefix, one per run |
+| `--prefix` | `run` | The run: its own KV object and catalog entry, and the key prefix. One per run |
+| `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1`. The same on every receiver of a run |
+| `--oid` | — | Write into one shared object with this id (decimal; `57946` = `0xE25A`, the one used before per-run objects), without the run catalog |
 | `--chunk` | 1024 | Chunk size in KiB (0 = whole event in one value) |
 | `--inflight` | 128 | Max concurrent puts per dequeue thread |
 | `--deq` | 16 | Dequeue threads, each with its own event queue. Independent of `--threads`. Below 16, the receiver fell behind above ~25 Gbps ([E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md)) |
@@ -231,17 +242,26 @@ For example, plot `commit_s` against the running sum of `bytes` for throughput o
 
 | Option | Default | |
 |---|---|---|
-| `--prefix` | (required) | Prefix given to `e2sar_daos_recv` |
-| `--pool`, `--cont`, `--oid`, `--oclass` | same as recv | Must match what the receiver used |
+| `--prefixes` | — | List the runs in the run catalog (instead of `--prefix`) |
+| `--prefix` | — | The run to read: the receiver's `--prefix` |
+| `--pool`, `--cont` | same as recv | Must match what the receiver used |
+| `--oid`, `--oclass` | `57946` (`0xE25A`), container default | Read the shared object written by `e2sar_daos_recv --oid`, or before per-run objects. Not needed for runs in the catalog |
+| `--delete` | off | Delete run `--prefix`: its object, so all its events, and its catalog entries |
 | `--fetch` | off | Read events back and print `sha256sum`-style lines |
 | `--event N ...` | all | Only these event numbers |
 | `--dataid D` | all | Only this data id |
 | `-o, --out DIR` | — | With `--fetch`, also write each event to `DIR/<prefix>_<evtNum>_<dataId>.evio` |
 | `-e, --extension` | `evio` | Extension for `--out` files (`-e ''` for none) |
 
-Without `--fetch` it lists committed events (number, data id, size, chunks) and any incomplete ones.
+`--prefixes` prints one tab-separated row per run: prefix, creation time, the receiver that created it, object class, chunk size, and, summed over the receivers that have stopped, events committed, failed and lost (reassembly plus enqueue loss):
+```
+prefix               created              created_by         oclass  chunk    receivers  committed  failed  lost
+pm_20261027_143005   2026-10-27 14:30:07  ebpf2201.jlab.org  -       1048576  2          163045     0       513
+```
+Without `--fetch` it lists committed events (number, data id, size, chunks), then one `Receiver <host>: committed N events, ...` line per receiver from the catalog, then the summary line `N committed events, B bytes under '<prefix>/'` and any incomplete events.
 With `--fetch` it prints one line per event: the SHA-256, the file name, the size and chunk count, and the format found in the first bytes. The format is `EVIO v6 big-endian` (or `v4`, or `little-endian`) when the EVIO magic word `0xc0da0100` is at word 7, and `not EVIO` otherwise.
-It opens the pool and container read-only and never creates anything.
+It opens the pool and container read-only and never creates anything, except with `--delete`.
+A prefix that isn't in the catalog is read from the shared object (`--oid`, default `0xE25A`), with a note on stderr, so containers written before per-run objects still read.
 
 ## End-to-end example (no control plane)
 
@@ -252,42 +272,46 @@ export EJFAT_URI='ejfat://useless@10.0.0.1:18347/lb/1?data=192.168.1.20&sync=192
 ./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 --pool sc26 --cont e2sar --prefix run42
 ```
 
-On the sender node, using the same `EJFAT_URI`:
+On the sender node, using the same `EJFAT_URI`, send 100 events of 1 MiB at 5 Gbps with `e2sar_perf`:
 
 ```bash
-e2sar_ft -s --ip <sender ip> --rate 5 /path/to/files/*.evio
-sha256sum /path/to/files/*.evio
+e2sar_perf -s --ip <sender ip> --mtu 9000 -l 1048576 -n 100 --rate 5
 ```
+
+- `-l` is the event size in bytes, `-n` the number of events and `--rate` the send rate in Gbps. Use `--mtu 1500` if the path doesn't pass 9000-byte packets.
+- `e2sar_perf` numbers the events 0 to N−1 on every send, so give the receiver a new `--prefix` for each send.
+- Every event is the same buffer: `This is a start of event payload` at its start and `...the end` at its end. Don't pass `--realmalloc`, which gives each event a new buffer with undefined content, and breaks the single-digest check below.
 
 Stop the receiver with Ctrl-C once the sender finishes. Then check the data on any DAOS client node:
 
 ```bash
-./build/bin/e2sar_daos_read --prefix run42                 # list
-./build/bin/e2sar_daos_read --prefix run42 --fetch         # sha256 per event
-./build/bin/e2sar_daos_read --prefix run42 --fetch -o ~/restored   # run42_<evt>_<dataId>.evio
+./build/bin/e2sar_daos_read --prefixes                     # run42 is listed, with its receiver's statistics
+./build/bin/e2sar_daos_read --prefix run42 | tail -1       # 100 committed events, 104857600 bytes under 'run42/'
+./build/bin/e2sar_daos_read --prefix run42 --fetch | grep -E '^[0-9a-f]{64} ' | cut -d' ' -f1 | sort | uniq -c
+#   100 <digest>          one line: all 100 events are the same buffer, intact
 ```
 
-The restored files are ordinary EVIO files. To open them on a remote node, see [Viewing the restored files](#viewing-the-restored-files).
-
-`e2sar_ft` sends the files of a run as events 0, 1, 2, ... in traversal order. With more than one enqueue thread (`--enq`), the order is not guaranteed. So compare digests as sets, not line by line:
+Fewer than 100 events means some were lost on the way (the receiver's `Lost in reassembly` shows how many); more than one digest means an event was corrupted. To look inside one event:
 
 ```bash
-diff <(sha256sum /path/to/files/*.evio | cut -d' ' -f1 | sort) \
-     <(./build/bin/e2sar_daos_read --prefix run42 --fetch | grep -E '^[0-9a-f]{64} ' | cut -d' ' -f1 | sort)
+./build/bin/e2sar_daos_read --prefix run42 --fetch --event 0 -o ~/restored -e bin   # ~/restored/run42_0_<dataId>.bin
+head -c 32 ~/restored/run42_0_*.bin; echo                  # This is a start of event payload
+tail -c 10 ~/restored/run42_0_*.bin; echo                  # ...the end
 ```
+
+To store real files instead, one event per file (e.g. EVIO files you can open in a viewer afterwards), send them with `e2sar_ft -s --ip <sender ip> --rate 5 /path/to/files/*.evio`. See [Example: an EVIO file sent with `e2sar_ft`](#example-an-evio-file-sent-with-e2sar_ft); compare `sha256sum` of the files with the `--fetch` digests as sets, since the event order isn't guaranteed with more than one enqueue thread.
 
 Clean up after every test run, once it is verified:
 
 ```bash
-rm -rf ~/restored                      # restored files (where -o wrote them)
-daos cont destroy sc26 e2sar           # the run's event data; only if the container holds test data alone
-rm -rf /path/to/staged/copies          # sender: only copies made for the test, never the original data
+rm -rf ~/restored                                          # restored events (where -o wrote them)
+./build/bin/e2sar_daos_read --prefix run42 --delete        # the run's event data and catalog entries
 ```
-`daos cont destroy` removes every prefix in the container. If the container is shared with data you want to keep, use a separate container for tests (`--cont e2sar-test`) and destroy that one instead.
+`--delete` removes only that run. `daos cont destroy sc26 e2sar` removes every run in the container at once; do that only if it holds test data alone, or use a separate container for tests (`--cont e2sar-test`).
 
 ## Viewing the restored files
 
-The restored `.evio` files are ordinary EVIO files, so any EVIO viewer opens them. They are on the node where `e2sar_daos_read -o` ran, usually a remote DAOS client. To browse them from your laptop, run the [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) web viewer on that node and forward its port over SSH. See its README for setup (a Python venv with `pip install -r requirements.txt`).
+Events sent from EVIO files with `e2sar_ft` restore as ordinary `.evio` files, so any EVIO viewer opens them. (`e2sar_perf` events are not EVIO.) They are on the node where `e2sar_daos_read -o` ran, usually a remote DAOS client. To browse them from your laptop, run the [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) web viewer on that node and forward its port over SSH. See its README for setup (a Python venv with `pip install -r requirements.txt`).
 
 ```bash
 # on the DAOS client node, in the evio-interactive-view checkout

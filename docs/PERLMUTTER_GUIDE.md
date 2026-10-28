@@ -4,7 +4,7 @@ This is the procedure for sending synthetic events with `e2sar_perf` from **one 
 The LB splits the events between the two receivers, and each receiver writes the events it gets into the same DAOS container.
 Both receivers use the same key prefix, so the run reads back as one set of events. At the end, `e2sar_daos_read` checks that every event arrived exactly once, with the right size and content.
 
-**Status: no successful run yet.** The first attempt (2026-10-27, Perlmutter `nid200111`) delivered no data: its LB instance was on the old control plane, whose data plane `192.188.29.16` is unreachable (see [Troubleshooting](#troubleshooting)). It needs a stable4 instance. The commands follow the tested JLab procedure in [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md). The Perlmutter-specific parts, marked *(check)*, have to be confirmed on the first run. Update this page with what you find.
+The commands follow the JLab procedure in [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md). The Perlmutter-specific parts are marked *(check)*: confirm them when you run, and update this page with what you find.
 
 ```
 Perlmutter CPU node (NERSC)                 ESnet LB (stable4)                     JLab
@@ -154,7 +154,7 @@ ping -c3 -M do -s 1472 192.188.29.xx                                  # MTU 1500
 lbadm -v --status                                                     # the instance, as seen from Perlmutter
 ```
 
-Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_instance.env`), not just the address above. On 2026-10-27 an instance on the old control plane (`ejfat-lb.es.net:18008`) had `data=192.188.29.16`, which was unreachable from both NERSC and JLab (`Destination Host Unreachable` from ESnet router `198.129.78.161`). `lbadm` still worked, because the control plane was up, but every data packet was dropped and the receivers got nothing. `192.188.29.54` (stable4) passed 9000-byte pings from JLab (75.5 ms RTT).
+Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_instance.env`), not just the address above. The control plane and the data plane are separate: `lbadm` can work while the data plane is unreachable. Then the ping gets `Destination Host Unreachable`, every data packet is dropped, and the receivers get nothing.
 
 - If the 8972-byte ping fails but the 1472-byte one works, use `--mtu 1500` in step 6 *(check)*. Throughput per send thread is then much lower.
 - If the pings get no answer at all, ICMP may be filtered. The first real test is step 6 with a small number of events.
@@ -171,12 +171,14 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 ~/daq/e2sar-daos/scripts/e2sar_pm_recv.sh status    # both workers with slotsassigned > 0: now send (step 6)
 # after Ctrl-C on both receivers, once, on either node
 ~/daq/e2sar-daos/scripts/e2sar_pm_recv.sh verify 10000   # N = the sender's -n; loss rate, then PASS or FAIL
-~/daq/e2sar-daos/scripts/e2sar_pm_recv.sh clean          # destroy the container, show the LB state
+~/daq/e2sar-daos/scripts/e2sar_pm_recv.sh runs           # the runs in DAOS: committed, failed and lost events per run
+~/daq/e2sar-daos/scripts/e2sar_pm_recv.sh clean <RUNID>  # delete that run, show the LB state ('clean' alone: the whole container)
 ```
 
 - `start` reads the instance URI from `~/e2sar_instance.env` and listens on `$MY_IP` from `~/.bashrc` (else the address of `enp1s0f1np1`). It stops if an e2sar process is already running, a receive port is in use, or someone else's worker is on the LB instance.
 - On ebpf2201, `start` makes the new run directory `$RUN/pm_<date>_<time>`. On ebpf2203 it waits up to 5 minutes for that directory and uses the same `RUNID` as the DAOS prefix.
 - Ctrl-C stops only the receiver. Its final statistics stay in `<node>.recv.log`, and the script then prints step 7's drop checks for that node.
+- Each run is its own DAOS object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
 - Every LB command uses `-v`. The script never reserves or frees the instance.
 - Settings such as `CONT`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_pm_recv.sh start`. See the top of the script.
 
@@ -233,7 +235,9 @@ cd ~/daq/e2sar-daos
 
 Expected startup output on each node:
 ```
-DAOS pool/container:  sc26/e2sar-pm (created)      # or (opened) on the node that came second
+DAOS pool/container:  sc26/e2sar-pm (created)      # or (existing) on the node that came second
+Run catalog:          new run                      # or "joined run created by ebpf2201..." on the second node
+KV object id:         0x...e25a0001.0x...          # the same on both nodes: one object for the run
 Control plane:        ON
 Listening on:         129.57.178.8x ports 20600:20615
 Receiving; Ctrl-C to stop
@@ -347,9 +351,12 @@ To look inside one event: `./build/bin/e2sar_daos_read --cont $CONT --prefix $PR
 ## 9. Clean up (required, after every run)
 
 ```bash
-# either ebpf node: the test container (both receivers' data)
+# either ebpf node: this run's data (both receivers wrote into the run's one object)
+cd ~/daq/e2sar-daos
+./build/bin/e2sar_daos_read --cont $CONT --prefixes               # the runs in the container
+./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --delete
+# or all runs at once: the whole test container
 daos cont destroy sc26 $CONT
-daos cont list sc26 | grep $CONT                  # nothing
 $E2SAR_BIN/lbadm -v --status                      # no workers; the senders as in step 4
 # only if Perlmutter's IP is still listed (sender was killed):
 $E2SAR_BIN/lbadm -v --removesenders -a <SEND_IP>
@@ -372,10 +379,9 @@ Repeat steps 5–9 with a new `RUNID` each time, raising `--rate`. Keep `-l 1048
 | 30 | 8 | | | | | | |
 | 40 | 8 | | | | | | |
 
-What to expect, from the JLab runs:
-- One ebpf receiver lost events above about 25 Gbps to NIC port discards ([E2E_BENCHMARK.md](E2E_BENCHMARK.md#summary)). With two receivers each one gets half, so the pair may hold about twice that, if the Perlmutter side and the WAN keep up.
+What to look at:
 - 1 MiB events leave each send thread as ~10 Gbps line-rate bursts. More `--sockets` spread the rate over more threads.
-- The WAN from NERSC to the LB, and NERSC's own egress, are new and untested here. If the sender reports its rate with 0 errors but both receivers see loss with 0 NIC discards, the loss is on the way.
+- If the sender reports its rate with 0 errors but both receivers see loss with 0 NIC discards, the loss is on the way: NERSC's egress, the WAN or the LB.
 - Run each rate at least twice, and record the time and the Slurm job ID with each result.
 
 ## Recommended settings
@@ -384,18 +390,18 @@ What to expect, from the JLab runs:
 |---|---|---|
 | Sender | E2SAR 0.4.0rc1, the receivers' version | Other versions' headers are discarded by the receivers |
 | Sender | `--withcp --ip <hsn0 128.x address>`, never the `10.x` one | The `10.x` address is private; the LB allowlists and sees the public `128.x` one |
-| Sender | `--mtu 9000`, if the 8972-byte ping passes | Far fewer packets per event; the path at JLab supports it |
+| Sender | `--mtu 9000`, if the 8972-byte ping passes | Far fewer packets per event |
 | Sender | `-b 67108864` or larger | The node allows up to 2 GiB |
 | Sender | One `--withcp` process per sender IP | Each one removes the shared IP when it exits |
 | Sender | No `--realmalloc` | Step 8's single-digest check needs every event to be the same buffer |
 | Receivers | `--withcp`, the same `--port`, `--cont` and `--prefix $RUNID` on all of them | Each node registers its own worker. The LB gives each event to one worker, so one prefix holds the whole run without collisions |
-| Receivers | `--threads 16`, `--deq 32 --inflight 256`, `-b 1073741824` | 16 ports spread the events over more receive threads. 32 dequeue threads, with 256 DAOS puts in flight each, keep DAOS ahead (16 cap at ~40 Gbps, [E2E_BENCHMARK.md](E2E_BENCHMARK.md#3-dequeue-threads-the-hidden-bottleneck)). A 1 GiB socket buffer avoids socket drops |
+| Receivers | `--threads 16`, `--deq 32 --inflight 256`, `-b 1073741824` | 16 ports spread the events over more receive threads. 32 dequeue threads, with 256 DAOS puts in flight each, keep DAOS ahead of the network. A 1 GiB socket buffer avoids socket drops |
 | Receivers | `--timeout 10000` | The maximum. Covers WAN jitter and slow starts; the default 500 ms is tight over the WAN |
 | Both | New `RUNID` per send | `e2sar_perf` restarts event numbers at 0 |
 
 ## Troubleshooting
 
-None of these has happened on this path yet. They are what to check first, based on how the LB and E2SAR work.
+What to check first, based on how the LB and E2SAR work.
 
 | Symptom | Cause and fix |
 |---|---|
@@ -406,7 +412,7 @@ None of these has happened on this path yet. They are what to check first, based
 | Only one receiver gets events | The other had no slots yet, or wasn't registered (`lbadm -v --status`). Wait for both before sending |
 | Every event lands on one port of a receiver | The events carry the same entropy. Check with `ss -uanm \| grep -A1 ':206'` while receiving. Still correct, but one receive thread does all the work |
 | Events lost, 0 socket drops and 0 NIC discards on both nodes | The packets were lost before JLab: on Perlmutter, NERSC egress, the WAN or the LB. Lower `--rate`, check the MTU (step 3) |
-| Events lost with `rx_discards_phy` > 0 | The receiving NIC port overflowed, as in the JLab runs. Lower `--rate` or use more `--sockets` |
+| Events lost with `rx_discards_phy` > 0 | The receiving NIC port overflowed. Lower `--rate` or use more `--sockets` |
 | Digest check shows more than one line | An event was corrupted, or the sender used `--realmalloc`. Compare the odd digests' event numbers with the receiver logs |
 | The receivers' `Events committed` add up to more than N | Either two sends ran under the same `RUNID` (use a new one per send, step 5), or the LB delivered some events to both workers. With one prefix, the later write overwrote the earlier one |
 | Receiver aborts right after `Dequeue threads:` with `boost::wrapexcept<boost::system::system_error>` / `Invalid argument [system:22]` | `--ip` isn't an IP address: `$MY_IP` is empty, holds an interface name, or is stale. Check `echo $MY_IP` (step 4) and its line in `~/.bashrc` |
