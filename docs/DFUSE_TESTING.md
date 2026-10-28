@@ -6,7 +6,7 @@ This compares two ways of storing E2SAR events in DAOS on the ebpf testbed:
 - **dfuse**: `e2sar_daos_recv --dfuse <mount>` writes each event as one file into a POSIX container mounted with `dfuse`.
 - **pil4dfs**: the same as dfuse, with `libpil4dfs.so` preloaded, which turns the file calls into in-process libdfs calls and bypasses FUSE.
 
-All three use the node-to-node (n2n) bench, `bin/e2sar_e2e_bench.sh -m n2n`: `e2sar_evio_send` on ebpf2201 sends synthetic EVIO events straight to the receiver on ebpf2203, with no load balancer.
+All three use the node-to-node (n2n) bench, `scripts/e2sar_e2e_bench.sh -m n2n`: `e2sar_evio_send` on ebpf2201 sends synthetic EVIO events straight to the receiver on ebpf2203, with no load balancer.
 Setup, MTU and NIC notes are in [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 
 ```
@@ -73,7 +73,7 @@ meson test -C build --suite unit                            # Ok: 3, Fail: 0
 ./build/bin/e2sar_daos_recv --help | grep -A1 -- --dfuse
 ```
 
-The script finds the build next to itself (`bin/../build`), so always run the worktree's copy of `bin/e2sar_e2e_bench.sh`.
+The script finds the build next to itself (`scripts/../build`), so always run the worktree's copy of `scripts/e2sar_e2e_bench.sh`.
 
 ## 4. Smoke test: one segmenter, 300 events, 2 Gbps
 
@@ -84,7 +84,7 @@ Start the receiver first. The sender waits up to 180 s for it, so the order of t
 ```bash
 bash
 export PORT=20700 CONT=e2sar-dfuse RUN=$HOME/e2sar_run/dfuse
-B=~/daq/e2sar-daos-dfuse/bin/e2sar_e2e_bench.sh
+B=~/daq/e2sar-daos-dfuse/scripts/e2sar_e2e_bench.sh
 S=dfuse                                    # or pil4dfs, or kv
 TAG=dfsmoke_${S}_<same number on both nodes>
 ```

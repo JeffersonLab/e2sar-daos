@@ -6,6 +6,7 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
     - `e2sar_daos_recv` receives events from `e2sar_ft` on another node and writes them to DAOS.
     - `e2sar_daos_read` lists the stored events, verifies them and reads them back.
     - Events are stored in one DAOS KV object as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key per event. See [Data layout in DAOS](./bin/README.md#data-layout-in-daos), with examples for an EVIO file and for `e2sar_evio_send` events.
+- [Scripts](./scripts/README.md) that drive the applications on the JLab test nodes: the end-to-end bench, its rate sweep, and the Perlmutter receiver.
 
 - Refer to [containers](./containers/rocky-dev/) for the Rocky 9 + DAOS 2.6 development environment. It runs on JLab testbeds and on Macs.
 - Unit testing is turned on by default in [meson_options.txt](./meson_options.txt).

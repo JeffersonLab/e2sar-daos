@@ -5,13 +5,12 @@
 | `e2sar_daos_recv` | Receives events from an E2SAR sender (e.g. `e2sar_ft -s`) and writes them to a DAOS KV object with asynchronous puts |
 | `e2sar_daos_read` | Lists what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
 | `e2sar_evio_send` | Test sender: synthetic EVIO v6 streaming time frames through several E2SAR Segmenters, paced, with per-event timing and digests |
-| `e2sar_e2e_bench.sh` | One end-to-end run (`e2sar_evio_send` → [LB] → `e2sar_daos_recv` → DAOS): throughput, latency per stage, full digest check. See [docs/E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md) |
-| `e2sar_e2e_analyze.py` | The analysis step of `e2sar_e2e_bench.sh`. `--profile 0.1` shows latency and loss per 0.1 s of a run |
-| `e2sar_pm_recv.sh` | Runs one ebpf node as a receiver for the Perlmutter test: pre-flight checks, shared run directory, `e2sar_daos_recv` (with `-v`), drop checks after Ctrl-C, then `verify N` and `clean`. See [docs/PERLMUTTER_GUIDE.md](../docs/PERLMUTTER_GUIDE.md#the-receiver-script) |
-| `e2sar_e2e_sweep.sh` | A rate sweep of `e2sar_e2e_bench.sh`, run from a machine that can SSH to both nodes. See [docs/E2E_BENCHMARK.md section 7](../docs/E2E_BENCHMARK.md#7-node-to-node-rate-sweep-2050-gbps-2026-10-20) |
+| `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
 | [`docs/data/e2sar_e2e_sweep_report.py`](../docs/data/e2sar_e2e_sweep_report.py) | Summarizes a sweep's `.jsonl` (one result per run) as Markdown tables per sweep and rate: loss, throughput, latency per stage, warm-up. `--csv` writes one flat row per run. E.g. `docs/data/e2sar_e2e_sweep_report.py docs/data/e2e_sweep_2026-10-20.jsonl --merge` |
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
+
+The bash scripts that drive these apps on the test nodes (the end-to-end bench, its rate sweep, and the Perlmutter receiver) are in [scripts/](../scripts/README.md).
 
 The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `e2sar_daos_read` and `e2sar_evio_send` need `openssl-devel` for SHA-256.
 
@@ -75,7 +74,7 @@ The next file of the run is `run42/1/4321/...`, and so on.
 
 Here one event is one EVIO v6 record holding `-f` built time frames, not a file.
 Segmenter i sends with dataId 4321 + i and numbers its events 1…N, so every Segmenter has an event 1, and the dataId tells them apart.
-`e2sar_e2e_bench.sh` passes its TAG as `--prefix`. With the bench defaults (16 Segmenters, 256 frames ≈ 95 KB per event), every event fits in one chunk. For a run tagged `tput20`:
+[`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh) passes its TAG as `--prefix`. With the bench defaults (16 Segmenters, 256 frames ≈ 95 KB per event), every event fits in one chunk. For a run tagged `tput20`:
 
 ```
 tput20/1/4321/0      event 1 of Segmenter 0: the whole EVIO record (S ≈ 95 KB)

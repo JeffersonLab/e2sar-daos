@@ -29,7 +29,7 @@ Go on to the next stage only when the current one passes.
 
 ### Environment (`~/.bashrc`)
 
-Every shell, PBS job and `bin/e2sar_e2e_bench.sh` reads this:
+Every shell, PBS job and `scripts/e2sar_e2e_bench.sh` reads this:
 
 ```bash
 # e2sar-daos on Aurora
@@ -148,7 +148,7 @@ If nothing arrives, check that UDP 19522 gets from `SEND_IP` to `RECV_IP` *(chec
 
 ## 4. Bench (2 or more nodes)
 
-`bin/e2sar_e2e_bench.sh -m n2n`, with the Aurora values in the environment. The two roles meet through `$RUN` in the shared `$HOME`.
+`scripts/e2sar_e2e_bench.sh -m n2n`, with the Aurora values in the environment. The two roles meet through `$RUN` in the shared `$HOME`.
 `~/daq/jobs/bench.pbs`:
 ```bash
 #!/bin/bash
@@ -167,8 +167,8 @@ export SEND_IP=$(hsn_ip ${NODES[0]}) RECV_IP=$(hsn_ip ${NODES[1]})
 TAG=aurora_${PBS_JOBID%%.*}_${RATE:-20}g
 ENV="POOL=$POOL CONT=$CONT NIC=$NIC RUN=$RUN SEND_IP=$SEND_IP RECV_IP=$RECV_IP"
 
-ssh ${NODES[1]} "cd $PWD && $ENV bin/e2sar_e2e_bench.sh recv $TAG -m n2n -T 4 -D ${DEQ:-16}" &
-ssh ${NODES[0]} "cd $PWD && $ENV bin/e2sar_e2e_bench.sh send $TAG -m n2n -P 4 -r ${RATE:-20}"
+ssh ${NODES[1]} "cd $PWD && $ENV scripts/e2sar_e2e_bench.sh recv $TAG -m n2n -T 4 -D ${DEQ:-16}" &
+ssh ${NODES[0]} "cd $PWD && $ENV scripts/e2sar_e2e_bench.sh send $TAG -m n2n -P 4 -r ${RATE:-20}"
 wait
 ```
 ```bash
