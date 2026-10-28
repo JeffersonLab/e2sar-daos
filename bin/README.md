@@ -151,6 +151,7 @@ DAOS options:
 | `--inflight` | 128 | Max concurrent puts per dequeue thread |
 | `--deq` | 16 | Dequeue threads, each with its own event queue. Independent of `--threads`. Below 16, the receiver fell behind above ~25 Gbps ([E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md)) |
 | `--report` | 1 | Progress line interval in seconds (0 = off) |
+| `--log-idle` | off | Print a progress line every interval even when nothing changed. Off: idle intervals are skipped (zero suppression) |
 | `--verbose` | off | Print every committed event |
 | `--timing-csv FILE` | — | Write one row of timing per committed event (see [Timing and throughput](#timing-and-throughput)) |
 
@@ -191,6 +192,8 @@ The progress line, every `--report` seconds, shows the rate over the last interv
 2026-10-27 14:03:12.345 in 412 evts, 4.87 Gbps | committed 405 evts, 38120.55 MiB, 4.79 Gbps, 50.00 evt/s | failed 0 | reassembly loss 0, enqueue loss 0
 ```
 `in` is what E2SAR handed over (network side). `committed` is what DAOS has fully stored.
+
+Zero suppression: an interval with nothing new (no event received, committed or failed, no new loss) prints no line. The first idle interval prints `<timestamp> idle: no new events; progress lines resume when events arrive`, and lines resume with the next event. `--log-idle` prints every interval.
 
 At exit, after the Reassembler and DAOS counters, a `Timing:` block summarizes the run:
 ```

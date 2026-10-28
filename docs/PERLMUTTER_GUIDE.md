@@ -260,15 +260,15 @@ Start with a short, slow run to prove the path, then a longer one:
 cd $SCRATCH
 # 1. smoke test: 100 events of 1 MiB at 1 Gbps
 e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 100 --rate 1 \
-    --sockets 4 -b 67108864 2>&1 | tee pm_smoke.send.log
+    --sockets 4 -b 67108864
 
 # 2. the run: 10,000 events of 1 MiB (10.5 GB) at 5 Gbps
 e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 10000 --rate 5 \
-    --sockets 4 -b 67108864 2>&1 | tee pm_run.send.log
+    --sockets 4 -b 67108864
 
-# 3. the run: 48,000 events of 1 MiB (48 GB) at 40 Gbps
-e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 48000 --rate 40 \
-    --sockets 8 -b 67108864 2>&1 | tee pm_r40.send.log
+# 3. the run: 10,000 events of 1 MiB (10.5 GB) at 20 Gbps
+e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 10000 --rate 20 \
+    --sockets 8 -b 67108864
 ```
 
 Each run needs its own `RUNID` on the receivers (step 5), so restart the receivers between the two sends, or note that the smoke test's events 0–99 get overwritten by the second run's events 0–99 under the same prefix.
