@@ -25,7 +25,7 @@ e2sar_perf -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP�
 | [5](#5-start-the-two-receivers-ebpf2201-and-ebpf2203) | ebpf2201, ebpf2203 | Start one receiver on each; both register with the LB |
 | [6](#6-send-perlmutter) | Perlmutter | Send with `e2sar_perf` |
 | [7](#7-stop-the-receivers-and-check-for-drops) | ebpf2201, ebpf2203 | Stop the receivers; check for drops |
-| [8](#8-verify-in-daos) | either ebpf node | Every event exactly once, right size, same digest |
+| [8](#8-verify-in-daos) | either ebpf node | Loss rate; every stored event once, right size, same digest |
 | [9](#9-clean-up-required-after-every-run) | all | DAOS data, LB allowlist, the Perlmutter job |
 | [10](#10-rate-sweep-optional) | all | Optional: raise the rate |
 
@@ -170,7 +170,7 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 # a second ebpf terminal
 ~/daq/e2sar-daos/bin/e2sar_pm_recv.sh status    # both workers with slotsassigned > 0: now send (step 6)
 # after Ctrl-C on both receivers, once, on either node
-~/daq/e2sar-daos/bin/e2sar_pm_recv.sh verify 10000   # N = the sender's -n; prints PASS or FAIL
+~/daq/e2sar-daos/bin/e2sar_pm_recv.sh verify 10000   # N = the sender's -n; loss rate, then PASS or FAIL
 ~/daq/e2sar-daos/bin/e2sar_pm_recv.sh clean          # destroy the container, show the LB state
 ```
 
@@ -329,17 +329,19 @@ $E2SAR_BIN/lbadm -v --status | tail -3               # "Registered workers:" wit
 cd ~/daq/e2sar-daos
 N=10000; L=1048576
 ./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX > $D/events.list
-tail -1 $D/events.list                     # N committed events, N×L bytes under '<RUNID>/'
-awk '$1 ~ /^[0-9]+$/' $D/events.list | cut -f1 | sort -n | awk '$1!=NR-1{print "missing near", $1; exit 1}' && echo "0..N-1 complete"
-awk '$1 ~ /^[0-9]+$/ && $3!='$L $D/events.list | wc -l                  # 0: every event is L bytes
+tail -1 $D/events.list                     # committed events and bytes under '<RUNID>/'
+awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ {g++} END {printf "%d of %d events (%d lost, %.2f%%)\n", g, '$N', '$N'-g, 100*('$N'-g)/'$N'}' $D/events.list
+comm -23 <(seq 0 $((N-1)) | sort) <(awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ {print $1}' $D/events.list | sort -u) | sort -n > $D/missing.txt   # the lost event numbers
+awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ && $3!='$L $D/events.list | wc -l                  # 0: every event is L bytes
 ./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --fetch > $D/events.sha
-tail -1 $D/events.sha                      # N events verified, 0 failed
-grep -E '^[0-9a-f]{64} ' $D/events.sha | cut -d' ' -f1 | sort | uniq -c  # ONE line: "  N <digest>"
-grep -H 'Events committed' $D/ebpf220[13].recv.log                     # the split; the two must add up to N
+tail -1 $D/events.sha                      # all stored events verified, 0 failed
+grep -E '^[0-9a-f]{64} ' $D/events.sha | cut -d' ' -f1 | sort | uniq -c  # ONE line: "  <stored> <digest>"
+grep -H 'Events committed' $D/ebpf220[13].recv.log                     # the split; adds up to the events in DAOS
 ```
 
-PASS when: N events, numbered 0 to N−1, every event `L` bytes, a single digest over all of them (every event was the same buffer), and the two receivers' `Events committed` add up to exactly N.
-The last check catches an event delivered to both receivers: with one prefix the second write would overwrite the first, so DAOS alone would still show N, but the two counts would add up to more than N.
+**The loss rate is reported, not a failure.** Events lost on the way (reassembly loss, see [Troubleshooting](#troubleshooting)) never reach DAOS, so they show up only as missing numbers in `$D/missing.txt`. Record the rate with the run.
+**PASS** when every stored event is correct: numbered below N, `L` bytes, a single digest over all of them (every event was the same buffer), and the two receivers' `Events committed` add up to exactly the number of events in DAOS.
+That last check catches an event delivered to both receivers: with one prefix the second write overwrites the first, so DAOS counts it once but the two receivers count it twice.
 To look inside one event: `./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --fetch --event 0 -o /tmp/$USER-ev -e bin`, then `head -c 32` and `tail -c 10` on the file in `/tmp/$USER-ev`, which should show the start and end markers from step 6.
 
 ## 9. Clean up (required, after every run)
