@@ -17,13 +17,22 @@
 #   e2sar_pm_recv.sh clean [RUNID]  step 9: delete run RUNID (its DAOS object), or without RUNID
 #                                   destroy the whole container; then show the LB state
 #
+# Another sender site (e.g. Lux): set SITE on both nodes, for every command. Runs are then named
+# lux_<date>_<time>, in container e2sar-lux and directory ~/e2sar_run/lux. Unset CONT and RUN
+# first if they were exported for Perlmutter, or they override SITE.
+#   unset CONT RUN; export SITE=lux
+#   e2sar_pm_recv.sh start          (ebpf2201 first, then ebpf2203)
+#   e2sar_pm_recv.sh verify 100     (status, runs and clean the same way)
+#
 # Every LB command uses -v (--novalidate). The LB instance URI comes from $ENV_FILE
 # (~/e2sar_instance.env, shared $HOME). This script never reserves or frees the instance.
 #
 # Settings (environment variables, with the guide's defaults):
 : "${ENV_FILE:=$HOME/e2sar_instance.env}" # EJFAT_URI: the LB instance URI. Don't free it
+: "${SITE:=pm}"                          # sender site (pm = Perlmutter, lux = Lux): the RUNID prefix
+                                         # and the default CONT and RUN, so each site's runs stay separate
 : "${POOL:=sc26}"
-: "${CONT:=e2sar-pm}"                    # DAOS container, shared by both receivers
+: "${CONT:=e2sar-$SITE}"                 # DAOS container, shared by both receivers
 : "${PORT:=20600}"                       # first receive port
 : "${THREADS:=16}"                       # receive threads = ports (20600..20615)
 : "${DEQ:=32}"                           # dequeue threads
@@ -33,7 +42,7 @@
 : "${NIC:=enp1s0f1np1}"                  # data-plane NIC (drop counters; listen address if MY_IP is unset)
 # MY_IP (from ~/.bashrc): the listen address on this node
 : "${FIRST:=ebpf2201}"                   # the node that makes the RUNID
-: "${RUN:=$HOME/e2sar_run/pm}"           # run directories (shared $HOME)
+: "${RUN:=$HOME/e2sar_run/$SITE}"        # run directories (shared $HOME)
 : "${RECV_ARGS:=}"                       # extra e2sar_daos_recv options
 : "${E2SAR_DAOS_BUILD:=$(cd "$(dirname "$0")/.." && pwd)/build}"
 
@@ -83,7 +92,7 @@ cmd_start() {
     mkdir -p "$RUN"
     local runid
     if [ "$ME" = "$FIRST" ]; then
-        runid=pm_$(date +%Y%m%d_%H%M%S)
+        runid=${SITE}_$(date +%Y%m%d_%H%M%S)
         mkdir "$RUN/$runid" || die "can't create $RUN/$runid"
         ln -sfn "$runid" "$RUN/latest"
     else
