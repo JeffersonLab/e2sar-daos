@@ -187,7 +187,7 @@ Unpaced, `DAOS commit throughput` is the most this sink commits with these setti
 
 The progress line, every `--report` seconds, shows the rate over the last interval (all numbers in this section are illustrative, not measurements):
 ```
-in 412 evts, 4.87 Gbps | committed 405 evts, 38120.55 MiB, 4.79 Gbps, 50.00 evt/s | failed 0 | reassembly loss 0, enqueue loss 0
+2026-10-27 14:03:12.345 in 412 evts, 4.87 Gbps | committed 405 evts, 38120.55 MiB, 4.79 Gbps, 50.00 evt/s | failed 0 | reassembly loss 0, enqueue loss 0
 ```
 `in` is what E2SAR handed over (network side). `committed` is what DAOS has fully stored.
 

@@ -41,6 +41,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -457,6 +458,16 @@ void reportLoop(Reassembler* reas, unsigned intervalSec) {
         const uint64_t bytes = stats.bytesCommitted, events = stats.eventsCommitted;
         const uint64_t rcvdBytes = stats.bytesReceived;
 
+        // Wall-clock timestamp (local time, ms precision) to line up with other logs
+        const auto wall = std::chrono::system_clock::now();
+        const std::time_t wallSec = std::chrono::system_clock::to_time_t(wall);
+        const auto wallMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(wall.time_since_epoch()).count() % 1000;
+        std::tm tmLocal{};
+        localtime_r(&wallSec, &tmLocal);
+
+        std::cout << std::put_time(&tmLocal, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3)
+                  << wallMs << std::setfill(' ') << ' ';
         std::cout << std::fixed << std::setprecision(2)
                   << "in " << stats.eventsReceived << " evts, " << (rcvdBytes - lastRcvdBytes) * 8.0 / dt / 1e9
                   << " Gbps | committed " << events << " evts, " << bytes / 1048576.0 << " MiB, "
