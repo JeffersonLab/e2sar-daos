@@ -20,7 +20,7 @@ There are two test suites:
 
 | Suite | Test | Needs |
 |---|---|---|
-| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking that `e2sar_daos_recv`/`e2sar_daos_read` use.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary | DAOS headers and libraries, no DAOS server |
+| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking that `e2sar_daos_recv`/`e2sar_daos_read` use.<br>`RunCatalogTests`: checks the per-run object ids (FNV-1a hash of the prefix) and the run catalog's keys and records.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary | DAOS headers and libraries, no DAOS server |
 | `integration` | `DAOSKVTest`: writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and compares SHA-256 digests | A reachable DAOS pool and container, plus `openssl-devel` at build time |
 
 `DAOSKVTest` reads the pool and container from `DAOS_POOL` and `DAOS_CONT` (defaults `sc26` and `kv-test`).
@@ -62,7 +62,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work e2sar-daos:dev \
 Check that:
 - `meson setup` does **not** print `libcrypto (openssl-devel) not found, skipping DAOSKVTest`, so the KV test is at least compiled.
 - `meson compile` links both `daos_test` and `daos_kv_test`.
-- `--suite unit` reports `Ok: 3`.
+- `--suite unit` reports `Ok: 4`.
 
 If `meson setup` fails with `Could not generate cargs for e2sar` or `Package 're2' ... not found`, the image was built from an older Dockerfile. Rebuild it.
 
@@ -413,7 +413,7 @@ For the `/scratch`-based procedure, see [EBPF_TESTBED_NOTES.md, step 8](EBPF_TES
 | receiver shows nothing, sender says frames were sent | port mismatch: the receiver needs `--port 19522`, or put `data=<ip>:<port>` in the URI. Across hosts, also check the firewall |
 | `Lost in reassembly` > 0 | UDP drops. Lower the sender `--rate`, or raise `-b` and `net.core.rmem_max` |
 | `daos_cont_create_with_label ... DER_NO_PERM` | your user can't create containers in `sc26`. Ask for pool ACL `w`, or create it with `daos cont create sc26 e2sar-test` |
-| `e2sar_daos_read` lists 0 events | wrong `--prefix`/`--cont`/`--oid`, or the receiver was killed before commit (look for *Incomplete*) |
+| `e2sar_daos_read` lists 0 events | wrong `--prefix` or `--cont` (`--prefixes` lists the runs in a container), wrong `--oid` for data in the shared object, or the receiver was killed before commit (look for *Incomplete*) |
 | viewer refuses a file | the viewer only takes files < 2 GiB. Split the source with `evio_split.py` before sending |
 
 ---
@@ -475,7 +475,7 @@ Note the answers in this section. They decide the next phases.
 ```bash
 daos cont create e2sar-daos kv-test            # once
 meson configure build -Ddaos_pool=e2sar-daos -Ddaos_cont=kv-test
-meson test -C build --suite unit -v            # Ok: 3
+meson test -C build --suite unit -v            # Ok: 4
 meson test -C build --suite integration -v     # Ok: 1, 5 matching put/get SHA-256 pairs
 ```
 

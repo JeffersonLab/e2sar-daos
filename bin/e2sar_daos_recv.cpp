@@ -1,8 +1,14 @@
 /**
     e2sar_daos_recv: receive events from an E2SAR sender (e.g. `e2sar_ft -s`) and store
-    them in a DAOS key-value object using asynchronous puts on DAOS event queues.
+    them in DAOS key-value objects using asynchronous puts on DAOS event queues.
 
     The pool must exist; the container is created on first use if it does not exist.
+
+    Each run (--prefix) goes into its own KV object, whose id comes from the prefix, and
+    is listed in the container's run catalog (e2sar_daos/run_catalog.hpp). Receivers of
+    the same run on several nodes therefore share one object. When it stops, each receiver
+    writes its final statistics to the catalog. --oid instead writes into one shared
+    object with that id, without the catalog, as before per-run objects.
 
     Each reassembled event (one file when the sender is e2sar_ft) is split into chunks
     (default 1 MiB), one KV value per chunk, plus a metadata key written after all
@@ -58,6 +64,7 @@
 #include "e2sar_daos/daos_handles.hpp"
 #include "e2sar_daos/event_layout.hpp"
 #include "e2sar_daos/latency_histogram.hpp"
+#include "e2sar_daos/run_catalog.hpp"
 
 namespace po = boost::program_options;
 using namespace e2sar;
@@ -589,6 +596,31 @@ void printTiming(bool dfuseMode) {
               << fmtLatency(timing.putLatency) << std::endl;
 }
 
+std::string hostName() {
+    char buf[256] = {};
+    if (::gethostname(buf, sizeof(buf) - 1) != 0 || buf[0] == '\0')
+        return "unknown";
+    std::string h(buf);
+    std::replace(h.begin(), h.end(), '/', '_');  // a catalog key part
+    return h;
+}
+
+// This receiver's final statistics, for the run catalog.
+Record finalStatsRecord(Reassembler* r) {
+    Record rec{{"received", std::to_string(stats.eventsReceived.load())},
+               {"committed", std::to_string(stats.eventsCommitted.load())},
+               {"bytes", std::to_string(stats.bytesCommitted.load())},
+               {"failed", std::to_string(stats.eventsFailed.load())},
+               {"start", std::to_string(tStartEpochNs / 1000000000)},
+               {"stop", std::to_string(static_cast<int64_t>(::time(nullptr)))}};
+    if (r) {  // null with --synthetic
+        const auto rs = r->getStats();
+        rec["reassembly_loss"] = std::to_string(rs.reassemblyLoss);
+        rec["enqueue_loss"] = std::to_string(rs.enqueueLoss);
+    }
+    return rec;
+}
+
 // "95K", "1.5M", "4096": bytes with an optional binary K/M/G suffix; 0 if invalid.
 size_t parseSize(const std::string& s) {
     size_t pos = 0;
@@ -644,9 +676,9 @@ int main(int argc, char** argv) {
     // DAOS side
     opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label (must exist)");
     opts("cont", po::value<std::string>(&cont)->default_value("e2sar"), "DAOS container label (created if missing)");
-    opts("oid", po::value<uint64_t>(&oidLo)->default_value(0xE25A), "low 64 bits of the KV object id");
-    opts("oclass", po::value<std::string>(&oclass)->default_value(""), "DAOS object class, e.g. SX or RP_2G1 (default: container default)");
-    opts("prefix", po::value<std::string>(&prefix)->default_value("run"), "key prefix; use a per-run value, since e2sar_ft restarts event numbers at 0");
+    opts("oid", po::value<uint64_t>(&oidLo), "write into one shared KV object with this id (low 64 bits; 0xE25A = 57946 is the one used before per-run objects), without the run catalog (default: one object per --prefix)");
+    opts("oclass", po::value<std::string>(&oclass)->default_value(""), "DAOS object class, e.g. SX or RP_2G1 (default: container default); all receivers of a run must use the same");
+    opts("prefix", po::value<std::string>(&prefix)->default_value("run"), "run name: its own KV object and catalog entry, and the key prefix; use a new value per run, since e2sar_ft restarts event numbers at 0");
     opts("chunk", po::value<size_t>(&chunkKiB)->default_value(1024), "chunk size in KiB for splitting events into KV values (0 = one value per event)");
     opts("inflight", po::value<size_t>(&inflight)->default_value(128), "max concurrent async puts per dequeue thread");
     opts("deq", po::value<size_t>(&deqThreads)->default_value(16), "number of dequeue threads, each with its own DAOS event queue");
@@ -759,7 +791,9 @@ int main(int argc, char** argv) {
         std::unique_ptr<DaosRuntime> daos;
         std::unique_ptr<DaosPool> daosPool;
         std::unique_ptr<DaosContainer> daosCont;
+        std::unique_ptr<RunCatalog> catalog;  // null with --oid or --dfuse
         std::unique_ptr<DaosKV> kv;
+        const std::string host = hostName();
         if (dfuseMode) {
             outDir += "/" + prefix;
             if (::mkdir(outDir.c_str(), 0755) != 0 && errno != EEXIST) {
@@ -772,11 +806,31 @@ int main(int argc, char** argv) {
             daos = std::make_unique<DaosRuntime>();
             daosPool = std::make_unique<DaosPool>(pool);
             daosCont = std::make_unique<DaosContainer>(*daosPool, cont, /*createIfMissing=*/true);
-            kv = std::make_unique<DaosKV>(*daosCont, oidLo, 0, oclass);
-
             std::cout << "DAOS pool/container:  " << pool << "/" << cont
-                      << (daosCont->created() ? " (created)" : " (existing)") << std::endl
-                      << "KV object id:         " << std::hex << "0x" << kv->oid().hi << ".0x" << kv->oid().lo
+                      << (daosCont->created() ? " (created)" : " (existing)") << std::endl;
+
+            if (vm.count("oid")) {
+                kv = std::make_unique<DaosKV>(*daosCont, oidLo, 0, oclass);
+                std::cout << "Run catalog:          not used (--oid: one shared object for all runs)" << std::endl;
+            } else {
+                catalog = std::make_unique<RunCatalog>(*daosCont);
+                const bool ranHere = catalog->receivers(prefix).count(host) > 0;
+                const auto [run, created] = catalog->registerRun(prefix, oclass, chunkKiB * 1024, host);
+                if (!created && run.oclass != oclass) {
+                    std::cerr << "Run '" << prefix << "' was started by " << run.host << " with --oclass '"
+                              << (run.oclass.empty() ? "(container default)" : run.oclass)
+                              << "'. Use the same object class: it is part of the object id" << std::endl;
+                    return 1;
+                }
+                kv = std::make_unique<DaosKV>(*daosCont, run.oidLo, kRunOidHi, run.oclass);
+                std::cout << "Run catalog:          "
+                          << (created ? "new run" : "joined run created by " + run.host) << std::endl;
+                if (ranHere)
+                    std::cout << "WARNING: " << host << " already received run '" << prefix
+                              << "': events with the same numbers will be overwritten. Use a new --prefix per run"
+                              << std::endl;
+            }
+            std::cout << "KV object id:         " << std::hex << "0x" << kv->oid().hi << ".0x" << kv->oid().lo
                       << std::dec << std::endl
                       << "Key prefix:           " << prefix << std::endl
                       << "Chunk size:           " << (chunkKiB ? std::to_string(chunkKiB) + " KiB" : "whole event") << std::endl
@@ -858,6 +912,14 @@ int main(int argc, char** argv) {
         }
         printFinalStats(reas.get(), dfuseMode);
         printTiming(dfuseMode);
+        if (catalog) {
+            try {
+                catalog->putReceiver(prefix, host, finalStatsRecord(reas.get()));
+                std::cout << "Statistics written to the run catalog as " << catalogRecvKey(prefix, host) << std::endl;
+            } catch (const DaosError& e) {  // the events are stored; only the summary is missing
+                std::cerr << "Unable to write statistics to the run catalog: " << e.what() << std::endl;
+            }
+        }
         if (timing.csv.is_open()) {
             timing.csv.close();
             std::cout << "Per-event timing written to " << timingCsv << std::endl;

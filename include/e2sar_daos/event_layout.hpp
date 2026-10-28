@@ -1,6 +1,7 @@
 #pragma once
 /**
     How one E2SAR event is laid out in a DAOS KV object, shared by writer and reader.
+    Each run has its own object (run_catalog.hpp); the keys still start with the prefix.
 
         <prefix>/<evtNum>/<dataId>/<i>   chunk i of the payload, i = 0..nchunks-1
         <prefix>/<evtNum>/<dataId>       metadata: "size=<bytes> chunk=<bytes> nchunks=<n>"

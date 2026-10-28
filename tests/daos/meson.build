@@ -14,6 +14,13 @@ event_layout_test = executable('event_layout_test', files('test_event_layout.cpp
 
 test('EventLayoutTests', event_layout_test, suite: ['daos', 'unit'])
 
+# Per-run object ids and run catalog records (header-only parts; DAOS headers, no server)
+run_catalog_test = executable('run_catalog_test', files('test_run_catalog.cpp'),
+                                include_directories: project_include_dir,
+                                dependencies: [boost_dep, daos_dep])
+
+test('RunCatalogTests', run_catalog_test, suite: ['daos', 'unit'])
+
 latency_histogram_test = executable('latency_histogram_test', files('test_latency_histogram.cpp'),
                                 include_directories: project_include_dir,
                                 dependencies: [boost_dep])

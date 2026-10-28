@@ -85,6 +85,22 @@ void DaosKV::put(const std::string& key, const void* buf, size_t size) {
           "daos_kv_put(" + key + ")");
 }
 
+bool DaosKV::putIfAbsent(const std::string& key, const void* buf, size_t size) {
+    const int rc = daos_kv_put(oh_, DAOS_TX_NONE, DAOS_COND_KEY_INSERT, key.c_str(), size, buf, nullptr);
+    if (rc == -DER_EXIST)
+        return false;
+    check(rc, "daos_kv_put(" + key + ", insert)");
+    return true;
+}
+
+void DaosKV::remove(const std::string& key) {
+    check(daos_kv_remove(oh_, DAOS_TX_NONE, 0, key.c_str(), nullptr), "daos_kv_remove(" + key + ")");
+}
+
+void DaosKV::destroy() {
+    check(daos_kv_destroy(oh_, DAOS_TX_NONE, nullptr), "daos_kv_destroy");
+}
+
 size_t DaosKV::valueSize(const std::string& key) {
     daos_size_t size = 0;  // null buffer: query the size only
     check(daos_kv_get(oh_, DAOS_TX_NONE, 0, key.c_str(), &size, nullptr, nullptr),

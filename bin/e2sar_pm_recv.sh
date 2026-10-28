@@ -12,7 +12,10 @@
 #                                   rate (events that never reached DAOS) without failing on it.
 #                                   FAIL only if a stored event is wrong: size, digest, an event
 #                                   number >= N, or an event written twice
-#   e2sar_pm_recv.sh clean          step 9: destroy the DAOS container, show the LB state
+#   e2sar_pm_recv.sh runs           the runs in the DAOS container (its run catalog), with each
+#                                   run's committed and lost events
+#   e2sar_pm_recv.sh clean [RUNID]  step 9: delete run RUNID (its DAOS object), or without RUNID
+#                                   destroy the whole container; then show the LB state
 #
 # Every LB command uses -v (--novalidate). The LB instance URI comes from $ENV_FILE
 # (~/e2sar_instance.env, shared $HOME). This script never reserves or frees the instance.
@@ -174,9 +177,16 @@ cmd_verify() {
     local digests
     digests=$(grep -E '^[0-9a-f]{64} ' "$d/events.sha" | cut -d' ' -f1 | sort -u | wc -l)
     [ "$digests" -eq 1 ] && echo "OK   one digest over all events" || { echo "FAIL $digests different digests"; fail=1; }
+    # The receivers' commit counts: from the run catalog ("Receiver <host>: committed N events"
+    # in the listing), else from the receivers' logs.
     local sum
-    sum=$(grep -h 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null | awk '{s += $NF} END {print s + 0}')
-    grep -H 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null
+    if grep -q '^Receiver .*: committed ' "$d/events.list"; then
+        grep '^Receiver ' "$d/events.list"
+        sum=$(sed -n 's/^Receiver .*: committed \([0-9]*\) events.*/\1/p' "$d/events.list" | awk '{s += $1} END {print s + 0}')
+    else
+        grep -H 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null
+        sum=$(grep -h 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null | awk '{s += $NF} END {print s + 0}')
+    fi
     # More commits than events in DAOS: an event was written twice (delivered to both receivers,
     # or two sends under one RUNID) and the later write overwrote the earlier one.
     if [ "$sum" -eq "$got" ]; then
@@ -191,8 +201,17 @@ cmd_verify() {
     fi
 }
 
+cmd_runs() {
+    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefixes | column -t -s $'\t'
+}
+
 cmd_clean() {
-    daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1 && echo "destroyed $POOL/$CONT" || echo "$POOL/$CONT not present"
+    local runid=${1:-}
+    if [ -n "$runid" ]; then
+        "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$runid" --delete || exit 1
+    else
+        daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1 && echo "destroyed $POOL/$CONT" || echo "$POOL/$CONT not present"
+    fi
     load_uri
     lbadm --status
     echo "Expect no workers. If Perlmutter's IP is still a sender: $E2SAR_BIN/lbadm -v --removesenders -a <SEND_IP>"
@@ -203,6 +222,7 @@ case ${1:-} in
     start)  cmd_start ;;
     status) cmd_status ;;
     verify) shift; cmd_verify "$@" ;;
-    clean)  cmd_clean ;;
+    runs)   cmd_runs ;;
+    clean)  shift; cmd_clean "$@" ;;
     *)      usage ;;
 esac

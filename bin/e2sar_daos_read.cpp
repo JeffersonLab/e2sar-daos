@@ -2,21 +2,30 @@
     e2sar_daos_read: read back events written by e2sar_daos_recv.
 
     Modes:
-      (default)   list committed events under a key prefix, plus any incomplete ones
+      --prefixes  list the runs in the container's run catalog, with each run's
+                  receivers' final statistics
+      --prefix P  list run P's committed events, plus any incomplete ones and the
+                  receivers' statistics
       --fetch     read the selected events chunk by chunk, check sizes, print SHA-256
                   in `sha256sum` format and whether the event is an EVIO file; with
                   --out DIR also write each event to DIR/<prefix>_<evtNum>_<dataId>.evio
+      --delete    delete run P: its object and its catalog entries
+
+    A run is found through the run catalog (e2sar_daos/run_catalog.hpp). A prefix that
+    isn't in the catalog, or --oid, reads the one shared object written before per-run
+    objects (default id 0xE25A), so older containers still read.
 
     e2sar_ft sends each file as one event, so a restored event is byte-for-byte the
     original file (e.g. an EVIO v6 file ready for an EVIO viewer). Compare the printed
     digests with `sha256sum` of the files given to e2sar_ft -s.
-    Opens pool and container read-only and never creates anything.
+    Opens pool and container read-only and never creates anything, except with --delete.
 */
 
 #include <openssl/evp.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -29,6 +38,7 @@
 
 #include "e2sar_daos/daos_handles.hpp"
 #include "e2sar_daos/event_layout.hpp"
+#include "e2sar_daos/run_catalog.hpp"
 
 namespace po = boost::program_options;
 using namespace e2sar_daos;
@@ -168,12 +178,64 @@ bool fetchEvent(DaosKV& kv, const std::string& prefix, const EventId& id, const 
     return true;
 }
 
+std::string fmtTime(int64_t unixSec) {
+    if (unixSec <= 0)
+        return "-";
+    const std::time_t t = static_cast<std::time_t>(unixSec);
+    std::tm tmLocal{};
+    localtime_r(&t, &tmLocal);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tmLocal);
+    return buf;
+}
+
+uint64_t field(const Record& r, const char* key) {
+    const auto it = r.find(key);
+    if (it == r.end())
+        return 0;
+    try {
+        return std::stoull(it->second);
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
+// One line per receiver that has stopped, from the run catalog. No tabs: scripts take the
+// tab-separated lines of a listing as events.
+void printReceivers(const std::map<std::string, Record>& recv) {
+    for (const auto& [host, r] : recv)
+        std::cout << "Receiver " << host << ": committed " << field(r, "committed") << " events, "
+                  << field(r, "bytes") << " bytes, failed " << field(r, "failed") << ", reassembly loss "
+                  << field(r, "reassembly_loss") << ", enqueue loss " << field(r, "enqueue_loss")
+                  << ", stopped " << fmtTime(static_cast<int64_t>(field(r, "stop"))) << std::endl;
+}
+
+// --prefixes: one tab-separated row per run in the catalog.
+void printRuns(RunCatalog& catalog, const std::string& where) {
+    const auto runs = catalog.list();
+    std::cout << "prefix\tcreated\tcreated_by\toclass\tchunk\treceivers\tcommitted\tfailed\tlost" << std::endl;
+    for (const auto& run : runs) {
+        uint64_t committed = 0, failed = 0, lost = 0;
+        const auto recv = catalog.receivers(run.prefix);
+        for (const auto& [host, r] : recv) {
+            committed += field(r, "committed");
+            failed += field(r, "failed");
+            lost += field(r, "reassembly_loss") + field(r, "enqueue_loss");
+        }
+        std::cout << run.prefix << "\t" << fmtTime(run.created) << "\t" << run.host << "\t"
+                  << (run.oclass.empty() ? "-" : run.oclass) << "\t" << run.chunk << "\t" << recv.size()
+                  << "\t" << committed << "\t" << failed << "\t" << lost << std::endl;
+    }
+    std::cout << runs.size() << " runs in " << where
+              << " (receivers: how many have stopped and written their statistics)" << std::endl;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
     std::string pool, cont, oclass, prefix, outDir, extension;
-    uint64_t oidLo;
+    uint64_t oidLo = kLegacyOidLo;
     std::vector<uint64_t> events;
     int dataIdFilter;
 
@@ -181,9 +243,11 @@ int main(int argc, char** argv) {
     opts("help,h", "show this help message");
     opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label");
     opts("cont", po::value<std::string>(&cont)->default_value("e2sar"), "DAOS container label");
-    opts("oid", po::value<uint64_t>(&oidLo)->default_value(0xE25A), "low 64 bits of the KV object id (as given to e2sar_daos_recv)");
-    opts("oclass", po::value<std::string>(&oclass)->default_value(""), "object class used by e2sar_daos_recv, if set");
-    opts("prefix", po::value<std::string>(&prefix)->required(), "key prefix used by e2sar_daos_recv");
+    opts("prefixes", po::bool_switch()->default_value(false), "list the runs in the run catalog");
+    opts("prefix", po::value<std::string>(&prefix), "the run to read (the receiver's --prefix)");
+    opts("oid", po::value<uint64_t>(&oidLo), "read the shared object with this id (low 64 bits, as given to e2sar_daos_recv --oid) instead of the run's own object");
+    opts("oclass", po::value<std::string>(&oclass)->default_value(""), "with --oid, or a prefix not in the catalog: the object class the receiver used, if set");
+    opts("delete", po::bool_switch()->default_value(false), "delete run --prefix: its object (all its events) and its catalog entries");
     opts("fetch", po::bool_switch()->default_value(false), "read selected events back and print SHA-256");
     opts("event", po::value<std::vector<uint64_t>>(&events)->multitoken(), "only these event numbers (default: all)");
     opts("dataid", po::value<int>(&dataIdFilter)->default_value(-1), "only this data id (default: all)");
@@ -196,9 +260,11 @@ int main(int argc, char** argv) {
         if (vm.count("help")) {
             std::cout << od << std::endl
                       << "Examples:\n"
+                      << "  e2sar_daos_read --prefixes                          # list runs\n"
                       << "  e2sar_daos_read --prefix run42                      # list events\n"
                       << "  e2sar_daos_read --prefix run42 --fetch              # verify all, print sha256\n"
-                      << "  e2sar_daos_read --prefix run42 --fetch -o ~/restored   # write run42_<evt>_<dataId>.evio" << std::endl;
+                      << "  e2sar_daos_read --prefix run42 --fetch -o ~/restored   # write run42_<evt>_<dataId>.evio\n"
+                      << "  e2sar_daos_read --prefix run42 --delete             # delete the run" << std::endl;
             return 0;
         }
         po::notify(vm);
@@ -206,16 +272,54 @@ int main(int argc, char** argv) {
         std::cerr << "Unable to parse command line: " << e.what() << std::endl;
         return 1;
     }
+    const bool listRuns = vm["prefixes"].as<bool>(), del = vm["delete"].as<bool>();
     if (vm.count("out") && !vm["fetch"].as<bool>()) {
         std::cerr << "--out requires --fetch" << std::endl;
+        return 1;
+    }
+    if (listRuns == !prefix.empty()) {
+        std::cerr << "Give exactly one of --prefixes or --prefix" << std::endl;
+        return 1;
+    }
+    if (del && (vm["fetch"].as<bool>() || vm.count("oid"))) {
+        std::cerr << "--delete deletes a whole run: don't combine it with --fetch or --oid" << std::endl;
         return 1;
     }
 
     try {
         DaosRuntime daos;
-        DaosPool daosPool(pool, DAOS_PC_RO);
-        DaosContainer daosCont(daosPool, cont, /*createIfMissing=*/false, DAOS_COO_RO);
-        DaosKV kv(daosCont, oidLo, 0, oclass, DAOS_OO_RO);
+        DaosPool daosPool(pool, del ? DAOS_PC_RW : DAOS_PC_RO);
+        DaosContainer daosCont(daosPool, cont, /*createIfMissing=*/false, del ? DAOS_COO_RW : DAOS_COO_RO);
+        const unsigned int mode = del ? DAOS_OO_RW : DAOS_OO_RO;
+        RunCatalog catalog(daosCont, mode);
+
+        if (listRuns) {
+            printRuns(catalog, pool + "/" + cont);
+            return 0;
+        }
+
+        // The run's own object, or the shared one (--oid, or data from before per-run objects).
+        std::optional<RunInfo> run;
+        if (!vm.count("oid"))
+            run = catalog.find(prefix);
+        if (del) {
+            if (!run) {
+                std::cerr << "Run '" << prefix << "' isn't in the run catalog of " << pool << "/" << cont
+                          << ". Data in the shared object can't be deleted per run: destroy the container instead"
+                          << std::endl;
+                return 1;
+            }
+            DaosKV(daosCont, run->oidLo, kRunOidHi, run->oclass, mode).destroy();
+            catalog.removeRun(prefix);
+            std::cout << "Deleted run '" << prefix << "': its object and its catalog entries" << std::endl;
+            return 0;
+        }
+        if (!run && !vm.count("oid"))
+            std::cerr << "Run '" << prefix << "' isn't in the run catalog: reading the shared object 0x"
+                      << std::hex << oidLo << std::dec << " (data written before per-run objects)" << std::endl;
+        auto kvPtr = run ? std::make_unique<DaosKV>(daosCont, run->oidLo, kRunOidHi, run->oclass, mode)
+                         : std::make_unique<DaosKV>(daosCont, oidLo, 0, oclass, mode);
+        DaosKV& kv = *kvPtr;
 
         Listing l = scan(kv, prefix);
         const std::set<uint64_t> wanted(events.begin(), events.end());
@@ -236,6 +340,8 @@ int main(int argc, char** argv) {
                 n++;
                 bytes += meta.size;
             }
+            if (run)
+                printReceivers(catalog.receivers(prefix));
             std::cout << n << " committed events, " << bytes << " bytes under '" << prefix << "/'" << std::endl;
 
             size_t incomplete = 0;

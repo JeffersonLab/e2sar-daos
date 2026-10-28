@@ -171,12 +171,14 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 ~/daq/e2sar-daos/bin/e2sar_pm_recv.sh status    # both workers with slotsassigned > 0: now send (step 6)
 # after Ctrl-C on both receivers, once, on either node
 ~/daq/e2sar-daos/bin/e2sar_pm_recv.sh verify 10000   # N = the sender's -n; loss rate, then PASS or FAIL
-~/daq/e2sar-daos/bin/e2sar_pm_recv.sh clean          # destroy the container, show the LB state
+~/daq/e2sar-daos/bin/e2sar_pm_recv.sh runs           # the runs in DAOS: committed, failed and lost events per run
+~/daq/e2sar-daos/bin/e2sar_pm_recv.sh clean <RUNID>  # delete that run, show the LB state ('clean' alone: the whole container)
 ```
 
 - `start` reads the instance URI from `~/e2sar_instance.env` and listens on `$MY_IP` from `~/.bashrc` (else the address of `enp1s0f1np1`). It stops if an e2sar process is already running, a receive port is in use, or someone else's worker is on the LB instance.
 - On ebpf2201, `start` makes the new run directory `$RUN/pm_<date>_<time>`. On ebpf2203 it waits up to 5 minutes for that directory and uses the same `RUNID` as the DAOS prefix.
 - Ctrl-C stops only the receiver. Its final statistics stay in `<node>.recv.log`, and the script then prints step 7's drop checks for that node.
+- Each run is its own DAOS object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
 - Every LB command uses `-v`. The script never reserves or frees the instance.
 - Settings such as `CONT`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_pm_recv.sh start`. See the top of the script.
 
@@ -233,7 +235,9 @@ cd ~/daq/e2sar-daos
 
 Expected startup output on each node:
 ```
-DAOS pool/container:  sc26/e2sar-pm (created)      # or (opened) on the node that came second
+DAOS pool/container:  sc26/e2sar-pm (created)      # or (existing) on the node that came second
+Run catalog:          new run                      # or "joined run created by ebpf2201..." on the second node
+KV object id:         0x...e25a0001.0x...          # the same on both nodes: one object for the run
 Control plane:        ON
 Listening on:         129.57.178.8x ports 20600:20615
 Receiving; Ctrl-C to stop
@@ -347,9 +351,12 @@ To look inside one event: `./build/bin/e2sar_daos_read --cont $CONT --prefix $PR
 ## 9. Clean up (required, after every run)
 
 ```bash
-# either ebpf node: the test container (both receivers' data)
+# either ebpf node: this run's data (both receivers wrote into the run's one object)
+cd ~/daq/e2sar-daos
+./build/bin/e2sar_daos_read --cont $CONT --prefixes               # the runs in the container
+./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --delete
+# or all runs at once: the whole test container
 daos cont destroy sc26 $CONT
-daos cont list sc26 | grep $CONT                  # nothing
 $E2SAR_BIN/lbadm -v --status                      # no workers; the senders as in step 4
 # only if Perlmutter's IP is still listed (sender was killed):
 $E2SAR_BIN/lbadm -v --removesenders -a <SEND_IP>

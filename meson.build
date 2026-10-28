@@ -41,6 +41,7 @@ project_include_dir = include_directories('include')
 project_sources = files(
     'src/daos_handles.cpp',
     'src/async_kv_writer.cpp',
+    'src/run_catalog.cpp',
 )
 
 e2sar_daos = library('e2sar-daos',
@@ -55,6 +56,7 @@ install_headers(
     'include/e2sar_daos/async_kv_writer.hpp',
     'include/e2sar_daos/event_layout.hpp',
     'include/e2sar_daos/latency_histogram.hpp',
+    'include/e2sar_daos/run_catalog.hpp',
     subdir: 'e2sar_daos'
 )
 
