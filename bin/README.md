@@ -119,14 +119,15 @@ With `e2sar_daos_recv --dfuse DIR` (the bench's `-S dfuse`), there is no KV obje
 ```
 Reassembler ──recvEvent──▶ dequeue thread 0 ──▶ AsyncKVWriter (own DAOS event queue, ≤ --inflight puts)
             ──recvEvent──▶ dequeue thread 1 ──▶ AsyncKVWriter (own DAOS event queue, ≤ --inflight puts)
-                                                       └──────────── shared pool / container / KV handle
+                                                       └──────────── shared pool / container / run object handle
 ```
 
+- At start, the receiver finds or creates the run in the container's run catalog and opens the run's own KV object. All dequeue threads share that handle.
 - Each dequeue thread (`--deq`) owns one DAOS event queue, because DAOS event queues must be polled by a single thread.
 - A thread keeps up to `--inflight` puts outstanding (default 128, so 128 MiB per thread with 1 MiB chunks). It reaps completions between `recvEvent` calls.
 - The event buffer is freed once all of its chunks have completed.
 - When all slots are busy, the thread blocks on the event queue. That is the back-pressure: if DAOS can't keep up, the Reassembler queue fills, and the loss shows up as *enqueue loss* in the progress line.
-- On Ctrl-C the threads stop receiving and drain every outstanding put, including pending metadata commits. Then the worker is deregistered and the final stats are printed.
+- On Ctrl-C the threads stop receiving and drain every outstanding put, including pending metadata commits. Then the worker is deregistered, the final stats are printed and written to the run catalog as `recv/<prefix>/<host>`.
 
 ## `e2sar_daos_recv`
 
