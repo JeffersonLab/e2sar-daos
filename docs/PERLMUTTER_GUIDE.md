@@ -189,9 +189,8 @@ source ~/e2sar_instance.env
 export PORT=20600                          # first receive port on each node (the LB uses each worker's own IP:port)
 export CONT=e2sar-pm                       # DAOS container for these tests only, shared by both receivers
 export RUN=$HOME/e2sar_run/pm; mkdir -p $RUN
-export NIC=enp1s0f1np1 ME=$(hostname -s)
-export EFACE=$(ip -4 -br addr show $NIC | awk '{print $3}' | cut -d/ -f1)   # the NIC's IPv4 address, not its name
-echo $EFACE                                # 129.57.178.85 on ebpf2201, 129.57.178.86 on ebpf2203
+export ME=$(hostname -s)                   # node name, for the log file names
+echo $NIC $MY_IP                           # confirm NIC and IP addresses (both from ~/.bashrc)
 
 ps -eo user,pid,etime,args | grep -E 'e2sar_(ft|perf|daos_recv)' | grep -v grep   # expect nothing
 ss -uanp | grep -E ':20(4[89]|6[0-3])[0-9]\b'                                    # nothing on 20480-20499 or 20600-20639
@@ -226,10 +225,10 @@ ls -ld $D                                  # exists, and is from just now
 nstat -n
 ethtool -S $NIC | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $D/$ME.nic0
 cd ~/daq/e2sar-daos
-./build/bin/e2sar_daos_recv -v --withcp --ip ${MY_IP} \
+./build/bin/e2sar_daos_recv -v --withcp --ip $MY_IP \
     --port $PORT --threads 16 --pool sc26 --cont $CONT --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --deq 32 --inflight 256 \
-    --timing-csv $D/$(hostname -s).csv 2>&1 | tee $D/$(hostname -s).recv.log
+    --timing-csv $D/$ME.csv 2>&1 | tee $D/$ME.recv.log
 ```
 
 Expected startup output on each node:
@@ -408,7 +407,7 @@ None of these has happened on this path yet. They are what to check first, based
 | Events lost with `rx_discards_phy` > 0 | The receiving NIC port overflowed, as in the JLab runs. Lower `--rate` or use more `--sockets` |
 | Digest check shows more than one line | An event was corrupted, or the sender used `--realmalloc`. Compare the odd digests' event numbers with the receiver logs |
 | The receivers' `Events committed` add up to more than N | Either two sends ran under the same `RUNID` (use a new one per send, step 5), or the LB delivered some events to both workers. With one prefix, the later write overwrote the earlier one |
-| Receiver aborts right after `Dequeue threads:` with `boost::wrapexcept<boost::system::system_error>` / `Invalid argument [system:22]` | `--ip` isn't an IP address: `$EFACE` holds an interface name, or is stale. Set it as in step 4 and check `echo $EFACE` |
+| Receiver aborts right after `Dequeue threads:` with `boost::wrapexcept<boost::system::system_error>` / `Invalid argument [system:22]` | `--ip` isn't an IP address: `$MY_IP` is empty, holds an interface name, or is stale. Check `echo $MY_IP` (step 4) and its line in `~/.bashrc` |
 | `Key prefix:` at startup shows another node's name or an old run | `PREFIX` is left over in this shell. Set `RUNID` and `PREFIX` again as in step 5; `PREFIX` must equal `$RUNID` |
 | Receivers get 0 events, LB shows `totalPacketsRecv=0`, but `lbadm` works | The instance's data plane is unreachable. Ping its `data=` address from Perlmutter: `Destination Host Unreachable` means the packets are dropped on the way. Check the URI in `~/e2sar_instance.env` is on stable4 (step 2); if not, reserve one on stable4 (data plane `192.188.29.54`) with an admin URI on `192.188.29.6:18048` |
 | A worker stays registered after a receiver was killed | Wait about 10 s for the LB to drop it ([ESNET_LB_TESTING.md 3.5](ESNET_LB_TESTING.md#35-workers-the-receivers)) |
