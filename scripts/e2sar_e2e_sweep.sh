@@ -15,7 +15,7 @@
 : "${MODE:=n2n}"                                            # lb | n2n
 : "${RECV_OPTS:=-T 32 -D 32}"                               # e.g. "-T 32 -D 32 -S pil4dfs"
 : "${SEND_OPTS:=-P 16 -s 1 -n 6250 -f 256}"                 # -r is added per run
-: "${BENCH:=bash ~/daq/e2sar-daos/bin/e2sar_e2e_bench.sh}"  # as run on the nodes
+: "${BENCH:=bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh}"  # as run on the nodes
 : "${LOG:=./sweep_${MODE}_${1:-}.log}"
 #
 # Example, the node-to-node sweep of docs/E2E_BENCHMARK.md section 7:

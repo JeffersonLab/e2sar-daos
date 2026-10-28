@@ -11,7 +11,7 @@
 | 5 | **ALCF Aurora** (planned, not run yet) | pool `e2sar-daos` (100 TB), DAOS client on the compute nodes | `unit` and `integration` suites, then the end-to-end path and the n2n bench between Aurora compute nodes over the Slingshot network. Section 5 is the plan and the checks still open | [§5](#5-alcf-aurora-planned) |
 
 Scenario 1 needs only Docker. Scenarios 2 and 3 need SSH access to the ebpf nodes, and scenario 3 also needs an LB instance URI. Scenario 4 needs a Slurm TB allocation and podman. Scenario 5 needs an ALCF project with access to pool `e2sar-daos` and a PBS allocation on Aurora.
-For throughput and latency of scenarios 2 and 3 with synthetic EVIO time frames instead of files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`bin/e2sar_e2e_bench.sh`).
+For throughput and latency of scenarios 2 and 3 with synthetic EVIO time frames instead of files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`scripts/e2sar_e2e_bench.sh`).
 Scenarios 2 and 3 share the same nodes with other users. Use your own port, container and `/scratch` directories, and clean up after every run.
 
 ## Test suites
@@ -431,7 +431,7 @@ Aurora is unlike the JLab hosts in four ways that shape the plan:
 | Scheduler | none (ebpf220x), Slurm (TB) | **PBS Pro** (`qsub`, `qstat`, `$PBS_NODEFILE`) | Every DAOS test runs inside a PBS job with `daos_user` in `-l filesystems=`, which is how ALCF documents requesting DAOS. Run `qstat -Bf` and look at `resources_available.valid_filesystems` for the valid names. The `srun`/`sbatch` commands of section 3 don't apply |
 | Where DAOS is reachable | on every host | **compute nodes only** *(check)*, not the login nodes (UANs) | Build on a login node if the DAOS headers are there. Run `meson test` and the applications on a compute node |
 | OS and packages | AlmaLinux/Rocky 9 (RHEL family), `dnf`, `daos-devel` RPM | **SLES 15 SP7** on compute nodes and UANs (rolled out 2026-09-28, [ALCF system updates](https://docs.alcf.anl.gov/aurora/system-updates/)), no root, environment modules (`module use /soft/modulefiles; module load daos`, or `daos/base`) *(check)* | E2SAR has no SLES package, so build E2SAR from source. Packages built for EL9 (the E2SAR RPM, the dev container's prebuilt E2SAR) won't run on SLES. The DAOS headers may not be in `/usr/include`, which the top-level `meson.build` hard-codes |
-| Shell | bash | bash (default login shell) | The exports from section 2 go in `~/.bashrc`, which `bin/e2sar_e2e_bench.sh` sources |
+| Shell | bash | bash (default login shell) | The exports from section 2 go in `~/.bashrc`, which `scripts/e2sar_e2e_bench.sh` sources |
 | Network | 100 GbE, MTU 9000, DAOS over TCP/verbs | HPE Slingshot 11, several `hsn*` NICs per node, DAOS over `ofi+cxi` *(check)* | UDP between compute nodes goes over the `hsn*` IPs. A container would need the host's CXI libfabric, so the podman route of section 3 doesn't carry over. Build natively instead |
 
 Inbound traffic from outside ALCF to the compute nodes is blocked *(check)*, so the ESnet LB path (scenario 3) can't reach a receiver on Aurora.
@@ -492,7 +492,7 @@ Follow the same procedure as [section 4](#4-applications-end-to-end-on-ebpf2203)
 
 ### Phase 4: throughput and latency (n2n bench)
 
-[`bin/e2sar_e2e_bench.sh`](../bin/e2sar_e2e_bench.sh) `-m n2n` should work unchanged when the Aurora values are set in the environment, because its defaults are for the ebpf testbed:
+[`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh) `-m n2n` should work unchanged when the Aurora values are set in the environment, because its defaults are for the ebpf testbed:
 
 ```bash
 export POOL=e2sar-daos CONT=e2sar-bench-$USER
