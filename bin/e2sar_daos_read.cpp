@@ -22,6 +22,7 @@
     e2sar_ft sends each file as one event, so a restored event is byte-for-byte the
     original file (e.g. an EVIO v6 file ready for an EVIO viewer). Compare the printed
     digests with `sha256sum` of the files given to e2sar_ft -s.
+    --pool is required: the reader never assumes a pool.
     Opens pool and container read-only and never creates anything, except with --delete.
 */
 
@@ -359,7 +360,7 @@ int main(int argc, char** argv) {
 
     auto opts = od.add_options();
     opts("help,h", "show this help message");
-    opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label");
+    opts("pool", po::value<std::string>(&pool)->required(), "DAOS pool label (required)");
     opts("cont", po::value<std::string>(&cont)->default_value("e2sar"), "DAOS container label");
     opts("prefixes", po::bool_switch()->default_value(false), "list the runs in the run catalog");
     opts("prefix", po::value<std::string>(&prefix), "the run to read (the receiver's --prefix)");
@@ -379,13 +380,14 @@ int main(int argc, char** argv) {
         if (vm.count("help")) {
             std::cout << od << std::endl
                       << "Examples:\n"
-                      << "  e2sar_daos_read --prefixes                          # list runs\n"
-                      << "  e2sar_daos_read --prefix run42                      # list events\n"
-                      << "  e2sar_daos_read --prefix run42 --fetch              # verify all, print sha256\n"
-                      << "  e2sar_daos_read --prefix run42 --fetch -o ~/restored   # write run42_<evt>_<dataId>.evio\n"
-                      << "  e2sar_daos_read --prefix run42 --fetch -o ~/restored --bundle 100000\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefixes              # list runs\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42          # list events\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --fetch  # verify all, print sha256\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --fetch -o ~/restored\n"
+                      << "                                                    # write run42_<evt>_<dataId>.evio\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --fetch -o ~/restored --bundle 100000\n"
                       << "                                                      # write run42_000000.evio, ... (100000 events each)\n"
-                      << "  e2sar_daos_read --prefix run42 --delete             # delete the run" << std::endl;
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --delete # delete the run" << std::endl;
             return 0;
         }
         po::notify(vm);

@@ -159,7 +159,8 @@ For example, plot `commit_s` against the running sum of `bytes` for throughput o
 |---|---|---|
 | `--prefixes` | — | List the runs in the run catalog (instead of `--prefix`) |
 | `--prefix` | — | The run to read: the receiver's `--prefix` |
-| `--pool`, `--cont` | same as recv | Must match what the receiver used |
+| `--pool` | — (required) | DAOS pool label. There is no default: give the pool the receiver wrote to |
+| `--cont` | `e2sar` | Container label. Must match the receiver's `--cont-name` |
 | `--oid`, `--oclass` | `57946` (`0xE25A`), container default | Read the shared object written by `e2sar_daos_recv --oid`, or before per-run objects. Not needed for runs in the catalog |
 | `--delete` | off | Delete run `--prefix`: its object, so all its events, and its catalog entries |
 | `--fetch` | off | Read events back and print `sha256sum`-style lines |
@@ -190,7 +191,7 @@ It prints one SHA-256 line per bundle file, then one line per data id with its e
 The payloads are joined as they are: whether the result is a valid EVIO file depends on what each event holds (e.g. complete EVIO records vs bare banks).
 Each event is read into memory before it is written, so a bundle file never holds part of an event. An event that can't be read is left out and counted as failed.
 ```bash
-e2sar_daos_read --cont <label> --prefix run42 --fetch -o ~/restored --bundle 100000   # ~2 GB files for 20 kB events
+e2sar_daos_read --pool <pool> --cont <label> --prefix run42 --fetch -o ~/restored --bundle 100000   # ~2 GB files for 20 kB events
 ```
 It opens the pool and container read-only and never creates anything, except with `--delete`.
 A prefix that isn't in the catalog is read from the shared object (`--oid`, default `0xE25A`), with a note on stderr, so containers written before per-run objects still read.
