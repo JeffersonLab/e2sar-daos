@@ -172,13 +172,14 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 # after Ctrl-C on both receivers, once, on either node
 ~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh verify 10000   # N = the sender's -n; loss rate, then PASS or FAIL
 ~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh runs        # the runs in DAOS: committed, failed and lost events per run
-~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh clean <RUNID>  # delete that run, show the LB state ('clean' alone: the whole container)
+~/daq/e2sar-daos/scripts/e2sar_site2ebpf_recv.sh clean <RUNID>  # destroy that run's container, show the LB state ('clean' alone: every $CONT_LABEL_<epoch s> container)
 ```
 
-- `start` reads the instance URI from `~/e2sar_instance.env` and listens on `$MY_IP` from `~/.bashrc` (else the address of `enp1s0f1np1`). It stops if an e2sar process is already running, a receive port is in use, or someone else's worker is on the LB instance.
-- On ebpf2201, `start` makes the new run directory `$RUN/pm_<date>_<time>`. On ebpf2203 it waits up to 5 minutes for that directory and uses the same `RUNID` as the DAOS prefix.
+- `start` takes the instance URI from `EJFAT_URI` (passed in or exported; it shows it and asks before going on) and listens on `$MY_IP` from `~/.bashrc` (else the address of `enp1s0f1np1`). It stops if an e2sar process is already running, a receive port is in use, or someone else's worker is on the LB instance.
+- On ebpf2201, `start` makes the new run directory `$RUN/run_<date>_<time>` and the run's container name, `<CONT_LABEL>_<UTC epoch s>` (default `CONT_LABEL=e2sar`). On ebpf2203 it waits up to 5 minutes for that directory and uses the same `RUNID` as the DAOS prefix and the same container (`--cont-name`).
+- `SITE` (default `pm`) only picks the log directory, `$RUN` = `~/e2sar_run/$SITE`. It has no effect on DAOS.
 - Ctrl-C stops only the receiver. Its final statistics stay in `<node>.recv.log`, and the script then prints step 7's drop checks for that node.
-- Each run is its own DAOS object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
+- Each run is its own DAOS container and object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
 - Every LB command uses `-v`. The script never reserves or frees the instance.
 - Settings such as `CONT_LABEL`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_site2ebpf_recv.sh start`. See the top of the script.
 

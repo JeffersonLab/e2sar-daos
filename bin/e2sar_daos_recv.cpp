@@ -36,11 +36,13 @@
     N events of --event-size bytes from an in-memory generator, optionally paced to --rate
     Gbps, and store them exactly as received events (same sink, threads, keys, timing).
     This measures the storage side of the receiver on its own: the most the sink can
-    commit with these settings, which the network path then can't exceed.
+    commit with these settings, which the network path then can't exceed. It needs a
+    sink: DAOS (--cont-name) or --dfuse, so it can't be combined with --dryrun.
 
     Dry run (--dryrun): the opposite. Events are received and reassembled as usual, then
     freed on the dequeue thread without touching DAOS (no pool, container, object or
-    catalog). This measures the network and E2SAR side on its own.
+    catalog). This measures the network and E2SAR side on its own. Not with --dfuse
+    (it stores nothing) or --synthetic (there would be nothing left to measure).
 */
 
 #include <fcntl.h>
@@ -738,10 +740,10 @@ int main(int argc, char** argv) {
     opts("deq", po::value<size_t>(&deqThreads)->default_value(16), "number of dequeue threads, each with its own DAOS event queue");
     // dfuse mode (POSIX container mounted with dfuse)
     opts("dfuse", po::value<std::string>(&outDir), "dfuse mount point: write each event as a file under DIR/<prefix>/ instead of the KV object; --pool/--cont-name/--oid/--oclass/--chunk/--inflight are ignored");
-    opts("dryrun", po::bool_switch()->default_value(false), "receive and reassemble events, then discard them: no DAOS (or dfuse) at all; --pool/--cont-name/--oid/--oclass/--chunk/--inflight are ignored. Measures the network and E2SAR side on its own");
+    opts("dryrun", po::bool_switch()->default_value(false), "receive and reassemble events, then discard them: no DAOS (or dfuse) at all; --pool/--cont-name/--oid/--oclass/--chunk/--inflight are ignored. Measures the network and E2SAR side on its own. Not with --dfuse or --synthetic");
     opts("fsync", po::bool_switch()->default_value(false), "with --dfuse: fsync each file before closing it");
     // synthetic mode (no network)
-    opts("synthetic", po::value<uint64_t>(&synthEvents)->default_value(0), "store N in-memory events instead of receiving (0 = off): measures the sink without a sender; the E2SAR options are ignored");
+    opts("synthetic", po::value<uint64_t>(&synthEvents)->default_value(0), "store N in-memory events instead of receiving (0 = off): measures the sink without a sender; the E2SAR options are ignored. Not with --dryrun");
     opts("event-size", po::value<std::string>(&eventSizeStr)->default_value("95K"), "with --synthetic: bytes per event, with an optional K/M/G suffix");
     opts("rate", po::value<double>(&synthGbps)->default_value(0), "with --synthetic: pace events to this many Gbps (0 = as fast as the sink takes them)");
     opts("report", po::value<unsigned>(&reportSec)->default_value(1), "progress report interval in seconds (0 = off)");
@@ -777,6 +779,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     const bool synthMode = synthEvents > 0;
+    if (synthMode && dryRun) {
+        std::cerr << "--synthetic and --dryrun are mutually exclusive" << std::endl;
+        return 1;
+    }
     const size_t synthSize = parseSize(eventSizeStr);
     if (synthMode && (synthSize == 0 || synthGbps < 0)) {
         std::cerr << "--event-size must be a positive size (e.g. 95K, 1.5M) and --rate >= 0" << std::endl;

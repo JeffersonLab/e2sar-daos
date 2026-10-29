@@ -17,7 +17,7 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 ## Prerequisites
 
 - A running `daos_agent` on the receiving node, and access to the pool (default `sc26`).
-- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-name` is the container label, used as given, and is required unless `--dryrun` or `--dfuse`. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one per run, `<CONT>_<UTC epoch s>`, e.g. `e2sar_1793280000`. The receiver prints the label at startup (`DAOS pool/container:`); pass the same label to `e2sar_daos_read --cont`.
+- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-name` is the container label, used as given, and is required unless `--dryrun` or `--dfuse`. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one per run, `<CONT_LABEL>_<UTC epoch s>`, e.g. `e2sar_1793280000`. The receiver prints the label at startup (`DAOS pool/container:`); pass the same label to `e2sar_daos_read --cont`.
 - Without a control plane (no `--withcp`), the sender sends straight to the `data=` address in `EJFAT_URI`. The port there defaults to 19522, so start the receiver with `--port 19522`, or put an explicit port in the URI, e.g. `data=<ip>:10000`.
 
 ## Data layout in DAOS
@@ -153,7 +153,7 @@ DAOS options:
 | Option | Default | |
 |---|---|---|
 | `--pool` | `sc26` | Pool label (must exist) |
-| `--cont-name` | — (required unless `--dryrun` or `--dfuse`) | Container label, used as given (created if missing). Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT>_<epoch s>` to both nodes |
+| `--cont-name` | — (required unless `--dryrun` or `--dfuse`) | Container label, used as given (created if missing). Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT_LABEL>_<epoch s>` to both nodes |
 | `--prefix` | `run` | The run: its own KV object and catalog entry, and the key prefix. One per run |
 | `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1`. The same on every receiver of a run |
 | `--oid` | — | Write into one shared object with this id (decimal; `57946` = `0xE25A`, the one used before per-run objects), without the run catalog |
@@ -169,16 +169,17 @@ Synthetic mode (no sender, no network):
 
 | Option | Default | |
 |---|---|---|
-| `--synthetic N` | 0 (off) | Store N events made in memory instead of receiving. The E2SAR options are ignored and `--ip` is not needed |
+| `--synthetic N` | 0 (off) | Store N events made in memory instead of receiving. The E2SAR options are ignored and `--ip` is not needed. Writes to DAOS (needs `--cont-name`) or to `--dfuse`; can't be combined with `--dryrun` |
 | `--event-size` | `95K` | Bytes per event, with an optional `K`/`M`/`G` suffix (binary), e.g. `1.5M` |
 | `--rate` | 0 | Pace events to this many Gbps. 0 = as fast as the sink takes them |
-| `--dryrun` | off | Receive and reassemble events, then discard them. No DAOS or dfuse: the storage options are ignored, nothing is created or written, and the run catalog is not touched. Can't be combined with `--dfuse` |
+| `--dryrun` | off | Receive and reassemble events, then discard them. No DAOS or dfuse: the storage options are ignored, nothing is created or written, and the run catalog is not touched. Can't be combined with `--dfuse` or `--synthetic` |
 
 Exit status: 0 if every received event was committed, 2 if any event failed, 1 on a setup error.
 
 ### Synthetic mode: the sink's ceiling without a sender
 
 `--synthetic N` replaces the network and the Reassembler with an in-memory generator. Everything after that is the normal receiver: the same `--deq` threads, `--inflight` puts, `--chunk` layout, keys, `--dfuse` sink and `Timing:` block. The run ends by itself after the last event is committed.
+It always stores the events: in DAOS (`--pool`, `--cont-name`) or under `--dfuse`. It can't be combined with `--dryrun`, which stores nothing.
 
 ```bash
 # KV sink, 100,000 x 95 KiB events, as fast as DAOS takes them
@@ -257,7 +258,7 @@ For example, plot `commit_s` against the running sum of `bytes` for throughput o
 `--prefixes` prints one tab-separated row per run: prefix, creation time, the receiver that created it, object class, chunk size, and, summed over the receivers that have stopped, events committed, failed and lost (reassembly plus enqueue loss):
 ```
 prefix               created              created_by         oclass  chunk    receivers  committed  failed  lost
-pm_20261027_143005   2026-10-27 14:30:07  ebpf2201.jlab.org  -       1048576  2          163045     0       513
+run_20261027_143005  2026-10-27 14:30:07  ebpf2201.jlab.org  -       1048576  2          163045     0       513
 ```
 Without `--fetch` it lists committed events (number, data id, size, chunks), then one `Receiver <host>: committed N events, ...` line per receiver from the catalog, then the summary line `N committed events, B bytes under '<prefix>/'` and any incomplete events.
 With `--fetch` it prints one line per event: the SHA-256, the file name, the size and chunk count, and the format found in the first bytes. The format is `EVIO v6 big-endian` (or `v4`, or `little-endian`) when the EVIO magic word `0xc0da0100` is at word 7, and `not EVIO` otherwise.
