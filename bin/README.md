@@ -17,14 +17,14 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 ## Prerequisites
 
 - A running `daos_agent` on the receiving node, and access to the pool (default `sc26`).
-- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-name` is the container label, used as given, and is required unless `--dryrun` or `--dfuse`. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one per run, `<CONT_LABEL>_<UTC epoch s>`, e.g. `e2sar_1793280000`. The receiver prints the label at startup (`DAOS pool/container:`); pass the same label to `e2sar_daos_read --cont`.
+- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-name` is the container label, used as given, and is required unless `--dryrun`. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one per run, `<CONT_LABEL>_<UTC epoch s>`, e.g. `e2sar_1793280000`. The receiver prints the label at startup (`DAOS pool/container:`); pass the same label to `e2sar_daos_read --cont`.
 - Without a control plane (no `--withcp`), the sender sends straight to the `data=` address in `EJFAT_URI`. The port there defaults to 19522, so start the receiver with `--port 19522`, or put an explicit port in the URI, e.g. `data=<ip>:10000`.
 
 ## Data layout in DAOS
 
-Each run (`--prefix`) goes into its own KV object, listed in a run catalog object in the same container. Each event is stored as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key written last. With `--dfuse`, each event is one file instead.
+Each run (`--prefix`) goes into its own KV object, listed in a run catalog object in the same container. Each event is stored as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key written last.
 
-See [docs/DAOS_LAYOUT.md](../docs/DAOS_LAYOUT.md) for the full layout: object ids, the run catalog, keys and chunking, examples for `e2sar_ft` and `e2sar_evio_send`, the old shared object and dfuse mode.
+See [docs/DAOS_LAYOUT.md](../docs/DAOS_LAYOUT.md) for the full layout: object ids, the run catalog, keys and chunking, examples for `e2sar_ft` and `e2sar_evio_send` and the old shared object.
 
 ## How writing works
 
@@ -66,7 +66,7 @@ DAOS options:
 | Option | Default | |
 |---|---|---|
 | `--pool` | `sc26` | Pool label (must exist) |
-| `--cont-name` | — (required unless `--dryrun` or `--dfuse`) | Container label, used as given (created if missing). Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT_LABEL>_<epoch s>` to both nodes |
+| `--cont-name` | — (required unless `--dryrun`) | Container label, used as given (created if missing). Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT_LABEL>_<epoch s>` to both nodes |
 | `--prefix` | `run` | The run: its own KV object and catalog entry, and the key prefix. One per run |
 | `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1`. The same on every receiver of a run |
 | `--oid` | — | Write into one shared object with this id (decimal; `57946` = `0xE25A`, the one used before per-run objects), without the run catalog |
@@ -82,25 +82,23 @@ Synthetic mode (no sender, no network):
 
 | Option | Default | |
 |---|---|---|
-| `--synthetic N` | 0 (off) | Store N events made in memory instead of receiving. The E2SAR options are ignored and `--ip` is not needed. Writes to DAOS (needs `--cont-name`) or to `--dfuse`; can't be combined with `--dryrun` |
+| `--synthetic N` | 0 (off) | Store N events made in memory instead of receiving. The E2SAR options are ignored and `--ip` is not needed. Writes to DAOS (needs `--cont-name`); can't be combined with `--dryrun` |
 | `--event-size` | `95K` | Bytes per event, with an optional `K`/`M`/`G` suffix (binary), e.g. `1.5M` |
 | `--rate` | 0 | Pace events to this many Gbps. 0 = as fast as the sink takes them |
-| `--dryrun` | off | Receive and reassemble events, then discard them. No DAOS or dfuse: the storage options are ignored, nothing is created or written, and the run catalog is not touched. Can't be combined with `--dfuse` or `--synthetic` |
+| `--dryrun` | off | Receive and reassemble events, then discard them. No DAOS: the storage options are ignored, nothing is created or written, and the run catalog is not touched. Can't be combined with `--synthetic` |
 
 Exit status: 0 if every received event was committed, 2 if any event failed, 1 on a setup error.
 
 ### Synthetic mode: the sink's ceiling without a sender
 
-`--synthetic N` replaces the network and the Reassembler with an in-memory generator. Everything after that is the normal receiver: the same `--deq` threads, `--inflight` puts, `--chunk` layout, keys, `--dfuse` sink and `Timing:` block. The run ends by itself after the last event is committed.
-It always stores the events: in DAOS (`--pool`, `--cont-name`) or under `--dfuse`. It can't be combined with `--dryrun`, which stores nothing.
+`--synthetic N` replaces the network and the Reassembler with an in-memory generator. Everything after that is the normal receiver: the same `--deq` threads, `--inflight` puts, `--chunk` layout, keys and `Timing:` block. The run ends by itself after the last event is committed.
+It always stores the events: in DAOS (`--pool`, `--cont-name`). It can't be combined with `--dryrun`, which stores nothing.
 
 ```bash
 # KV sink, 100,000 x 95 KiB events, as fast as DAOS takes them
 e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont-name e2sar-test --prefix synth1
 # the same paced at 20 Gbps, to see latency at a given load
 e2sar_daos_recv --synthetic 100000 --rate 20 --pool sc26 --cont-name e2sar-test --prefix synth2
-# dfuse sink
-e2sar_daos_recv --synthetic 50000 --dfuse /tmp/$USER-dfuse --prefix synth3
 ```
 
 Unpaced, `DAOS commit throughput` is the most this sink commits with these settings. An end-to-end run with the same settings can't do better, so the gap between the two is what the network and reassembly cost. This is a closer reference than `fio --ioengine=dfs`, which writes byte ranges of a few large files rather than one KV put (or one file) per event.

@@ -13,14 +13,13 @@
 : "${SEND_HOST:=ebpf2201}"
 : "${RECV_HOST:=ebpf2203}"
 : "${MODE:=n2n}"                                            # lb | n2n
-: "${RECV_OPTS:=-T 32 -D 32}"                               # e.g. "-T 32 -D 32 -S pil4dfs"
+: "${RECV_OPTS:=-T 32 -D 32}"                               # e.g. "-T 32 -D 64"
 : "${SEND_OPTS:=-P 16 -s 1 -n 6250 -f 256}"                 # -r is added per run
 : "${BENCH:=bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh}"  # as run on the nodes
 : "${LOG:=./sweep_${MODE}_${1:-}.log}"
 #
 # Example, the node-to-node sweep of docs/E2E_BENCHMARK.md section 7:
 #   e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3
-#   RECV_OPTS="-T 32 -D 32 -S pil4dfs" e2sar_e2e_sweep.sh 1020p "20 30 40 50" 3
 
 STAMP=${1:-}; RATES=${2:-}; REPS=${3:-3}
 [ -n "$STAMP" ] && [ -n "$RATES" ] || { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }

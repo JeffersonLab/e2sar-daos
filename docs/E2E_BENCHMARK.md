@@ -101,7 +101,7 @@ The same as one JSON line goes to `$RUN/bench/results.jsonl`. The exit status is
 | `-T` | recv | 32 | Receive threads (ports). Node-to-node, use T ≥ P |
 | `-D`, `-I` | recv | 16, 128 | Dequeue threads, and in-flight puts per thread |
 | `-C` | recv | 1024 | DAOS chunk size in KiB (0: whole event in one value). KV sink only |
-| `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Where events go: the DAOS KV object (all results here), or files through dfuse. See [DFUSE_TESTING.md](DFUSE_TESTING.md) |
+| `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Removed with dfuse support. The pil4dfs and dfuse results below were taken with it. See [DFUSE_TESTING.md](DFUSE_TESTING.md) |
 
 Environment overrides: `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS="-b 8388608"` for an 8 MiB send socket buffer).
 

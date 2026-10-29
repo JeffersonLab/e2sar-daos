@@ -6,13 +6,12 @@ Inputs (all in the run directory):
   timing.csv   e2sar_daos_recv --timing-csv: evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms
                (seconds since the receiver's clock start, printed as "Clock start" in recv.log)
   digests      e2sar_evio_send --digests: <dataId> <slot> <sha256>
-  fetch.txt    e2sar_daos_read --fetch (or sha256sum, dfuse sink) output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
+  fetch.txt    e2sar_daos_read --fetch output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
 
 Latency stages per event, matched on (evt_num, data_id):
   sender   queue_ns -> sent_ns    waiting in the Segmenter queue, segmenting, sending every packet
   network  sent_ns  -> recv       wire + LB + last packet to reassembled event handed to a DAOS thread
   daos     recv     -> commit     all chunk puts and the metadata put completed
-                                  (dfuse sink: open/write/close of the event's file)
   total    queue_ns -> commit
 latency_steady_ms has the same stages for the events queued --warmup seconds or more after the
 first one: the first ~0.2-0.4 s of a run wait up to ~150 ms while the receiver's first DAOS

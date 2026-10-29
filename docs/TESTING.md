@@ -508,7 +508,7 @@ Sweep one variable at a time, in this order, and compare with [E2E_BENCHMARK.md]
 | 1 | sender rate `-r` | 10, 20, 40, 60, 80 Gbps | highest lossless rate for one receiver on one NIC |
 | 2 | dequeue threads `-D` | 4, 16, 32, 64 | at what rate the DAOS side stops keeping up. At JLab, 16 threads reached 40 Gbps |
 | 3 | object class (`--oclass` on the receiver) | container default, `SX`, `RP_2G1`, EC classes the pool's `rd_fac` allows | what redundancy costs on a large pool |
-| 4 | sink `-S` | `kv`, `dfuse`, `pil4dfs` | as in [DFUSE_TESTING.md](DFUSE_TESTING.md). On Aurora, mount with ALCF's `launch-dfuse.sh` *(check)* instead of the script's own `dfuse` call |
+| 4 | – | – | (dropped: the dfuse and pil4dfs sinks were removed; see [DFUSE_TESTING.md](DFUSE_TESTING.md)) |
 | 5 | NUMA and NICs | `--numa` and `--cores` matching the `hsn` NIC; one receiver per NIC | the per-node ceiling with several NICs |
 | 6 | receiver nodes | 1, 2, 4, 8 receivers, one sender each | whether the total scales with nodes, i.e. whether the pool is the limit |
 
