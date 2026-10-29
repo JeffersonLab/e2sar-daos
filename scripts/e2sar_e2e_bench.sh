@@ -119,7 +119,7 @@ fi
 # ---------------------------------------------------------------- receiver
 ss -uan | grep -q ":$PORT\b" && die "UDP port $PORT is in use (ss -uanp); someone else may be testing"
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
-SINKARGS=(--pool "$POOL" --cont "$CONT" --deq "$DEQ" --inflight "$INFLIGHT" --chunk "$CHUNK") PRELOAD=()
+SINKARGS=(--pool "$POOL" --cont-name "$CONT" --deq "$DEQ" --inflight "$INFLIGHT" --chunk "$CHUNK") PRELOAD=()
 if [ "$SINK" != kv ]; then
     mountpoint -q "$MNT" && die "$MNT is already mounted (e2sar_e2e_bench.sh clean)"
     daos cont create "$POOL" "$CONT" --type POSIX > /dev/null || die "cannot create POSIX container $POOL/$CONT"

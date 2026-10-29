@@ -17,7 +17,7 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 ## Prerequisites
 
 - A running `daos_agent` on the receiving node, and access to the pool (default `sc26`).
-- The container does not need to exist. `e2sar_daos_recv` creates it on first use (default label `e2sar`).
+- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-label` is a prefix: the container is `<label>_<start>`, with the receiver's start time in UTC epoch seconds, e.g. `e2sar_1793280000`. `--cont-name` gives the full label instead. The receiver prints the label at startup (`DAOS pool/container:`); pass that full label to `e2sar_daos_read --cont`.
 - Without a control plane (no `--withcp`), the sender sends straight to the `data=` address in `EJFAT_URI`. The port there defaults to 19522, so start the receiver with `--port 19522`, or put an explicit port in the URI, e.g. `data=<ip>:10000`.
 
 ## Data layout in DAOS
@@ -26,7 +26,7 @@ Each run (`--prefix`) goes into its own KV object (`DAOS_OT_KV_HASHED`) in `<poo
 
 ```
 pool                    --pool, e.g. sc26
-└── container           --cont, e.g. e2sar (created on first use)
+└── container           <--cont-label>_<UTC epoch s>, e.g. e2sar_1793280000 (created on first use)
     ├── run catalog     KV object, OID 0xE25A0000.0x0
     │   ├── run/<prefix>           oid, oclass, chunk size, creation time, receiver that created it
     │   ├── oid/<object id>        <prefix>  (claims the id)
@@ -153,7 +153,8 @@ DAOS options:
 | Option | Default | |
 |---|---|---|
 | `--pool` | `sc26` | Pool label (must exist) |
-| `--cont` | `e2sar` | Container label (created if missing) |
+| `--cont-label` | `e2sar` | Container label prefix. The container is `<label>_<UTC start time in epoch seconds>`, e.g. `e2sar_1793280000` (created if missing) |
+| `--cont-name` | — | Full container label, used as given (created if missing). Overrides `--cont-label`. Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT>_<epoch s>` to both nodes |
 | `--prefix` | `run` | The run: its own KV object and catalog entry, and the key prefix. One per run |
 | `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1`. The same on every receiver of a run |
 | `--oid` | — | Write into one shared object with this id (decimal; `57946` = `0xE25A`, the one used before per-run objects), without the run catalog |
@@ -172,6 +173,7 @@ Synthetic mode (no sender, no network):
 | `--synthetic N` | 0 (off) | Store N events made in memory instead of receiving. The E2SAR options are ignored and `--ip` is not needed |
 | `--event-size` | `95K` | Bytes per event, with an optional `K`/`M`/`G` suffix (binary), e.g. `1.5M` |
 | `--rate` | 0 | Pace events to this many Gbps. 0 = as fast as the sink takes them |
+| `--dryrun` | off | Receive and reassemble events, then discard them. No DAOS or dfuse: the storage options are ignored, nothing is created or written, and the run catalog is not touched. Can't be combined with `--dfuse` |
 
 Exit status: 0 if every received event was committed, 2 if any event failed, 1 on a setup error.
 
@@ -181,9 +183,9 @@ Exit status: 0 if every received event was committed, 2 if any event failed, 1 o
 
 ```bash
 # KV sink, 100,000 x 95 KiB events, as fast as DAOS takes them
-e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont e2sar-test --prefix synth1
+e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont-label e2sar-test --prefix synth1
 # the same paced at 20 Gbps, to see latency at a given load
-e2sar_daos_recv --synthetic 100000 --rate 20 --pool sc26 --cont e2sar-test --prefix synth2
+e2sar_daos_recv --synthetic 100000 --rate 20 --pool sc26 --cont-label e2sar-test --prefix synth2
 # dfuse sink
 e2sar_daos_recv --synthetic 50000 --dfuse /tmp/$USER-dfuse --prefix synth3
 ```
@@ -269,7 +271,7 @@ On the receiver node (`192.168.1.20`), with DAOS:
 
 ```bash
 export EJFAT_URI='ejfat://useless@10.0.0.1:18347/lb/1?data=192.168.1.20&sync=192.168.1.20:19020'
-./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 --pool sc26 --cont e2sar --prefix run42
+./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 --pool sc26 --cont-name e2sar --prefix run42
 ```
 
 On the sender node, using the same `EJFAT_URI`, send 100 events of 1 MiB at 5 Gbps with `e2sar_perf`:

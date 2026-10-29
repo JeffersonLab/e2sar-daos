@@ -13,27 +13,32 @@
 #                                          rate (events that never reached DAOS) without failing on it.
 #                                          FAIL only if a stored event is wrong: size, digest, an event
 #                                          number >= N, or an event written twice
-#   e2sar_site2ebpf_recv.sh runs           the runs in the DAOS container (its run catalog), with each
-#                                          run's committed and lost events
-#   e2sar_site2ebpf_recv.sh clean [RUNID]  step 9: delete run RUNID (its DAOS object), or without RUNID
-#                                          destroy the whole container; then show the LB state
+#   e2sar_site2ebpf_recv.sh runs           the DAOS containers named $CONT_<epoch s> and the run in each
+#                                          (its run catalog), with the run's committed and lost events
+#   e2sar_site2ebpf_recv.sh clean [RUNID]  step 9: destroy run RUNID's container, or without RUNID every
+#                                          $CONT_<epoch s> container; then show the LB state
+#
+# Containers: one per run, named $CONT_<UTC epoch seconds when ebpf2201 started the run>, e.g.
+# e2sar-pm_1793280000. ebpf2201 picks the name and saves it in the run directory (cont); both
+# receivers pass that full name (e2sar_daos_recv --pool $POOL --cont-name <name>).
 #
 # Another sender site (e.g. Lux): set SITE on both nodes, for every command. Runs are then named
-# lux_<date>_<time>, in container e2sar-lux and directory ~/e2sar_run/lux. Unset CONT and RUN
+# lux_<date>_<time>, in containers e2sar-lux_<epoch s> and directory ~/e2sar_run/lux. Unset CONT and RUN
 # first if they were exported for Perlmutter, or they override SITE.
 #   unset CONT RUN; export SITE=lux
 #   e2sar_site2ebpf_recv.sh start          (ebpf2201 first, then ebpf2203)
 #   e2sar_site2ebpf_recv.sh verify 100     (status, runs and clean the same way)
 #
-# Every LB command uses -v (--novalidate). The LB instance URI comes from $ENV_FILE
-# (~/e2sar_instance.env, shared $HOME). This script never reserves or frees the instance.
+# Every LB command uses -v (--novalidate). The LB instance URI is passed in as EJFAT_URI, e.g.
+# EJFAT_URI='ejfat://...' e2sar_site2ebpf_recv.sh start (or exported). start shows the URI and asks
+# before going on. This script never reserves or frees the instance.
 #
 # Settings (environment variables, with the guide's defaults):
-: "${ENV_FILE:=$HOME/e2sar_instance.env}" # EJFAT_URI: the LB instance URI. Don't free it
+# EJFAT_URI (required): the LB instance URI. Don't free it
 : "${SITE:=pm}"                          # sender site (pm = Perlmutter, lux = Lux): the RUNID prefix
                                          # and the default CONT and RUN, so each site's runs stay separate
 : "${POOL:=sc26}"
-: "${CONT:=e2sar-$SITE}"                 # DAOS container, shared by both receivers
+: "${CONT:=e2sar-$SITE}"                 # DAOS container prefix: each run's container is $CONT_<UTC epoch s>
 : "${PORT:=20600}"                       # first receive port
 : "${THREADS:=16}"                       # receive threads = ports (20600..20615)
 : "${DEQ:=32}"                           # dequeue threads
@@ -57,18 +62,30 @@ usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*" >&2; }
 lbadm() { "$E2SAR_BIN/lbadm" -v "$@"; }
+# Every container in $POOL named $CONT_<epoch s>
+all_conts() { daos cont list "$POOL" 2>/dev/null | grep -oE "(^|[[:space:]])${CONT}_[0-9]+([[:space:]]|$)" | tr -d ' \t' | sort -u; }
+# The container of the run in directory $1
+run_cont() { [ -s "$1/cont" ] || die "no $1/cont: the run's container name"; cat "$1/cont"; }
 nic_counters() { /usr/sbin/ethtool -S "$NIC" | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):'; }
 
-load_uri() {
-    [ -r "$ENV_FILE" ] || die "$ENV_FILE not found: it holds the LB instance URI (guide step 2)"
-    source "$ENV_FILE"
-    [ -n "${EJFAT_URI:-}" ] || die "EJFAT_URI is empty after sourcing $ENV_FILE"
+need_uri() {
+    [ -n "${EJFAT_URI:-}" ] || die "EJFAT_URI not set: pass it in, e.g. EJFAT_URI='ejfat://...' $0 ${1:-start}"
     export EJFAT_URI
-    echo "LB instance:  $(echo "$EJFAT_URI" | cut -d@ -f2)"
+}
+
+# Show the URI and ask before going on
+confirm_uri() {
+    echo "EJFAT_URI:"
+    echo "  $EJFAT_URI"
+    echo "WARNING: make sure this is the right URI: the LB instance reserved for this test, the same on both nodes."
+    local ans
+    read -r -p "Continue with this URI? [y/N] " ans || die "no answer: stopped"
+    [[ "$ans" =~ ^[Yy]([Ee][Ss])?$ ]] || die "stopped: pass the right URI as EJFAT_URI=..."
 }
 
 cmd_start() {
-    load_uri
+    need_uri start
+    confirm_uri
     [ -x "$BIN/e2sar_daos_recv" ] || die "$BIN/e2sar_daos_recv not built"
     # listen address: $MY_IP from ~/.bashrc, else the NIC's IPv4 address
     local ip=${MY_IP:-}
@@ -95,6 +112,7 @@ cmd_start() {
     if [ "$ME" = "$FIRST" ]; then
         runid=${SITE}_$(date +%Y%m%d_%H%M%S)
         mkdir "$RUN/$runid" || die "can't create $RUN/$runid"
+        echo "${CONT}_$(date -u +%s)" > "$RUN/$runid/cont"  # before latest: the other node reads it
         ln -sfn "$runid" "$RUN/latest"
     else
         # wait for a run directory from $FIRST that this node hasn't joined yet
@@ -113,9 +131,9 @@ cmd_start() {
     local d=$RUN/$runid
     echo "Run:          $runid ($d)"
     echo "$runid" > "$d/$ME.runid"
-
-    daos cont list "$POOL" 2>/dev/null | grep -qw "$CONT" &&
-        echo "Container:    $POOL/$CONT exists (from the other node, or not cleaned up: '$0 clean')"
+    local cont
+    cont=$(run_cont "$d") || exit 1
+    echo "Container:    $POOL/$cont"
 
     nstat -n
     nic_counters > "$d/$ME.nic0"
@@ -125,7 +143,7 @@ cmd_start() {
     trap '' INT
     echo "Starting e2sar_daos_recv; Ctrl-C to stop it after the send"
     ( trap - INT; exec "$BIN/e2sar_daos_recv" -v --withcp --ip "$ip" \
-        --port "$PORT" --threads "$THREADS" --pool "$POOL" --cont "$CONT" --prefix "$runid" \
+        --port "$PORT" --threads "$THREADS" --pool "$POOL" --cont-name "$cont" --prefix "$runid" \
         --timeout "$TIMEOUT" -b "$BUF" --deq "$DEQ" --inflight "$INFLIGHT" \
         --timing-csv "$d/$ME.csv" $RECV_ARGS ) 2>&1 | tee "$d/$ME.recv.log"
 
@@ -141,7 +159,7 @@ cmd_start() {
 }
 
 cmd_status() {
-    load_uri
+    need_uri status
     lbadm --status | grep -E 'name=ebpf220[13]' | grep -o 'name=[^, ]*\|slotsassigned=[0-9]*' | paste - -
     echo "(send only when both ebpf2201 and ebpf2203 are listed with slotsassigned > 0)"
 }
@@ -152,9 +170,11 @@ cmd_verify() {
     local runid d
     runid=$(readlink "$RUN/latest") || die "no $RUN/latest"
     d=$RUN/$runid
-    echo "Verifying $runid: $n events of $l bytes in $POOL/$CONT"
+    local cont
+    cont=$(run_cont "$d") || exit 1
+    echo "Verifying $runid: $n events of $l bytes in $POOL/$cont"
     local fail=0
-    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$runid" > "$d/events.list" || die "e2sar_daos_read failed"
+    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$cont" --prefix "$runid" > "$d/events.list" || die "e2sar_daos_read failed"
     tail -1 "$d/events.list"
 
     # Loss is reported, not failed: events lost on the way never reach DAOS.
@@ -182,7 +202,7 @@ cmd_verify() {
     local bad
     bad=$(awk -F'\t' -v L="$l" 'NF==5 && $1 ~ /^[0-9]+$/ && $3!=L' "$d/events.list" | wc -l)
     [ "$bad" -eq 0 ] && echo "OK   every event $l bytes" || { echo "FAIL $bad events not $l bytes"; fail=1; }
-    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$runid" --fetch > "$d/events.sha" || fail=1
+    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$cont" --prefix "$runid" --fetch > "$d/events.sha" || fail=1
     tail -1 "$d/events.sha"
     local digests
     digests=$(grep -E '^[0-9a-f]{64} ' "$d/events.sha" | cut -d' ' -f1 | sort -u | wc -l)
@@ -212,17 +232,28 @@ cmd_verify() {
 }
 
 cmd_runs() {
-    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefixes | column -t -s $'\t'
+    local c conts
+    conts=$(all_conts)
+    [ -n "$conts" ] || { echo "no ${CONT}_<epoch s> containers in $POOL"; return; }
+    for c in $conts; do
+        echo "=== $POOL/$c (created $(date -u -d "@${c##*_}" '+%Y-%m-%d %H:%M:%S UTC'))"
+        "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$c" --prefixes | column -t -s $'\t'
+    done
 }
 
 cmd_clean() {
-    local runid=${1:-}
-    if [ -n "$runid" ]; then
-        "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$runid" --delete || exit 1
+    local runid=${1:-} conts c
+    if [ -n "$runid" ]; then  # the container holds only this run
+        [ -d "$RUN/$runid" ] || die "no run directory $RUN/$runid"
+        conts=$(run_cont "$RUN/$runid") || exit 1
     else
-        daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1 && echo "destroyed $POOL/$CONT" || echo "$POOL/$CONT not present"
+        conts=$(all_conts)
+        [ -n "$conts" ] || echo "no ${CONT}_<epoch s> containers in $POOL"
     fi
-    load_uri
+    for c in $conts; do
+        daos cont destroy "$POOL" "$c" >/dev/null 2>&1 && echo "destroyed $POOL/$c" || echo "$POOL/$c not present"
+    done
+    need_uri clean
     lbadm --status
     echo "Expect no workers. If Perlmutter's IP is still a sender: $E2SAR_BIN/lbadm -v --removesenders -a <SEND_IP>"
     echo "Don't free the LB instance."

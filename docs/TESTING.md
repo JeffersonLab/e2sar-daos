@@ -330,7 +330,7 @@ sha256sum $SRC/* | tee /tmp/$USER/src.sha256
 **Terminal 1, receiver:**
 ```bash
 ./build/bin/e2sar_daos_recv --ip 127.0.0.1 --port 19522 \
-    --pool sc26 --cont e2sar-test --prefix $PREFIX --verbose
+    --pool sc26 --cont-name e2sar-test --prefix $PREFIX --verbose
 ```
 On the first run it prints `DAOS pool/container: sc26/e2sar-test (created)`, then a progress line every second.
 
@@ -380,7 +380,7 @@ Sender on ebpf2201, receiver and DAOS on ebpf2203. Use the ebpf2203 data-plane I
 # both hosts
 export EJFAT_URI='ejfat://useless@127.0.0.1:18347/lb/1?data=<ebpf2203 ip>&sync=<ebpf2203 ip>:19020'
 # ebpf2203
-./build/bin/e2sar_daos_recv --ip <ebpf2203 ip> --port 19522 --pool sc26 --cont e2sar-test --prefix $PREFIX
+./build/bin/e2sar_daos_recv --ip <ebpf2203 ip> --port 19522 --pool sc26 --cont-name e2sar-test --prefix $PREFIX
 # ebpf2201
 $E2SAR_BIN/e2sar_ft -s --ip <ebpf2201 ip> --rate 5 $SRC/*
 ```
