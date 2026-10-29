@@ -1,5 +1,7 @@
 # Writing events through dfuse (n2n)
 
+Status: historical. dfuse support (`e2sar_daos_recv --dfuse`, `e2sar_e2e_bench.sh -S dfuse|pil4dfs`) has been removed. The new DAOS layout ([DAOS_LAYOUT.md](DAOS_LAYOUT.md)) uses DAOS byte arrays directly. This page keeps the results that led to that.
+
 This compares two ways of storing E2SAR events in DAOS on the ebpf testbed:
 
 - **kv**: `e2sar_daos_recv` writes each event into a DAOS KV object with asynchronous puts. This is the existing path.
