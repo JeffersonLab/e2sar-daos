@@ -180,7 +180,7 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 - Ctrl-C stops only the receiver. Its final statistics stay in `<node>.recv.log`, and the script then prints step 7's drop checks for that node.
 - Each run is its own DAOS object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
 - Every LB command uses `-v`. The script never reserves or frees the instance.
-- Settings such as `CONT`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_site2ebpf_recv.sh start`. See the top of the script.
+- Settings such as `CONT_LABEL`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_site2ebpf_recv.sh start`. See the top of the script.
 
 ## 4. Pre-flight checks on the ebpf nodes
 
@@ -210,7 +210,7 @@ If either node is busy with someone else's test, wait. Concurrent tests share th
 
 ## 5. Start the two receivers (ebpf2201 and ebpf2203)
 
-Every run gets its own directory, `$RUN/<RUNID>`, named after the date and time it started, such as `$RUN/pm_20261027_143005/`. Both nodes write their logs and NIC counters into it, named after the node (`ebpf2201.recv.log`, `ebpf2203.recv.log`, ...).
+Every run gets its own directory, `$RUN/<RUNID>`, named after the date and time it started, such as `$RUN/run_20261027_143005/`. Both nodes write their logs and NIC counters into it, named after the node (`ebpf2201.recv.log`, `ebpf2203.recv.log`, ...).
 Both nodes need the **same** `RUNID`. ebpf2201 makes it and points `$RUN/latest` at the new directory; ebpf2203 reads it from there (`$RUN` is in the shared `$HOME`). So run the block on ebpf2201 first.
 In DAOS, **both receivers use one prefix, `$RUNID`** (no `/` allowed). That's safe: the LB sends each event to only one worker, and the keys are `<prefix>/<evt>/<dataId>/<chunk>`, so the two receivers never write the same key. One `e2sar_daos_read --prefix $RUNID` then sees the whole run.
 Which node got which event isn't recorded in DAOS. Each receiver's `Events committed` (step 7) gives the split.
@@ -218,9 +218,9 @@ Which node got which event isn't recorded in DAOS. Each receiver's `Events commi
 
 ```bash
 # ebpf2201 only, first: a new run directory named by date and time
-[ $ME = ebpf2201 ] && D=$RUN/pm_$(date +%Y%m%d_%H%M%S) && mkdir $D && ln -sfn $(basename $D) $RUN/latest
+[ $ME = ebpf2201 ] && D=$RUN/run_$(date +%Y%m%d_%H%M%S) && mkdir $D && ln -sfn $(basename $D) $RUN/latest
 # both nodes
-export RUNID=$(readlink $RUN/latest)       # e.g. pm_20261027_143005: the same on both nodes
+export RUNID=$(readlink $RUN/latest)       # e.g. run_20261027_143005: the same on both nodes
 export D=$RUN/$RUNID                       # this run's directory
 export PREFIX=$RUNID                      # DAOS key prefix: the same for all receivers, no '/'
 ls -ld $D                                  # exists, and is from just now

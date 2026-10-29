@@ -13,34 +13,41 @@
 #                                          rate (events that never reached DAOS) without failing on it.
 #                                          FAIL only if a stored event is wrong: size, digest, an event
 #                                          number >= N, or an event written twice
-#   e2sar_site2ebpf_recv.sh runs           the DAOS containers named $CONT_<epoch s> and the run in each
+#   e2sar_site2ebpf_recv.sh runs           the DAOS containers named $CONT_LABEL_<epoch s> and the run in each
 #                                          (its run catalog), with the run's committed and lost events
 #   e2sar_site2ebpf_recv.sh clean [RUNID]  step 9: destroy run RUNID's container, or without RUNID every
-#                                          $CONT_<epoch s> container; then show the LB state
+#                                          $CONT_LABEL_<epoch s> container; then show the LB state
 #
-# Containers: one per run, named $CONT_<UTC epoch seconds when ebpf2201 started the run>, e.g.
-# e2sar-pm_1793280000. ebpf2201 picks the name and saves it in the run directory (cont); both
-# receivers pass that full name (e2sar_daos_recv --pool $POOL --cont-name <name>).
+# Containers: one per run, named $CONT_LABEL_<UTC epoch seconds when ebpf2201 started the run>,
+# e.g. e2sar_1793280000. ebpf2201 makes the name and saves it in the run directory (cont); both
+# receivers pass that full name (e2sar_daos_recv --pool $POOL --cont-name <name>), so they write to
+# the same container. RUNIDs are run_<date>_<time>.
 #
-# Another sender site (e.g. Lux): set SITE on both nodes, for every command. Runs are then named
-# lux_<date>_<time>, in containers e2sar-lux_<epoch s> and directory ~/e2sar_run/lux. Unset CONT and RUN
-# first if they were exported for Perlmutter, or they override SITE.
-#   unset CONT RUN; export SITE=lux
-#   e2sar_site2ebpf_recv.sh start          (ebpf2201 first, then ebpf2203)
-#   e2sar_site2ebpf_recv.sh verify 100     (status, runs and clean the same way)
+# SITE only picks where the logs go: the run directories ~/e2sar_run/$SITE (default pm = Perlmutter;
+# lux = Lux). It has no effect on DAOS. Set it on both nodes, for every command of a run.
 #
 # Every LB command uses -v (--novalidate). The LB instance URI is passed in as EJFAT_URI, e.g.
 # EJFAT_URI='ejfat://...' e2sar_site2ebpf_recv.sh start (or exported). start shows the URI and asks
 # before going on. This script never reserves or frees the instance.
 #
+# Any setting below can be passed the same way, for one command; a value you pass (or export) is
+# kept, and the default is used only when the variable is unset or empty. Pass the same CONT_LABEL,
+# POOL, SITE and RUN on both nodes and to every command of a run, e.g.
+#   CONT_LABEL=e2sar-test e2sar_site2ebpf_recv.sh start            container e2sar-test_<epoch s>
+#   CONT_LABEL=e2sar-test e2sar_site2ebpf_recv.sh runs             the e2sar-test_<epoch s> containers
+#   CONT_LABEL=e2sar-test e2sar_site2ebpf_recv.sh clean            destroy every e2sar-test_<epoch s> container
+#   SITE=lux CONT_LABEL=e2sar-lux e2sar_site2ebpf_recv.sh start    logs in ~/e2sar_run/lux
+#   SITE=lux e2sar_site2ebpf_recv.sh verify 100                    the latest run in ~/e2sar_run/lux
+#   POOL=mypool THREADS=8 DEQ=16 e2sar_site2ebpf_recv.sh start
+#   RECV_ARGS='--dryrun' e2sar_site2ebpf_recv.sh start             extra e2sar_daos_recv options
+#
 # Settings (environment variables, with the guide's defaults):
 # EJFAT_URI (required): the LB instance URI. Don't free it
-: "${SITE:=pm}"                          # sender site (pm = Perlmutter, lux = Lux): the RUNID prefix
-                                         # and the default CONT and RUN, so each site's runs stay separate
+: "${SITE:=pm}"                          # sender site (pm = Perlmutter, lux = Lux): only the RUN directory
 : "${POOL:=sc26}"
-: "${CONT:=e2sar-$SITE}"                 # DAOS container prefix: each run's container is $CONT_<UTC epoch s>
+: "${CONT_LABEL:=e2sar}"                 # DAOS container label: each run's container is $CONT_LABEL_<UTC epoch s>
 : "${PORT:=20600}"                       # first receive port
-: "${THREADS:=16}"                       # receive threads = ports (20600..20615)
+: "${THREADS:=16}"                       # receive threads = ports ($PORT..$PORT+THREADS-1)
 : "${DEQ:=32}"                           # dequeue threads
 : "${INFLIGHT:=256}"                     # DAOS puts in flight per dequeue thread
 : "${BUF:=1073741824}"                   # receive socket buffer (-b)
@@ -62,8 +69,8 @@ usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*" >&2; }
 lbadm() { "$E2SAR_BIN/lbadm" -v "$@"; }
-# Every container in $POOL named $CONT_<epoch s>
-all_conts() { daos cont list "$POOL" 2>/dev/null | grep -oE "(^|[[:space:]])${CONT}_[0-9]+([[:space:]]|$)" | tr -d ' \t' | sort -u; }
+# Every container in $POOL named $CONT_LABEL_<epoch s>
+all_conts() { daos cont list "$POOL" 2>/dev/null | grep -oE "(^|[[:space:]])${CONT_LABEL}_[0-9]+([[:space:]]|$)" | tr -d ' \t' | sort -u; }
 # The container of the run in directory $1
 run_cont() { [ -s "$1/cont" ] || die "no $1/cont: the run's container name"; cat "$1/cont"; }
 nic_counters() { /usr/sbin/ethtool -S "$NIC" | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):'; }
@@ -110,9 +117,9 @@ cmd_start() {
     mkdir -p "$RUN"
     local runid
     if [ "$ME" = "$FIRST" ]; then
-        runid=${SITE}_$(date +%Y%m%d_%H%M%S)
+        runid=run_$(date +%Y%m%d_%H%M%S)
         mkdir "$RUN/$runid" || die "can't create $RUN/$runid"
-        echo "${CONT}_$(date -u +%s)" > "$RUN/$runid/cont"  # before latest: the other node reads it
+        echo "${CONT_LABEL}_$(date -u +%s)" > "$RUN/$runid/cont"  # before latest: the other node reads it
         ln -sfn "$runid" "$RUN/latest"
     else
         # wait for a run directory from $FIRST that this node hasn't joined yet
@@ -133,6 +140,8 @@ cmd_start() {
     echo "$runid" > "$d/$ME.runid"
     local cont
     cont=$(run_cont "$d") || exit 1
+    [[ "$cont" =~ ^${CONT_LABEL}_[0-9]+$ ]] ||
+        die "CONT_LABEL=$CONT_LABEL here, but $FIRST started run $runid in container $cont: pass the same CONT_LABEL on both nodes"
     echo "Container:    $POOL/$cont"
 
     nstat -n
@@ -234,7 +243,7 @@ cmd_verify() {
 cmd_runs() {
     local c conts
     conts=$(all_conts)
-    [ -n "$conts" ] || { echo "no ${CONT}_<epoch s> containers in $POOL"; return; }
+    [ -n "$conts" ] || { echo "no ${CONT_LABEL}_<epoch s> containers in $POOL"; return; }
     for c in $conts; do
         echo "=== $POOL/$c (created $(date -u -d "@${c##*_}" '+%Y-%m-%d %H:%M:%S UTC'))"
         "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$c" --prefixes | column -t -s $'\t'
@@ -248,7 +257,7 @@ cmd_clean() {
         conts=$(run_cont "$RUN/$runid") || exit 1
     else
         conts=$(all_conts)
-        [ -n "$conts" ] || echo "no ${CONT}_<epoch s> containers in $POOL"
+        [ -n "$conts" ] || echo "no ${CONT_LABEL}_<epoch s> containers in $POOL"
     fi
     for c in $conts; do
         daos cont destroy "$POOL" "$c" >/dev/null 2>&1 && echo "destroyed $POOL/$c" || echo "$POOL/$c not present"

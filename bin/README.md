@@ -17,7 +17,7 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 ## Prerequisites
 
 - A running `daos_agent` on the receiving node, and access to the pool (default `sc26`).
-- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-label` is a prefix: the container is `<label>_<start>`, with the receiver's start time in UTC epoch seconds, e.g. `e2sar_1793280000`. `--cont-name` gives the full label instead. The receiver prints the label at startup (`DAOS pool/container:`); pass that full label to `e2sar_daos_read --cont`.
+- The container does not need to exist. `e2sar_daos_recv` creates it on first use. `--cont-name` is the container label, used as given, and is required unless `--dryrun` or `--dfuse`. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one per run, `<CONT>_<UTC epoch s>`, e.g. `e2sar_1793280000`. The receiver prints the label at startup (`DAOS pool/container:`); pass the same label to `e2sar_daos_read --cont`.
 - Without a control plane (no `--withcp`), the sender sends straight to the `data=` address in `EJFAT_URI`. The port there defaults to 19522, so start the receiver with `--port 19522`, or put an explicit port in the URI, e.g. `data=<ip>:10000`.
 
 ## Data layout in DAOS
@@ -26,7 +26,7 @@ Each run (`--prefix`) goes into its own KV object (`DAOS_OT_KV_HASHED`) in `<poo
 
 ```
 pool                    --pool, e.g. sc26
-└── container           <--cont-label>_<UTC epoch s>, e.g. e2sar_1793280000 (created on first use)
+└── container           --cont-name, e.g. e2sar_1793280000 (created on first use)
     ├── run catalog     KV object, OID 0xE25A0000.0x0
     │   ├── run/<prefix>           oid, oclass, chunk size, creation time, receiver that created it
     │   ├── oid/<object id>        <prefix>  (claims the id)
@@ -131,7 +131,7 @@ Reassembler ──recvEvent──▶ dequeue thread 0 ──▶ AsyncKVWriter (o
 ## `e2sar_daos_recv`
 
 ```bash
-e2sar_daos_recv -u '<EJFAT_URI>' --ip <listen ip> --prefix run42 [options]
+e2sar_daos_recv -u '<EJFAT_URI>' --ip <listen ip> --pool sc26 --cont-name <label> --prefix run42 [options]
 ```
 
 E2SAR options (same meaning as `e2sar_ft -r`):
@@ -153,8 +153,7 @@ DAOS options:
 | Option | Default | |
 |---|---|---|
 | `--pool` | `sc26` | Pool label (must exist) |
-| `--cont-label` | `e2sar` | Container label prefix. The container is `<label>_<UTC start time in epoch seconds>`, e.g. `e2sar_1793280000` (created if missing) |
-| `--cont-name` | — | Full container label, used as given (created if missing). Overrides `--cont-label`. Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT>_<epoch s>` to both nodes |
+| `--cont-name` | — (required unless `--dryrun` or `--dfuse`) | Container label, used as given (created if missing). Give every receiver of a run the same one, e.g. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) passes `<CONT>_<epoch s>` to both nodes |
 | `--prefix` | `run` | The run: its own KV object and catalog entry, and the key prefix. One per run |
 | `--oclass` | container default | Object class, e.g. `SX`, `RP_2G1`. The same on every receiver of a run |
 | `--oid` | — | Write into one shared object with this id (decimal; `57946` = `0xE25A`, the one used before per-run objects), without the run catalog |
@@ -183,9 +182,9 @@ Exit status: 0 if every received event was committed, 2 if any event failed, 1 o
 
 ```bash
 # KV sink, 100,000 x 95 KiB events, as fast as DAOS takes them
-e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont-label e2sar-test --prefix synth1
+e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont-name e2sar-test --prefix synth1
 # the same paced at 20 Gbps, to see latency at a given load
-e2sar_daos_recv --synthetic 100000 --rate 20 --pool sc26 --cont-label e2sar-test --prefix synth2
+e2sar_daos_recv --synthetic 100000 --rate 20 --pool sc26 --cont-name e2sar-test --prefix synth2
 # dfuse sink
 e2sar_daos_recv --synthetic 50000 --dfuse /tmp/$USER-dfuse --prefix synth3
 ```

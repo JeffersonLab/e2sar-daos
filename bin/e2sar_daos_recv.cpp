@@ -2,10 +2,9 @@
     e2sar_daos_recv: receive events from an E2SAR sender (e.g. `e2sar_perf -s`) and store
     them in DAOS key-value objects using asynchronous puts on DAOS event queues.
 
-    The pool must exist. --cont-label is a prefix: the container is <label>_<start>, where
-    <start> is this receiver's start time in UTC seconds since the epoch. --cont-name gives
-    the full label instead, e.g. so several receivers of one run share a container. The
-    container is created if it does not exist.
+    The pool must exist. --cont-name is the container label, used as given; it is required
+    unless --dryrun or --dfuse. Several receivers of one run pass the same one to share a
+    container. The container is created if it does not exist.
 
     Each run (--prefix) goes into its own KV object, whose id comes from the prefix, and
     is listed in the container's run catalog (e2sar_daos/run_catalog.hpp). Receivers of
@@ -703,7 +702,7 @@ size_t parseSize(const std::string& s) {
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
 
-    std::string uriStr, recvIP, pool, cont, contName, oclass, prefix, timingCsv, outDir, eventSizeStr;
+    std::string uriStr, recvIP, pool, contName, oclass, prefix, timingCsv, outDir, eventSizeStr;
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB;
     std::vector<int> coreList;
@@ -730,8 +729,7 @@ int main(int argc, char** argv) {
     opts("novalidate,v", "don't validate the control plane server certificate");
     // DAOS side
     opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label (must exist)");
-    opts("cont-label", po::value<std::string>(&cont)->default_value("e2sar"), "DAOS container label prefix: the container is <label>_<UTC start time in epoch seconds> (created if missing)");
-    opts("cont-name", po::value<std::string>(&contName), "full DAOS container label, used as given (created if missing); overrides --cont-label. Receivers of one run must use the same");
+    opts("cont-name", po::value<std::string>(&contName), "DAOS container label, used as given (created if missing); required unless --dryrun or --dfuse. Receivers of one run must use the same");
     opts("oid", po::value<uint64_t>(&oidLo), "write into one shared KV object with this id (low 64 bits; 0xE25A = 57946 is the one used before per-run objects), without the run catalog (default: one object per --prefix)");
     opts("oclass", po::value<std::string>(&oclass)->default_value(""), "DAOS object class, e.g. SX or RP_2G1 (default: container default); all receivers of a run must use the same");
     opts("prefix", po::value<std::string>(&prefix)->default_value("run"), "run name: its own KV object and catalog entry, and the key prefix; use a new value per run, since e2sar_perf and e2sar_ft restart event numbers at 0");
@@ -739,8 +737,8 @@ int main(int argc, char** argv) {
     opts("inflight", po::value<size_t>(&inflight)->default_value(128), "max concurrent async puts per dequeue thread");
     opts("deq", po::value<size_t>(&deqThreads)->default_value(16), "number of dequeue threads, each with its own DAOS event queue");
     // dfuse mode (POSIX container mounted with dfuse)
-    opts("dfuse", po::value<std::string>(&outDir), "dfuse mount point: write each event as a file under DIR/<prefix>/ instead of the KV object; --pool/--cont-label/--cont-name/--oid/--oclass/--chunk/--inflight are ignored");
-    opts("dryrun", po::bool_switch()->default_value(false), "receive and reassemble events, then discard them: no DAOS (or dfuse) at all; --pool/--cont-label/--cont-name/--oid/--oclass/--chunk/--inflight are ignored. Measures the network and E2SAR side on its own");
+    opts("dfuse", po::value<std::string>(&outDir), "dfuse mount point: write each event as a file under DIR/<prefix>/ instead of the KV object; --pool/--cont-name/--oid/--oclass/--chunk/--inflight are ignored");
+    opts("dryrun", po::bool_switch()->default_value(false), "receive and reassemble events, then discard them: no DAOS (or dfuse) at all; --pool/--cont-name/--oid/--oclass/--chunk/--inflight are ignored. Measures the network and E2SAR side on its own");
     opts("fsync", po::bool_switch()->default_value(false), "with --dfuse: fsync each file before closing it");
     // synthetic mode (no network)
     opts("synthetic", po::value<uint64_t>(&synthEvents)->default_value(0), "store N in-memory events instead of receiving (0 = off): measures the sink without a sender; the E2SAR options are ignored");
@@ -764,11 +762,11 @@ int main(int argc, char** argv) {
         std::cout << od << std::endl
                   << "Example (pairs with `e2sar_perf -s -u <uri> --ip <sender ip> -l 1048576 -n 100 --rate 5`):\n"
                   << "  e2sar_daos_recv -u 'ejfat://...@host:port/lb/1?data=<recv ip>' --ip <recv ip> \\\n"
-                  << "      --pool sc26 --cont-label e2sar --prefix run42\n"
+                  << "      --pool sc26 --cont-name e2sar --prefix run42\n"
                   << "Example without DAOS (receive and discard, to check the network side):\n"
                   << "  e2sar_daos_recv -u 'ejfat://...' --ip <recv ip> --prefix run42 --dryrun\n"
                   << "Example without a sender (100,000 x 95 KB events, as fast as DAOS takes them):\n"
-                  << "  e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont-label e2sar-test --prefix synth1"
+                  << "  e2sar_daos_recv --synthetic 100000 --event-size 95K --pool sc26 --cont-name e2sar-test --prefix synth1"
                   << std::endl;
         return 0;
     }
@@ -850,6 +848,10 @@ int main(int argc, char** argv) {
               << DAOS_VERSION_FIX << std::endl;
 
     const bool dfuseMode = !outDir.empty();
+    if (!dryRun && !dfuseMode && contName.empty()) {
+        std::cerr << "--cont-name is required (the DAOS container label), unless --dryrun or --dfuse" << std::endl;
+        return 1;
+    }
     try {
         // Storage first: fail before registering with the load balancer if it is unavailable.
         std::unique_ptr<DaosRuntime> daos;
@@ -870,13 +872,10 @@ int main(int argc, char** argv) {
             std::cout << "Output directory:     " << outDir << (vm["fsync"].as<bool>() ? " (fsync)" : "") << std::endl
                       << "Dequeue threads:      " << deqThreads << " (blocking file writes)" << std::endl;
         } else {
-            // --cont-name as given, else --cont-label plus this receiver's start time (UTC epoch seconds)
-            const std::string contLabel = !contName.empty() ? contName
-                                        : cont + "_" + std::to_string(tStartEpochNs / 1000000000);
             daos = std::make_unique<DaosRuntime>();
             daosPool = std::make_unique<DaosPool>(pool);
-            daosCont = std::make_unique<DaosContainer>(*daosPool, contLabel, /*createIfMissing=*/true);
-            std::cout << "DAOS pool/container:  " << pool << "/" << contLabel
+            daosCont = std::make_unique<DaosContainer>(*daosPool, contName, /*createIfMissing=*/true);
+            std::cout << "DAOS pool/container:  " << pool << "/" << contName
                       << (daosCont->created() ? " (created)" : " (existing)") << std::endl;
 
             if (vm.count("oid")) {
