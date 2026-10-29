@@ -329,7 +329,7 @@ nstat -n                                          # reset the UDP counter baseli
 ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$PREFIX.nic0
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --withcp --ip 129.57.178.86 --port $PORT \
-    --pool sc26 --cont $CONT --prefix $PREFIX \
+    --pool sc26 --cont-name $CONT --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --verbose 2>&1 | tee $RUN/$PREFIX.recv.log
 ```
 
@@ -456,7 +456,7 @@ export PREFIX=lbhi_$(date +%s); T=16
 nstat -n; ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$PREFIX.nic0
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --withcp --ip 129.57.178.86 --port $PORT --threads $T \
-    --pool sc26 --cont $CONT --prefix $PREFIX \
+    --pool sc26 --cont-name $CONT --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --deq 4 --inflight 128 --timing-csv $RUN/$PREFIX.csv 2>&1 | tee $RUN/$PREFIX.recv.log
 ```
 It should print `Listening on: 129.57.178.86 ports 20600:20615`. Wait for `slotsassigned` > 0 as in step 6.

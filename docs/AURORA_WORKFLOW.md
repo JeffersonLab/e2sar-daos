@@ -135,7 +135,7 @@ export PREFIX=test_$(date +%s)
 
 # receiver on the second node
 ssh $RECV_NODE "source ~/.bashrc; cd ~/daq/e2sar-daos; EJFAT_URI='$EJFAT_URI' \
-    ./build/bin/e2sar_daos_recv --ip $RECV_IP --port 19522 --pool e2sar-daos --cont e2sar-test --prefix $PREFIX" \
+    ./build/bin/e2sar_daos_recv --ip $RECV_IP --port 19522 --pool e2sar-daos --cont-name e2sar-test --prefix $PREFIX" \
     &> ~/daq/recv_$PREFIX.log &
 
 # sender on this node

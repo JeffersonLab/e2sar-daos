@@ -105,7 +105,7 @@ export PREFIX=test_$(date +%s)                 # same value in both terminals
 ```bash
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --ip 127.0.0.1 --port $PORT \
-    --pool sc26 --cont e2sar-test --prefix $PREFIX \
+    --pool sc26 --cont-name e2sar-test --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --verbose
 ```
 
@@ -131,7 +131,7 @@ export PREFIX=x_<same timestamp on both hosts>
 ```bash
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --ip 129.57.178.86 --port $PORT \
-    --pool sc26 --cont e2sar-test --prefix $PREFIX \
+    --pool sc26 --cont-name e2sar-test --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --verbose
 ```
 It should print `Listening on: 129.57.178.86 ports 20480:20480`.
@@ -152,7 +152,7 @@ To go faster, run **N `e2sar_ft` processes**, one file each, each to its own por
 ```bash
 N=4
 ./build/bin/e2sar_daos_recv --ip 129.57.178.86 --port $PORT --threads $N \
-    --pool sc26 --cont e2sar-test --prefix $PREFIX \
+    --pool sc26 --cont-name e2sar-test --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --deq 4 --inflight 128 --verbose
 ```
 

@@ -228,7 +228,7 @@ nstat -n
 ethtool -S $NIC | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $D/$ME.nic0
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv -v --withcp --ip $MY_IP \
-    --port $PORT --threads 16 --pool sc26 --cont $CONT --prefix $PREFIX \
+    --port $PORT --threads 16 --pool sc26 --cont-name $CONT --prefix $PREFIX \
     --timeout 10000 -b 1073741824 --deq 32 --inflight 256 \
     --timing-csv $D/$ME.csv 2>&1 | tee $D/$ME.recv.log
 ```
