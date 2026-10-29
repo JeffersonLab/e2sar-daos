@@ -295,7 +295,7 @@ $E2SAR_BIN/lbadm --status
 Expected: `LB ID`, `LB details: expiresat=...`, `Registered senders: ...` and `Registered workers:`.
 Write down the sender list so you can check at the end that you left it as it was. LB 638 already lists other JLab and NERSC senders.
 The worker list should be empty. If it isn't, someone else is receiving on this LB, and events would be split between their workers and yours.
-Any other allowlisted sender that sends while you are the only worker sends to *your* receiver. On 2026-10-19 this happened: an allowlisted sender, probably the coda-fb sender at 129.57.69.58, was sending ~15k packets/s of ~100-byte packets with a version-2 RE header through LB 638. E2SAR 0.4.0rc1 discards them as `Bad RE Header Discards`, so they don't corrupt your events, but they inflate `rx_packets_phy` by ~0.5 M per run.
+Any other allowlisted sender that sends while you are the only worker sends to *your* receiver. On 2026-10-19 this happened: an allowlisted sender at 129.57.69.58 was sending ~15k packets/s of ~100-byte packets with a version-2 RE header through LB 638. E2SAR 0.4.0rc1 discards them as `Bad RE Header Discards`, so they don't corrupt your events, but they inflate `rx_packets_phy` by ~0.5 M per run.
 
 **Nodes idle** (on both nodes):
 ```bash
