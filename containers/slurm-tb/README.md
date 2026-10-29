@@ -51,7 +51,7 @@ export EJFAT_URI='ejfat://useless@10.0.0.1:18347/lb/1?data=<B ip>&sync=<B ip>:19
 **Node B (receiver)**, e.g. from `srun -p <tb-partition> -N1 --pty bash`:
 ```bash
 $TB_RUN -e EJFAT_URI e2sar-daos:tb \
-    e2sar_daos_recv --ip <B ip> --port 19522 --pool sc26 --cont e2sar --prefix run42 --deq 2
+    e2sar_daos_recv --ip <B ip> --port 19522 --pool sc26 --cont-name e2sar --prefix run42 --deq 2
 ```
 On first use the container `sc26/e2sar` is created. A progress line is printed every second. Stop with Ctrl-C after the sender is done, and the outstanding puts are flushed before exit.
 
