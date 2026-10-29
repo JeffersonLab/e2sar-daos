@@ -142,10 +142,13 @@ e2sar_daos_read --cont <label> --prefix run42                              # lis
 e2sar_daos_read --cont <label> --prefix run42 --fetch                      # verify, print SHA-256
 e2sar_daos_read --cont <label> --prefix run42 --fetch -o ~/restored        # write run42_<evt>_<dataId>.evio
 e2sar_daos_read --cont <label> --prefix run42 --fetch -o ~/restored --event 7 --dataid 4321
+e2sar_daos_read --cont <label> --prefix run42 --fetch -o ~/restored --bundle 100000  # 100,000 events per file
 e2sar_daos_read --cont <label> --prefix run42 --delete                     # delete the run's object and catalog entries
 ```
 
 To restore one event, the reader looks up `run/<prefix>` in the catalog, opens the run object, reads the metadata key, then fetches chunks `0..nchunks-1` in order and writes them to `DIR/<prefix>_<evtNum>_<dataId>.evio` (`-e` sets the extension, `-e ''` for none).
+Events are read in event-number order, and by data id within one event number.
+For many small events, such as one streaming frame per event, `--bundle N` writes N events per file (`<prefix>_000000.evio`, …) with an index per file (`evtNum dataId offset size`) and `<prefix>_missing.txt` listing the missing event numbers per data id. See [bin/README.md](../bin/README.md#e2sar_daos_read).
 It opens the pool and container read-only, except with `--delete`. All options are in [bin/README.md](../bin/README.md#e2sar_daos_read).
 
 ## Shared object (before per-run objects)

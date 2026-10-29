@@ -167,6 +167,7 @@ For example, plot `commit_s` against the running sum of `bytes` for throughput o
 | `--dataid D` | all | Only this data id |
 | `-o, --out DIR` | — | With `--fetch`, also write each event to `DIR/<prefix>_<evtNum>_<dataId>.evio` |
 | `-e, --extension` | `evio` | Extension for `--out` files (`-e ''` for none) |
+| `--bundle N` | 0 (off) | With `--fetch -o`, write N events per file instead of one file per event (see below) |
 
 `--prefixes` prints one tab-separated row per run: prefix, creation time, the receiver that created it, object class, chunk size, and, summed over the receivers that have stopped, events committed, failed and lost (reassembly plus enqueue loss):
 ```
@@ -175,6 +176,22 @@ run_20261027_143005  2026-10-27 14:30:07  ebpf2201.jlab.org  -       1048576  2 
 ```
 Without `--fetch` it lists committed events (number, data id, size, chunks), then one `Receiver <host>: committed N events, ...` line per receiver from the catalog, then the summary line `N committed events, B bytes under '<prefix>/'` and any incomplete events.
 With `--fetch` it prints one line per event: the SHA-256, the file name, the size and chunk count, and the format found in the first bytes. The format is `EVIO v6 big-endian` (or `v4`, or `little-endian`) when the EVIO magic word `0xc0da0100` is at word 7, and `not EVIO` otherwise.
+All modes go through events in event-number order, and by data id within one event number: `(0, 4321)`, `(0, 4322)`, `(1, 4321)`, …
+
+**`--bundle N`: many small events, few files.** One file per event doesn't scale for streaming frames (~20 kB each, ~15,000 per second at 300 MB/s, so a billion files in under a day). With `--bundle N`, the selected events are written N per file, in the order above:
+
+| File | Contents |
+|---|---|
+| `DIR/<prefix>_000000.evio`, `_000001.evio`, … | N events each, their payloads back to back exactly as stored. The last file holds the rest |
+| `DIR/<prefix>_000000.idx`, … | One line per event in that file: `evtNum dataId offset size` |
+| `DIR/<prefix>_missing.txt` | Per data id, the event numbers missing between its first and last one (`dataId first_missing last_missing count`): the events lost in transit |
+
+It prints one SHA-256 line per bundle file, then one line per data id with its event-number range and how many are missing.
+The payloads are joined as they are: whether the result is a valid EVIO file depends on what each event holds (e.g. complete EVIO records vs bare banks).
+Each event is read into memory before it is written, so a bundle file never holds part of an event. An event that can't be read is left out and counted as failed.
+```bash
+e2sar_daos_read --cont <label> --prefix run42 --fetch -o ~/restored --bundle 100000   # ~2 GB files for 20 kB events
+```
 It opens the pool and container read-only and never creates anything, except with `--delete`.
 A prefix that isn't in the catalog is read from the shared object (`--oid`, default `0xE25A`), with a note on stderr, so containers written before per-run objects still read.
 
