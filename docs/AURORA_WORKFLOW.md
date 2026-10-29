@@ -116,7 +116,7 @@ qsub ~/daq/jobs/suites.pbs; qstat -u $USER
 ### 3a. One node, loopback
 
 In an interactive 1-node job, follow [TESTING.md, section 4](TESTING.md#4-applications-end-to-end-on-ebpf2203) with these changes:
-- Add `--pool e2sar-daos` to both `e2sar_daos_recv` and `e2sar_daos_read`. Both default to `sc26`.
+- Add `--pool e2sar-daos` to both `e2sar_daos_recv` and `e2sar_daos_read`. `e2sar_daos_recv` defaults to `sc26`; `e2sar_daos_read` has no default and requires `--pool`.
 - Run the receiver in the background in the same shell (`... &> /tmp/$USER/recv.log &`), or in a second `ssh` session to the same compute node.
 - Source files: copy a few EVIO files to `/tmp/$USER/e2sar_src` on the node, plus the random file.
 

@@ -9,6 +9,10 @@
       --fetch     read the selected events chunk by chunk, check sizes, print SHA-256
                   in `sha256sum` format and whether the event is an EVIO file; with
                   --out DIR also write each event to DIR/<prefix>_<evtNum>_<dataId>.evio
+      --bundle N  with --fetch --out: write N events per file instead, in (evtNum, dataId)
+                  order, as DIR/<prefix>_<k>.evio plus an index <prefix>_<k>.idx
+                  ("evtNum dataId offset size") and <prefix>_missing.txt (event number
+                  gaps per dataId). For many small events, e.g. one streaming frame each
       --delete    delete run P: its object and its catalog entries
 
     A run is found through the run catalog (e2sar_daos/run_catalog.hpp). A prefix that
@@ -18,6 +22,7 @@
     e2sar_ft sends each file as one event, so a restored event is byte-for-byte the
     original file (e.g. an EVIO v6 file ready for an EVIO viewer). Compare the printed
     digests with `sha256sum` of the files given to e2sar_ft -s.
+    --pool is required: the reader never assumes a pool.
     Opens pool and container read-only and never creates anything, except with --delete.
 */
 
@@ -133,6 +138,45 @@ std::string toHex(const unsigned char* md, unsigned int len) {
     return hex;
 }
 
+using Digest = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
+
+Digest newDigest() {
+    Digest md(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    EVP_DigestInit_ex(md.get(), EVP_sha256(), nullptr);
+    return md;
+}
+
+std::string finishDigest(Digest& md) {
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int dlen = 0;
+    EVP_DigestFinal_ex(md.get(), digest, &dlen);
+    return toHex(digest, dlen);
+}
+
+// Read one event's chunks in order into buf (resized to the event size). Returns false
+// (and prints why) if a chunk is missing or has the wrong size.
+bool readEvent(DaosKV& kv, const std::string& prefix, const EventId& id, const EventMeta& meta,
+               std::vector<char>& buf) {
+    const std::string base = eventKey(prefix, id.first, id.second);
+    buf.resize(meta.size);
+    for (uint64_t i = 0; i < meta.nchunks; i++) {
+        const uint64_t expect = std::min<uint64_t>(meta.chunk, meta.size - i * meta.chunk);
+        size_t size = expect;
+        try {
+            kv.get(chunkKey(base, i), buf.data() + i * meta.chunk, &size);
+        } catch (const DaosError& e) {  // e.g. a stored chunk larger than the metadata says
+            std::cerr << base << ": chunk " << i << ": " << e.what() << std::endl;
+            return false;
+        }
+        if (size != expect) {
+            std::cerr << base << ": chunk " << i << " is " << size << " bytes, expected " << expect
+                      << (size == 0 ? " (missing)" : "") << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
 // Read one event chunk by chunk. Returns false (and prints why) on any mismatch.
 bool fetchEvent(DaosKV& kv, const std::string& prefix, const EventId& id, const EventMeta& meta,
                 const std::string& outDir, const std::string& extension) {
@@ -141,8 +185,7 @@ bool fetchEvent(DaosKV& kv, const std::string& prefix, const EventId& id, const 
                              (extension.empty() ? "" : "." + extension);
     std::string kind = "empty";
 
-    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> md(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    EVP_DigestInit_ex(md.get(), EVP_sha256(), nullptr);
+    Digest md = newDigest();
 
     std::ofstream out;
     if (!outDir.empty()) {
@@ -170,12 +213,87 @@ bool fetchEvent(DaosKV& kv, const std::string& prefix, const EventId& id, const 
             out.write(buf.data(), static_cast<std::streamsize>(size));
     }
 
-    unsigned char digest[EVP_MAX_MD_SIZE];
-    unsigned int dlen = 0;
-    EVP_DigestFinal_ex(md.get(), digest, &dlen);
-    std::cout << toHex(digest, dlen) << "  " << name << "  (" << meta.size << " bytes, "
+    std::cout << finishDigest(md) << "  " << name << "  (" << meta.size << " bytes, "
               << meta.nchunks << " chunks, " << kind << ")" << std::endl;
     return true;
+}
+
+std::string bundleName(const std::string& prefix, uint64_t k) {
+    char num[16];
+    std::snprintf(num, sizeof(num), "%06llu", static_cast<unsigned long long>(k));
+    return prefix + "_" + num;
+}
+
+/*
+    --bundle N: write the selected events, in (evtNum, dataId) order, N per file instead of
+    one file per event:
+      <prefix>_<k>.<ext>   the events' payloads back to back, as stored
+      <prefix>_<k>.idx     "evtNum dataId offset size" per event in that file
+      <prefix>_missing.txt per dataId, the event numbers missing between its first and last
+    An event that can't be read is left out of its file and counted as failed.
+    Returns the number of events that couldn't be read.
+*/
+size_t writeBundles(DaosKV& kv, const std::string& prefix, const std::vector<std::pair<EventId, EventMeta>>& sel,
+                    uint64_t perFile, const std::string& outDir, const std::string& extension, size_t* ok) {
+    size_t bad = 0;
+    std::vector<char> buf;
+    for (size_t first = 0, k = 0; first < sel.size(); first += perFile, k++) {
+        const size_t last = std::min<size_t>(first + perFile, sel.size());
+        const std::string name = bundleName(prefix, k);
+        const std::string dataName = name + (extension.empty() ? "" : "." + extension);
+        std::ofstream data(outDir + "/" + dataName, std::ios::binary | std::ios::trunc);
+        std::ofstream idx(outDir + "/" + name + ".idx", std::ios::trunc);
+        if (!data || !idx) {
+            std::cerr << "cannot create " << outDir << "/" << name << ".*" << std::endl;
+            return bad + (sel.size() - first);
+        }
+        idx << "# evtNum dataId offset size" << std::endl;
+        Digest md = newDigest();
+        uint64_t offset = 0;
+        size_t inFile = 0;
+        for (size_t i = first; i < last; i++) {
+            const auto& [id, meta] = sel[i];
+            if (!readEvent(kv, prefix, id, meta, buf)) {
+                bad++;
+                continue;
+            }
+            data.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            EVP_DigestUpdate(md.get(), buf.data(), buf.size());
+            idx << id.first << " " << id.second << " " << offset << " " << buf.size() << "\n";
+            offset += buf.size();
+            inFile++;
+        }
+        data.close();
+        idx.close();
+        if (!data || !idx) {
+            std::cerr << "write to " << outDir << "/" << name << ".* failed" << std::endl;
+            return bad + inFile;
+        }
+        *ok += inFile;
+        std::cout << finishDigest(md) << "  " << dataName << "  (" << inFile << " events, evtNum "
+                  << sel[first].first.first << ".." << sel[last - 1].first.first << ", " << offset
+                  << " bytes)" << std::endl;
+    }
+
+    // Gaps per dataId between its first and last event number.
+    std::map<uint16_t, std::vector<uint64_t>> byId;
+    for (const auto& [id, meta] : sel)
+        byId[id.second].push_back(id.first);
+    std::ofstream miss(outDir + "/" + prefix + "_missing.txt", std::ios::trunc);
+    miss << "# dataId first_missing last_missing count" << std::endl;
+    for (auto& [did, nums] : byId) {
+        std::sort(nums.begin(), nums.end());
+        uint64_t missing = 0;
+        for (size_t i = 1; i < nums.size(); i++)
+            if (nums[i] > nums[i - 1] + 1) {
+                const uint64_t n = nums[i] - nums[i - 1] - 1;
+                miss << did << " " << nums[i - 1] + 1 << " " << nums[i] - 1 << " " << n << "\n";
+                missing += n;
+            }
+        std::cout << "dataId " << did << ": evtNum " << nums.front() << ".." << nums.back() << ", "
+                  << nums.size() << " events, " << missing << " missing" << std::endl;
+    }
+    return bad;
 }
 
 std::string fmtTime(int64_t unixSec) {
@@ -238,10 +356,11 @@ int main(int argc, char** argv) {
     uint64_t oidLo = kLegacyOidLo;
     std::vector<uint64_t> events;
     int dataIdFilter;
+    uint64_t bundle = 0;
 
     auto opts = od.add_options();
     opts("help,h", "show this help message");
-    opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label");
+    opts("pool", po::value<std::string>(&pool)->required(), "DAOS pool label (required)");
     opts("cont", po::value<std::string>(&cont)->default_value("e2sar"), "DAOS container label");
     opts("prefixes", po::bool_switch()->default_value(false), "list the runs in the run catalog");
     opts("prefix", po::value<std::string>(&prefix), "the run to read (the receiver's --prefix)");
@@ -253,6 +372,7 @@ int main(int argc, char** argv) {
     opts("dataid", po::value<int>(&dataIdFilter)->default_value(-1), "only this data id (default: all)");
     opts("out,o", po::value<std::string>(&outDir), "with --fetch: also write events as files into this directory");
     opts("extension,e", po::value<std::string>(&extension)->default_value("evio"), "file extension for --out files (empty for none)");
+    opts("bundle", po::value<uint64_t>(&bundle)->default_value(0), "with --fetch --out: write N events per file, in (evtNum, dataId) order, with an index per file and a list of missing event numbers (0: one file per event)");
 
     po::variables_map vm;
     try {
@@ -260,11 +380,14 @@ int main(int argc, char** argv) {
         if (vm.count("help")) {
             std::cout << od << std::endl
                       << "Examples:\n"
-                      << "  e2sar_daos_read --prefixes                          # list runs\n"
-                      << "  e2sar_daos_read --prefix run42                      # list events\n"
-                      << "  e2sar_daos_read --prefix run42 --fetch              # verify all, print sha256\n"
-                      << "  e2sar_daos_read --prefix run42 --fetch -o ~/restored   # write run42_<evt>_<dataId>.evio\n"
-                      << "  e2sar_daos_read --prefix run42 --delete             # delete the run" << std::endl;
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefixes              # list runs\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42          # list events\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --fetch  # verify all, print sha256\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --fetch -o ~/restored\n"
+                      << "                                                    # write run42_<evt>_<dataId>.evio\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --fetch -o ~/restored --bundle 100000\n"
+                      << "                                                      # write run42_000000.evio, ... (100000 events each)\n"
+                      << "  e2sar_daos_read --pool sc26 --cont e2sar --prefix run42 --delete # delete the run" << std::endl;
             return 0;
         }
         po::notify(vm);
@@ -275,6 +398,10 @@ int main(int argc, char** argv) {
     const bool listRuns = vm["prefixes"].as<bool>(), del = vm["delete"].as<bool>();
     if (vm.count("out") && !vm["fetch"].as<bool>()) {
         std::cerr << "--out requires --fetch" << std::endl;
+        return 1;
+    }
+    if (bundle > 0 && !vm.count("out")) {
+        std::cerr << "--bundle requires --fetch and --out" << std::endl;
         return 1;
     }
     if (listRuns == !prefix.empty()) {
@@ -357,10 +484,18 @@ int main(int argc, char** argv) {
         }
 
         size_t ok = 0, bad = 0;
-        for (const auto& [id, meta] : l.committed) {
-            if (!selected(id))
-                continue;
-            (fetchEvent(kv, prefix, id, meta, outDir, extension) ? ok : bad)++;
+        if (bundle > 0) {
+            std::vector<std::pair<EventId, EventMeta>> sel;
+            for (const auto& entry : l.committed)
+                if (selected(entry.first))
+                    sel.push_back(entry);
+            bad += writeBundles(kv, prefix, sel, bundle, outDir, extension, &ok);
+        } else {
+            for (const auto& [id, meta] : l.committed) {
+                if (!selected(id))
+                    continue;
+                (fetchEvent(kv, prefix, id, meta, outDir, extension) ? ok : bad)++;
+            }
         }
         for (uint64_t e : wanted) {
             bool found = false;

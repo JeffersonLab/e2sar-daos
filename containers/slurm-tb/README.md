@@ -64,10 +64,10 @@ sha256sum /path/to/files/*.evio
 
 **Any node (check):**
 ```bash
-$TB_RUN e2sar-daos:tb e2sar_daos_read --prefix run42            # list committed events
-$TB_RUN e2sar-daos:tb e2sar_daos_read --prefix run42 --fetch    # SHA-256 + "EVIO v6" per event
+$TB_RUN e2sar-daos:tb e2sar_daos_read --pool sc26 --prefix run42            # list committed events
+$TB_RUN e2sar-daos:tb e2sar_daos_read --pool sc26 --prefix run42 --fetch    # SHA-256 + "EVIO v6" per event
 mkdir -p restored
-$TB_RUN e2sar-daos:tb e2sar_daos_read --prefix run42 --fetch -o /work/restored   # ./restored/run42_<evt>_<dataId>.evio
+$TB_RUN e2sar-daos:tb e2sar_daos_read --pool sc26 --prefix run42 --fetch -o /work/restored   # ./restored/run42_<evt>_<dataId>.evio
 ```
 The digests should be the same set as the `sha256sum` output. Event numbers follow the order in which `e2sar_ft` queued the files.
 The restored `.evio` files are the original files byte for byte, ready for an EVIO viewer.
