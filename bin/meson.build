@@ -41,6 +41,12 @@ executable('e2sar_daos_recv', 'e2sar_daos_recv.cpp',
     install: true
 )
 
+# Read-only DAOS run monitor for the live dashboard (viz/daos_monitor/).
+executable('e2sar_daos_monitor', 'e2sar_daos_monitor.cpp',
+    dependencies: [e2sar_daos_dep, app_boost_dep],
+    install: true
+)
+
 # Reader/verifier; SHA-256 comes from OpenSSL (openssl-devel).
 libcrypto_app_dep = dependency('libcrypto', required: false)
 if libcrypto_app_dep.found()
@@ -48,7 +54,7 @@ if libcrypto_app_dep.found()
         dependencies: [e2sar_daos_dep, app_boost_dep, libcrypto_app_dep],
         install: true
     )
-    # Synthetic EVIO time-frame sender for end-to-end tests (see docs/E2E_BENCHMARK.md).
+    # Synthetic EVIO time-frame sender for end-to-end tests (see docs/howto/e2e-bench.md).
     executable('e2sar_evio_send', 'e2sar_evio_send.cpp',
         dependencies: [e2sar_dep, app_boost_dep, e2sar_boost_dep, boost_url_dep, libcrypto_app_dep,
                        grpc_link_deps, dependency('threads')],

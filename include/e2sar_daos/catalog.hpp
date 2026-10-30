@@ -1,6 +1,6 @@
 #pragma once
 /**
-    The catalog of a run (docs/DAOS_LAYOUT.md#catalog): one KV object per container,
+    The catalog of a run (docs/concepts/daos-layout.md#catalog): one KV object per container,
     oid.lo = 1 0000 0000000000, fixed class layout::kCatalogClass.
 
         run            settings shared by every writer (start, chunk, classes, threshold)

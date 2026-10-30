@@ -1,6 +1,6 @@
 #pragma once
 /**
-    Reading a run written by e2sar_daos_recv (docs/DAOS_LAYOUT.md), for e2sar_daos_read.
+    Reading a run written by e2sar_daos_recv (docs/concepts/daos-layout.md), for e2sar_daos_read.
 
     RunReader opens the objects of one run and reads them asynchronously on one DAOS
     event queue:

@@ -1,9 +1,21 @@
+---
+type: How-To
+title: "Testing through the ESnet EJFAT load balancer"
+description: "Send files with e2sar_ft from ebpf2201 through the ESnet EJFAT LB to e2sar_daos_recv on ebpf2203, verify the restored files, and clean up."
+tags: [lb, ejfat, e2sar_ft, ebpf-testbed]
+stale_after: 2026-10-29T23:15:16Z
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/ESNET_LB_TESTING.md", title: "ESNET_LB_TESTING.md at 0d85d00" }
+---
+
 # Testing through the ESnet EJFAT load balancer
+
+> **Stale since layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)):** the commands below still use `--prefix`, `--prefixes` or `--oid`, which `e2sar_daos_recv` and `e2sar_daos_read` no longer have. A run is now one container (`--cont-name` / `--cont`). Update and rerun before relying on them ([#26](https://github.com/JeffersonLab/e2sar-daos/issues/26)).
 
 This is the full procedure for sending files with `e2sar_ft` from **ebpf2201**, through the ESnet EJFAT load balancer (LB), to `e2sar_daos_recv` on **ebpf2203**.
 The receiver writes each event into DAOS, and `e2sar_daos_read` restores the files and checks them against the source digests.
 Every command runs on the nodes themselves. Open one terminal on each node, and start `bash` in each, since the login shell is tcsh.
-Last run on 2026-10-19 against `feature/daos-kv-recv-apps`, using LB instance 638 on `ejfat-lb.es.net`. See [Results](#results-from-2026-10-19).
+Last run on 2026-10-19 against `feature/daos-kv-recv-apps`, using LB instance 638 on `ejfat-lb.es.net`. See [Results](../results/2026-10-19-lb-e2sar-ft.md#results-from-2026-10-19).
 
 **Use the `stable4` LB from now on (ESnet's recommendation, 2026-10-26):** control plane `192.188.29.6:18048`, data plane `192.188.29.54`. The commands below use it. The results (LB 638 and 640) were measured on the older control plane `ejfat-lb.es.net:18008`, data plane `192.188.29.16`.
 
@@ -20,7 +32,7 @@ e2sar_ft -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP─�
 |---|---|---|
 | [1](#1-environment-bashrc-and-the-lb-instance-once) | either (shared `$HOME`) | Put the E2SAR environment and admin URI in `~/.bashrc`, reserve an LB instance and source it |
 | [2](#2-build-once) | either | Build e2sar-daos |
-| [3](#3-the-lb-with-lbadm-reservation-senders-workers) | either | Reservation details, inspect the LB, and add or remove senders and workers |
+| [3](../reference/lbadm.md#3-the-lb-with-lbadm-reservation-senders-workers) | either | Reservation details, inspect the LB, and add or remove senders and workers |
 | [4](#4-pre-flight-checks-before-each-run) | both | Check the LB path and state, and that nobody else is using the nodes |
 | [5](#5-stage-source-files-ebpf2201) | ebpf2201 | Copy the source files to `/scratch` and save digests |
 | [6](#6-start-the-receiver-ebpf2203) | ebpf2203 | Start the receiver; it registers with the LB |
@@ -42,11 +54,10 @@ Node facts:
 - The nodes can't SSH to each other without a password. Run each step in the terminal for its node.
 - E2SAR 0.4.0rc1 is staged in `$HOME/opt/e2sar`, not installed system-wide, so it isn't on `PATH`. Call the tools as `$E2SAR_BIN/...`.
 - Other people run tests on these nodes. Before every run, check that both nodes are idle (step 4).
-
 ## 1. Environment: `~/.bashrc` and the LB instance (once)
 
 `$HOME` is shared, so one `~/.bashrc` serves both nodes. Add this block, with your own tokens, and keep the file private (`chmod 600 ~/.bashrc`, home directory mode 700).
-**Never copy the tokens into git.** To install E2SAR itself, see [E2SAR_INSTALL.md](E2SAR_INSTALL.md).
+**Never copy the tokens into git.** To install E2SAR itself, see [install-e2sar](install-e2sar.md).
 
 ```bash
 ## E2SAR
@@ -110,173 +121,6 @@ meson setup build                          # --wipe after an E2SAR upgrade
 meson compile -C build
 meson test -C build --suite unit           # Ok: 3, Fail: 0
 ./build/bin/e2sar_daos_recv --help | grep withcp     # -c [ --withcp ] enable control plane interactions
-```
-
-## 3. The LB with `lbadm`: reservation, senders, workers
-
-An LB test goes through this life cycle:
-
-```
-reserve instance ─▶ allow senders ─▶ register worker(s) ─▶ send ─▶ deregister worker(s) ─▶ remove senders ─▶ free instance
-   (3.3, once)        (3.4)              (3.5)              (7)         (3.5)                  (3.4)          (3.3, at the end)
-```
-
-With `--withcp`, the apps do the middle steps themselves. `e2sar_daos_recv` registers and deregisters its worker, and `e2sar_ft` adds and removes its sender IP. So a normal run (steps 6–8) only needs an instance URI.
-The `lbadm` commands below do each step by hand: to inspect the LB, to prepare it for a sender that doesn't use `--withcp`, or to clean up after a crash.
-`lbadm` reads `$EJFAT_URI` unless `-u <uri>` is given. Run it in bash after `source ~/.bashrc` and `source ~/e2sar-instance.env`.
-
-### 3.1 Tokens and URIs
-
-The admin URI lives in `~/.bashrc`. The instance URI lives in `~/e2sar-instance.env`, which `--reserve -e` writes (step 1).
-
-| URI | Token | Used for |
-|---|---|---|
-| **Admin** `$EJFAT_ADMIN_URI`, `ejfats://<admin token>@192.188.29.6:18048/lb/0` | admin (`ALL` or `LOAD_BALANCER`) | `--reserve`, `--overview` and token management. The apps don't need it |
-| **Instance** `$EJFAT_URI`, `ejfats://<instance token>@192.188.29.6:18048/lb/<id>?sync=...&data=...` | reservation, for one LB | `--status`, `--addsenders`, `--removesenders`, `--register`, `--deregister`, `--free`, and both apps |
-| Session | issued to one worker by `--register` | That worker's `--state` and `--deregister`. With `-s <session id>`, the instance URI works for both |
-
-An example instance URI, for LB 638 on the older control plane as used in these tests, with the token replaced by a placeholder. On stable4 the host is `192.188.29.6:18048` and `data=` is `192.188.29.54`; take the rest exactly as `--reserve` prints it:
-
-```
-ejfats://<instance token>@ejfat-lb.es.net:18008/lb/638?sync=192.188.29.6:19016&sync=[2001:400:a300::6]:19016&data=192.188.29.16:16384-32767&data=[2001:400:a300::16]:16384-32767
-```
-
-| Part | Example | Meaning |
-|---|---|---|
-| Scheme | `ejfats://` | gRPC over TLS. stable4 is addressed by IP; if its certificate doesn't validate for that IP, add `-v` (`--novalidate`) to `lbadm`, `e2sar_ft` and `e2sar_daos_recv` |
-| Token | `<instance token>` | Printed once by `--reserve` (3.3). It's a secret: keep it in `~/e2sar-instance.env` only |
-| Control plane | `ejfat-lb.es.net:18008` (stable4: `192.188.29.6:18048`) | Where `lbadm` and the apps send gRPC calls |
-| LB ID | `/lb/638` | The reserved instance. The admin URI uses `/lb/0` |
-| `sync=` | `192.188.29.6:19016`, `[2001:400:a300::6]:19016` | Where the sender sends sync packets, IPv4 and IPv6. The port is specific to this instance |
-| `data=` | `192.188.29.16:16384-32767`, `[2001:400:a300::16]:16384-32767` (stable4: `192.188.29.54`) | The LB's data-plane address and port range, IPv4 and IPv6. The sender sends events here |
-
-`--reserve -e` writes it wrapped in single quotes, which the shell needs because `&` and `[` mean something to it. Keep the quotes if you edit the file by hand. A different instance has a different token, LB ID and `sync=` port. Always take the URI exactly as `--reserve` printed it.
-
-In the node-to-node case the URI needs `data=<ip>:<port>`. Here, keep the `data=` range exactly as the LB returns it. The LB picks the worker port from what the receiver registers.
-
-### 3.2 Inspect the LB
-
-```bash
-$E2SAR_BIN/lbadm --status                            # this instance ($EJFAT_URI)
-$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --overview    # every LB on this control plane (stable4)
-```
-
-`--status` prints:
-```
-   LB ID: 638
-LB details: expiresat=2027-10-14T18:59:08.626Z, currentepoch=1748628, predictedeventnum=...
-Registered senders: 129.57.69.58 129.57.69.28 ...
-Registered workers:
-[ name=ebpf2203.jlab.org, controlsignal=..., fillpercent=..., slotsassigned=512, lastupdated=..., IP Address=129.57.178.86, UDP Port=20600, ... ]
-```
-- `Registered senders` is the allowlist. The LB drops data from any source IP that isn't on it.
-- `Registered workers` lists the receivers that get events, one line each. Nothing after the colon means no workers.
-- Neither command shows a worker's session ID. Only the process that registered the worker knows it (3.5).
-
-### 3.3 Reserve an instance (or reuse one)
-
-**If you already have an instance** on stable4, put its URI in `~/e2sar-instance.env` as `export EJFAT_URI='<instance URI>'` instead of reserving, source it, check that it hasn't expired and go to 3.4:
-```bash
-$E2SAR_BIN/lbadm --status | grep -E 'LB ID|expiresat'
-```
-
-**To reserve a new instance** (step 1), use the admin URI and save the output:
-```bash
-(umask 077; $E2SAR_BIN/lbadm --reserve -v -u "$EJFAT_ADMIN_URI" -l <name> -a 129.57.178.85 -d 24:00:00 -e > ~/e2sar-instance.env)
-cat ~/e2sar-instance.env
-# export EJFAT_URI='ejfats://<new instance token>@192.188.29.6:18048/lb/<id>?sync=...&data=192.188.29.54:...'
-```
-- `-l` is a name of your choice. It shows up in `--overview`.
-- `-a` puts sender IPs on the allowlist at once. Repeat it for several senders, or leave it out and use 3.4 later.
-- `-d hh:mm:ss` is how long the reservation lasts: `-d 24:00:00` is 24 hours. It ends at `expiresat`, which `--status` shows. Without `-d`, `lbadm` sends `00:00:00` and the LB applies its default.
-- `-e` prints only the `export EJFAT_URI=...` line. Without `-e`, the same URI is printed as `Updated URI after reserve with instance token: ...`.
-
-Then `source ~/e2sar-instance.env` in every terminal and check with `lbadm --status`.
-The instance token in that URI is the only way to manage the reservation, and the LB doesn't show it again. Don't overwrite the file while the instance is still reserved, and don't put it in git.
-
-**When your tests are over**, free your instance. This removes every sender and worker on it. First make sure nothing is still using it (no `e2sar_daos_recv` or `e2sar_ft` running, `Registered workers:` empty), then:
-```bash
-source ~/e2sar-instance.env                          # EJFAT_URI: the instance to free
-$E2SAR_BIN/lbadm --status | grep 'LB ID'             # check it's your instance
-$E2SAR_BIN/lbadm --free                              # uses the instance token in $EJFAT_URI
-#   Freeing a load balancer
-#      LB ID: <id>
-#   Success.
-$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --overview | grep '<name>'   # expect nothing: it's gone
-rm ~/e2sar-instance.env                              # only after --free printed Success.
-```
-If you lost the env file, free it with the admin URI and the LB ID from `--overview` (it lists each LB as `LB <name> ID: <id> ...`):
-```bash
-$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --overview | grep '<name>'   # find your LB ID
-$E2SAR_BIN/lbadm -u "$EJFAT_ADMIN_URI" --free -i <id>
-```
-If you don't free it, the reservation ends by itself at `expiresat` (24 hours after `--reserve -d 24:00:00`).
-Never free an instance that someone else reserved, LB 638 included, unless its owner asks you to.
-
-### 3.4 Senders: the allowlist
-
-**Automatic (normal case).** `e2sar_ft --withcp --ip <addr>` adds `<addr>` when it starts and removes it when it exits (step 7). Nothing else is needed.
-
-**By hand,** for a sender that doesn't use `--withcp` (`e2sar_ft` without it, `e2sar_perf`, CODA, ...), or for one that should stay allowed between runs:
-```bash
-$E2SAR_BIN/lbadm --addsenders -a 129.57.178.85                     # repeat -a for more IPs
-$E2SAR_BIN/lbadm --status | grep 'Registered senders'              # check
-$E2SAR_BIN/lbadm --removesenders -a 129.57.178.85                  # when done
-```
-- Without `-a`, `lbadm` uses the address of the interface it would use to reach the LB. Pass `-a` explicitly. Use the address from `ip route get 192.188.29.54` (step 4), the one the data actually leaves from.
-- Remove only the IPs you added. LB 638 also lists JLab and NERSC senders that belong to other people.
-- If a `--withcp` sender was killed before it could clean up, its IP stays on the list. Remove it with `--removesenders -a <ip>`.
-
-### 3.5 Workers: the receivers
-
-**Automatic (normal case).** `e2sar_daos_recv --withcp` registers a worker under its hostname, with `--ip`, `--port` and the number of ports from `--threads`. It then sends a state update every few seconds and deregisters on Ctrl-C (steps 6 and 8).
-The LB assigns slots once the first state update arrives. Before sending, wait until `--status` shows `slotsassigned` above 0.
-
-**By hand,** for example to test the LB path with a plain UDP listener, no root needed:
-```bash
-# ebpf2203: register a probe worker on port 20650 (outside 20600-20639)
-$E2SAR_BIN/lbadm --register -n probe-$USER -a 129.57.178.86 -p 20650 -w 1 -c 1
-#   Success.
-#   Session id is: <SID>                 <- write it down; nothing else will show it
-SID=<SID>
-
-# keep it alive: a state update at least every 10 s, or the LB drops the worker
-while :; do $E2SAR_BIN/lbadm --state -s $SID -q 0 -t 0 -r 1 > /dev/null; sleep 2; done &
-STATE_PID=$!
-
-$E2SAR_BIN/lbadm --status | grep probe-$USER        # slotsassigned > 0 after a few seconds
-python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("129.57.178.86", 20650)); print(s.recvfrom(9000)[1])'
-
-# remove it
-kill $STATE_PID
-$E2SAR_BIN/lbadm --deregister -s $SID              # the instance URI, plus -s; not a /lb/<SID> URI
-```
-- `--register` options: `-n` worker name, `-a` receive IP (without it, auto-detected), `-p` first UDP port, `-c` number of ports (a power of 2; the ports are `-p` to `-p`+`-c`−1), `-w` weight relative to other workers.
-- `--state` options: `-q` queue fill (0–1), `-t` control signal, `-r 1` ready or `-r 0` not ready (no new events). The first update must arrive within 10 s of registering.
-- While the probe is registered, it gets events from every allowlisted sender on the LB, other people's included. Keep it short.
-
-**Removing a worker you didn't register by hand.** The LB keeps a worker only while it sends state updates:
-1. If its process is still running, stop it with Ctrl-C. It deregisters itself.
-2. If the process crashed or was killed (`kill -9`, lost terminal), the state updates stop and the LB drops the worker after about 10 s.
-3. If you have its session ID (from `lbadm --register` output; `e2sar_daos_recv` doesn't print it), run `lbadm --deregister -s <SID>` to remove it immediately.
-
-Check with `lbadm --status` that `Registered workers:` is empty. A worker that stays on the list without a running process is somebody else's: leave it, or ask its owner.
-
-### 3.6 Summary: the whole flow by hand
-
-```bash
-# once, admin: reserve into the env file, then source it in every terminal
-(umask 077; $E2SAR_BIN/lbadm --reserve -v -u "$EJFAT_ADMIN_URI" -l <name> -a 129.57.178.85 -d 24:00:00 -e > ~/e2sar-instance.env)
-source ~/e2sar-instance.env
-# per run
-$E2SAR_BIN/lbadm --status                                   # 1. empty worker list (step 4)
-#   ebpf2203: e2sar_daos_recv --withcp ...                  # 2. registers the worker (step 6)
-$E2SAR_BIN/lbadm --status | grep slotsassigned              # 3. slots > 0
-#   ebpf2201: e2sar_ft -s --withcp --ip 129.57.178.85 ...   # 4. adds sender, sends, removes sender (step 7)
-#   ebpf2203: Ctrl-C                                        # 5. deregisters the worker (step 8)
-$E2SAR_BIN/lbadm --status                                   # 6. no workers; same senders as in 1
-# once, at the very end, your own instance only
-$E2SAR_BIN/lbadm --free && rm ~/e2sar-instance.env
 ```
 
 ## 4. Pre-flight checks (before each run)
@@ -394,7 +238,7 @@ nstat -z UdpRcvbufErrors                          # kernel socket drops since st
 ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$PREFIX.nic1
 paste $RUN/$PREFIX.nic0 $RUN/$PREFIX.nic1 | awk '{print $1, "+" $4-$2}'   # rx_out_of_buffer and rx_discards_phy: +0
 ```
-For what the throughput numbers mean, and their caveats, see [Throughput metrics](BOTTLENECK_ANALYSIS.md#throughput-metrics).
+For what the throughput numbers mean, and their caveats, see [Throughput metrics](../concepts/throughput-metrics.md#throughput-metrics).
 
 ## 9. Verify and restore (ebpf2203)
 
@@ -415,7 +259,7 @@ a2da2604...6617  lb_<ts>_0_4321.evio  (1776313996 bytes, 1695 chunks, EVIO v6 bi
 PASS
 ```
 `$RUN/src_lb.sha256` was written on ebpf2201, but `$RUN` is in the shared `$HOME`, so it's readable here.
-Restored files are named `<PREFIX>_<evt>_4321.evio`. To view them, see the viewer part of [TESTING.md §4](TESTING.md#4-applications-end-to-end-on-ebpf2203).
+Restored files are named `<PREFIX>_<evt>_4321.evio`. To view them, see the viewer part of [ebpf-testbed §4](../sites/ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203).
 
 ## 10. Clean up (required, after every run)
 
@@ -440,7 +284,7 @@ Delete only what you created. Leave other users' directories and containers alon
 
 One event goes out on one sender thread at about 10 Gbps, so one large file can't go faster. To go faster, queue several files in **one** `e2sar_ft`. The multi-thread Segmenter sends them in parallel, one thread per event.
 Through the LB this works where node-to-node didn't. E2SAR gives each event a random 16-bit entropy value, and the LB uses it to pick one of the worker's ports. With `--threads T`, the receiver opens and registers T ports, so the events land on different receive threads.
-Without an LB, every event goes to one port and one thread, and all of them were lost (see [BOTTLENECK_ANALYSIS.md, table 6](BOTTLENECK_ANALYSIS.md#6-multi-thread-segmenter-several-files-in-one-e2sar_ft)).
+Without an LB, every event goes to one port and one thread, and all of them were lost (see [2026-10-19-bottleneck-e2sar-ft, table 6](../results/2026-10-19-bottleneck-e2sar-ft.md#6-multi-thread-segmenter-several-files-in-one-e2sar_ft)).
 
 **ebpf2201: stage N files of about 2.1 GiB each:**
 ```bash
@@ -469,56 +313,6 @@ $E2SAR_BIN/e2sar_ft -s --withcp --ip 129.57.178.85 --mtu 9000 --rate -1 --socket
 
 Stop, check, verify and clean up as in steps 8–10. While the receiver is still running, `ss -uanm | grep -A1 ':206'` shows per-port socket drops (`d<N>` in `skmem`).
 A run is lossless only if all N digests match. Check the NIC counters too: any increase in `rx_discards_phy` means a lost event.
-
-### Why the ceiling is about 25 Gbps
-
-Two limits outside e2sar-daos, both seen in the sweep below:
-- **NIC port discards on ebpf2203.** Above about 25 Gbps total, the receiving NIC drops a few hundred frames at the port (`rx_discards_phy`), with 0 kernel or socket drops. The switch doesn't pass ebpf2203's pause frames back toward the sender, so those frames are simply lost. Any lost frame loses its whole multi-GB event.
-- **Port collisions.** Entropy is random per event, and `e2sar_ft` can't set it. With N events and T ports, two events share a port with probability 1 − ∏(1 − k/T) for k = 1…N−1, which is 18% for N = 3, T = 16, 9% for N = 3, T = 32, and 33% for N = 4, T = 16. One receive thread then takes about 20 Gbps and overflows its socket. More ports make this less likely. Use T = 16 or 32.
-
-DAOS was not a limit. `Lost in enqueue` was 0 in every run, and 3 events (6.4 GB) committed within 0.17 s of the last one arriving.
-
-## Results from 2026-10-19
-
-LB 638, ebpf2201 → ebpf2203, MTU 9000, `-b 1 GiB`, `--timeout 10000`. The path to the LB had a 71 ms RTT and passed 9000-byte packets unfragmented.
-For the definitions of sender goodput, ingest, DAOS commit and end-to-end (E2E), see [Throughput metrics](BOTTLENECK_ANALYSIS.md#throughput-metrics).
-
-### Basic runs (steps 5–9, `--rate 5`, 1 receive thread)
-
-| Run | Files | Sender goodput | Receive window | Ingest | DAOS commit | Result |
-|---|---|---|---|---|---|---|
-| 1 | 3.5 MB random only | (one small event) | | | 1 of 1 committed | PASS |
-| 2 | 1.78 GB EVIO + 3.5 MB random | 7.12 Gbps | 1.53 s | 9.30 Gbps | 8.53 Gbps | PASS |
-| 3 | same | 7.12 Gbps | 1.47 s | 9.70 Gbps | 9.01 Gbps | PASS |
-
-Every run had 0 lost events, 0 `UdpRcvbufErrors` and matching digests. The receiver got all 512 slots within about 10 s and deregistered on Ctrl-C.
-That's the same as node-to-node ebpf2201 → ebpf2203 (7.3–7.4 Gbps sent, 8.8–8.9 Gbps ingest), so the LB and the WAN path don't lower single-sender throughput.
-
-### Throughput sweep (step 11, `--rate -1 --sockets N`, `--deq 4 --inflight 128`)
-
-Files are about 2.1 GiB EVIO each (`frames_thread0_file000*.evio`). Both nodes were otherwise idle, and both RX rings were at 8192.
-E2E is the total bytes × 8 / (sender process start → last DAOS commit), measured with chrony-synced clocks. It includes about 1–2 s of `e2sar_ft` startup and LB registration, so it understates the transfer rate for runs this short.
-Ingest and DAOS commit aren't shown: with 1–4 events arriving together, their windows are too short to mean anything (see the metrics caveats).
-
-| Files N | Ports T | Sender goodput | E2E | Committed | Socket drops | NIC `rx_discards_phy` | Result |
-|---|---|---|---|---|---|---|---|
-| 1 | 1 | 8.59 Gbps | 4.68 Gbps | 1 / 1 | 0 | 0 | PASS |
-| 2 | 4 | 11.45 Gbps | – | 2 / 2 | 0 | 0 | PASS |
-| 2 | 4 | 11.45 Gbps | – | 2 / 2 | 0 | 0 | PASS |
-| 2 | 8 | 11.45 Gbps | 7.06 Gbps | 2 / 2 | 0 | 0 | PASS |
-| 3 | 16 | **25.77 Gbps** | **10.42 Gbps** | 3 / 3 | 0 | 0 | **PASS** |
-| 3 | 16 | 25.77 Gbps | – | 0 / 3 | 0 | 654 | FAIL |
-| 3 | 32 | **25.77 Gbps** | **10.72 Gbps** | 3 / 3 | 0 | 0 | **PASS** |
-| 3 | 32 | 25.78 Gbps | – | 0 / 3 | 0 | 338 | FAIL |
-| 4 | 8 | 22.91 Gbps | – | 1 / 4 | 243,713 on one port | 1 | FAIL (port collision) |
-| 4 | 16 | 34.36 Gbps | – | 0 / 4 | 0 | 116 | FAIL |
-| 4 | 32 | 34.36 Gbps | – | 2 / 4 | 0 | 2 | FAIL |
-
-**Highest lossless throughput through the LB: 3 concurrent 2.1 GiB events at 25.8 Gbps sender goodput, 6.4 GB in about 4.8 s end to end, lossless in 2 of 4 runs.**
-**For reliable lossless runs, use 2 events at a time (11.5 Gbps, 3 of 3).** Every failure at N ≥ 3 came with NIC port discards or a port collision. None were DAOS or sender errors.
-To go higher, the receiver side needs flow control or deeper buffering at ebpf2203's switch port, or several worker nodes behind the LB to spread the load. `e2sar_ft` would also need a way to set entropy, to avoid collisions.
-
-The first sweep attempt ran while another user's 8-sender node-to-node test was running on the same nodes. Those numbers were thrown away. Always do the idle check in step 4.
 
 ## Recommended settings
 

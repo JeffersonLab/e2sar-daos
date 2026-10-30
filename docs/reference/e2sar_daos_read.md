@@ -1,6 +1,15 @@
+---
+type: Reference
+title: "Reading a run from DAOS: e2sar_daos_read"
+description: "The reader: --live, --live-rm and --offline, what each writes, what --live-rm removes, and every option."
+tags: [e2sar_daos_read, options, reader]
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/DAOS_READER.md", title: "DAOS_READER.md at 0d85d00" }
+---
+
 # Reading a run from DAOS: `e2sar_daos_read`
 
-How `e2sar_daos_read` reads the events `e2sar_daos_recv` stored. The objects it reads (catalog, `seconds`, `index[T]`, `data[T, s]`) and the writer–reader contract are in [DAOS_LAYOUT.md](DAOS_LAYOUT.md).
+How `e2sar_daos_read` reads the events `e2sar_daos_recv` stored. The objects it reads (catalog, `seconds`, `index[T]`, `data[T, s]`) and the writer–reader contract are in [daos-layout](../concepts/daos-layout.md).
 
 ## Reading modes
 

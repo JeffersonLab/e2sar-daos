@@ -1,7 +1,18 @@
+---
+type: Site
+title: "Testing workflow on ALCF Aurora"
+description: "The commands for one test cycle on Aurora, in order: one-time setup, build, then one PBS job per stage. Not yet run."
+tags: [aurora, alcf, pbs]
+status: draft
+stale_after: 2027-01-31T00:00:00Z
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/AURORA_WORKFLOW.md", title: "AURORA_WORKFLOW.md at 0d85d00" }
+---
+
 # Testing workflow on ALCF Aurora
 
 The commands for one test cycle on Aurora, in order: one-time setup, build, then one PBS job per test stage.
-For why Aurora needs a different procedure, the benchmark sweeps and the open questions, see [TESTING.md, section 5](TESTING.md#5-alcf-aurora-planned).
+For why Aurora needs a different procedure, the benchmark sweeps and the open questions, see [aurora-plan, section 5](aurora-plan.md#5-alcf-aurora-planned).
 
 **Status: not yet run on Aurora.** Steps marked *(check)* rest on assumptions. When a step behaves differently, fix it here and update section 5.
 
@@ -45,14 +56,14 @@ export DAOS_POOL=e2sar-daos
 export PROJECT=<your ALCF project>
 ```
 
-If E2SAR is installed straight into a prefix instead of a staging root, drop `PKG_CONFIG_SYSROOT_DIR`, as in the [README](../README.md#point-pkg-config-and-meson-to-e2sar).
+If E2SAR is installed straight into a prefix instead of a staging root, drop `PKG_CONFIG_SYSROOT_DIR`, as in the [README](../howto/build.md#point-pkg-config-and-meson-to-e2sar).
 
 ### E2SAR and the repo
 
 ```bash
 # login node
 python3 -m pip install --user meson ninja
-# E2SAR: build from source into $E2SAR_ROOT (see E2SAR_INSTALL.md; the EL9 RPM doesn't run on SLES)
+# E2SAR: build from source into $E2SAR_ROOT (see docs/howto/install-e2sar.md; the EL9 RPM doesn't run on SLES)
 pkg-config --modversion e2sar                     # sanity check
 
 git clone git@github.com:JeffersonLab/e2sar-daos.git ~/daq/e2sar-daos
@@ -115,7 +126,7 @@ qsub ~/daq/jobs/suites.pbs; qstat -u $USER
 
 ### 3a. One node, loopback
 
-In an interactive 1-node job, follow [TESTING.md, section 4](TESTING.md#4-applications-end-to-end-on-ebpf2203) with these changes:
+In an interactive 1-node job, follow [ebpf-testbed, section 4](ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203) with these changes:
 - Add `--pool e2sar-daos` to both `e2sar_daos_recv` and `e2sar_daos_read`. `e2sar_daos_recv` defaults to `sc26`; `e2sar_daos_read` has no default and requires `--pool`.
 - Run the receiver in the background in the same shell (`... &> /tmp/$USER/recv.log &`), or in a second `ssh` session to the same compute node.
 - Source files: copy a few EVIO files to `/tmp/$USER/e2sar_src` on the node, plus the random file.
@@ -174,7 +185,7 @@ wait
 ```bash
 qsub -v RATE=20,DEQ=16 ~/daq/jobs/bench.pbs        # one point of a sweep
 ```
-Sweep one variable per job series, in the order of the table in [TESTING.md, Phase 4](TESTING.md#phase-4-throughput-and-latency-n2n-bench). Run each point twice.
+Sweep one variable per job series, in the order of the table in [aurora-plan, Phase 4](aurora-plan.md#phase-4-throughput-and-latency-n2n-bench). Run each point twice.
 `ethtool -S hsn0` may not have the counters the script reads for drops *(check)*. If so, the bench still checks every digest, but the drop column will be empty.
 
 ---

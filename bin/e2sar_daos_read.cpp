@@ -1,6 +1,6 @@
 /**
-    e2sar_daos_read: read a run that e2sar_daos_recv stored in DAOS (docs/DAOS_READER.md,
-    layout in docs/DAOS_LAYOUT.md). The DAOS container is the only link to the writers;
+    e2sar_daos_read: read a run that e2sar_daos_recv stored in DAOS (docs/reference/e2sar_daos_read.md,
+    layout in docs/concepts/daos-layout.md). The DAOS container is the only link to the writers;
     start the writers first.
 
     Reading modes (exactly one), writing to -o DIR:

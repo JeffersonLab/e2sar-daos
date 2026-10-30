@@ -1,6 +1,6 @@
 /**
     layout_check POOL CONT [--synthetic]: walk a run written by e2sar_daos_recv
-    (docs/DAOS_LAYOUT.md) and check it.
+    (docs/concepts/daos-layout.md) and check it.
 
       - catalog: run settings, writer slots, watermarks, done entries
       - seconds -> index[T] -> batch tables (check value, size, slot)

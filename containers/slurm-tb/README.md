@@ -10,7 +10,7 @@ It is the [Rocky 9 dev image](../rocky-dev/) with e2sar-daos built and installed
 | `e2sar_daos_read` | this repo | list, verify (SHA-256) and restore what was written |
 | `e2sar_ft` | E2SAR RPM | send files (`-s`) from another node |
 
-Option reference and the DAOS data layout are in [bin/README.md](../../bin/README.md). For podman setup on the nodes (node-local image storage, the agent socket, SELinux, InfiniBand), see [docs/TESTING.md §3](../../docs/TESTING.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel). Everything there applies here too.
+Option reference and the DAOS data layout are in [bin/README.md](../../bin/README.md). For podman setup on the nodes (node-local image storage, the agent socket, SELinux, InfiniBand), see [docs/slurm-tb §3](../../docs/sites/slurm-tb.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel). Everything there applies here too.
 
 ---
 
@@ -23,7 +23,7 @@ podman build -t e2sar-daos:dev containers/rocky-dev                     # base, 
 podman build -f containers/slurm-tb/Dockerfile -t e2sar-daos:tb .        # rebuild after code changes
 ```
 
-To use it on the TB nodes, save it to the shared filesystem and load it on each node, as in TESTING.md §3:
+To use it on the TB nodes, save it to the shared filesystem and load it on each node, as in [docs/sites/slurm-tb.md](../../docs/sites/slurm-tb.md):
 ```bash
 podman save e2sar-daos:tb | gzip > /path/on/shared/fs/e2sar-daos-tb.tar.gz
 # on the TB node:
@@ -84,5 +84,5 @@ $TB_RUN e2sar-daos:tb daos cont destroy sc26 e2sar   # the run's event data; onl
 
 - Use a new `--prefix` per run. `e2sar_ft` restarts event numbers at 0, so reusing a prefix overwrites earlier events.
 - The image's DAOS client is 2.6. Keep it on the same minor version as the nodes' `daos-client` (`rpm -q daos-client`).
-- At exit, `e2sar_daos_recv` prints a `Timing:` block with ingest and DAOS commit throughput and put latencies. Add `--timing-csv /work/timing.csv` for per-event rows ([details](../../bin/README.md#timing-and-throughput)).
+- At exit, `e2sar_daos_recv` prints a `Timing:` block with ingest and DAOS commit throughput and put latencies. Add `--timing-csv /work/timing.csv` for per-event rows ([details](../../docs/reference/e2sar_daos_recv.md#timing-and-throughput)).
 - The progress line's `enqueue loss` counts events dropped because DAOS writes didn't keep up. Try more `--deq` threads or a higher `--inflight` first. Then lower the sender `--rate`.

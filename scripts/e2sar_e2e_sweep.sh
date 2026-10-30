@@ -19,7 +19,7 @@
 : "${BENCH:=bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh}"  # as run on the nodes
 : "${LOG:=./sweep_${MODE}_${1:-}.log}"
 #
-# Example, the node-to-node sweep of docs/E2E_BENCHMARK.md section 7:
+# Example, the node-to-node sweep of docs/results/2026-10-20-e2e-n2n-sweep.md:
 #   EVIO_FILE=~/data/frames.evio e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3
 
 STAMP=${1:-}; RATES=${2:-}; REPS=${3:-3}

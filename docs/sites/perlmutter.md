@@ -1,4 +1,16 @@
+---
+type: Site
+title: "LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS"
+description: "Send e2sar_perf events from a Perlmutter compute node through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
+tags: [perlmutter, nersc, lcf, lb]
+stale_after: 2026-10-29T23:15:16Z
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/LCF2JLAB_GUIDE.md", title: "LCF2JLAB_GUIDE.md at 0d85d00" }
+---
+
 # LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS
+
+> **Stale since layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)):** steps 5, 8 and 9, the recommended settings and the troubleshooting table still use `--prefix`, `--prefixes` or `--oid`, which `e2sar_daos_recv` and `e2sar_daos_read` no longer have. A run is now one container (`--cont-name` / `--cont`). Update and rerun before relying on them ([#26](https://github.com/JeffersonLab/e2sar-daos/issues/26)).
 
 This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF**, through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
 The LB splits the events between the two receivers, and each receiver writes the events it gets into the same DAOS container.
@@ -6,7 +18,7 @@ Both receivers use the same key prefix, so the run reads back as one set of even
 
 The worked example is **Perlmutter** at NERSC: its node details, addresses and commands are shown below. For another LCF (e.g. Lux, `SITE=lux` in [the receiver script](#the-receiver-script)), the JLab side is the same; redo steps 1 and 3 for that site's nodes, network and batch system.
 
-The commands follow the JLab procedure in [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md). The site-specific parts are marked *(check)*: confirm them when you run, and update this page with what you find.
+The commands follow the JLab procedure in [lb-test](../howto/lb-test.md). The site-specific parts are marked *(check)*: confirm them when you run, and update this page with what you find.
 
 ```
 LCF node (Perlmutter CPU, NERSC)            ESnet LB (stable4)                     JLab
@@ -48,7 +60,7 @@ e2sar_perf -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP�
 
 The sender needs no DAOS: the LCF node only runs `e2sar_perf`.
 
-**The receivers at JLab** (as in [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md#testing-through-the-esnet-ejfat-load-balancer)):
+**The receivers at JLab** (as in [lb-test](../howto/lb-test.md#testing-through-the-esnet-ejfat-load-balancer)):
 
 | | recvA (host ebpf2201) | recvB (host ebpf2203) |
 |---|---|---|
@@ -56,15 +68,15 @@ The sender needs no DAOS: the LCF node only runs `e2sar_perf`.
 | DAOS 2.6.5 client, pool `sc26` | yes | yes |
 | E2SAR 0.4.0rc1 in `$HOME/opt/e2sar`, e2sar-daos in `~/daq/e2sar-daos/build` | shared `$HOME` | shared `$HOME` |
 
-- `$HOME` is NFS, shared by both receivers, so `~/.bashrc`, the build and `~/e2sar_run` are the same on both. Set up `~/.bashrc` and build e2sar-daos as in [ESNET_LB_TESTING.md steps 1–2](ESNET_LB_TESTING.md#1-environment-bashrc-and-the-lb-instance-once).
+- `$HOME` is NFS, shared by both receivers, so `~/.bashrc`, the build and `~/e2sar_run` are the same on both. Set up `~/.bashrc` and build e2sar-daos as in [lb-test steps 1–2](../howto/lb-test.md#1-environment-bashrc-and-the-lb-instance-once).
 - The login shell is tcsh. Start `bash` in every receiver terminal.
 - Open three terminals: one on the LCF compute node, one on recvA and one on recvB.
 
 ## 1. E2SAR on the LCF (once)
 
-**Use an E2SAR version with the receivers' packet headers.** The receivers run 0.4.0rc1. E2SAR 0.3.x has the same headers (`e2sarHeaders.hpp` is identical in 0.3.2 and 0.4.0rc1: RE header version 1, LB header version 2 or 3), so a 0.3.x sender works; 0.4.0rc1 is what was tested. A sender with another RE header version is discarded by the receivers (`Bad RE Header Discards`, see [ESNET_LB_TESTING.md step 4](ESNET_LB_TESTING.md#4-pre-flight-checks-before-each-run)).
+**Use an E2SAR version with the receivers' packet headers.** The receivers run 0.4.0rc1. E2SAR 0.3.x has the same headers (`e2sarHeaders.hpp` is identical in 0.3.2 and 0.4.0rc1: RE header version 1, LB header version 2 or 3), so a 0.3.x sender works; 0.4.0rc1 is what was tested. A sender with another RE header version is discarded by the receivers (`Bad RE Header Discards`, see [lb-test step 4](../howto/lb-test.md#4-pre-flight-checks-before-each-run)).
 
-On Perlmutter, E2SAR 0.4.0rc1 is installed without root in `$HOME/daq/e2sar-install`: the Rocky 9 `e2sar` RPM, unpacked there (as in [E2SAR_INSTALL.md section B](E2SAR_INSTALL.md)). It runs directly on the SLES 15 SP6 host, without a container *(check with the commands below)*.
+On Perlmutter, E2SAR 0.4.0rc1 is installed without root in `$HOME/daq/e2sar-install`: the Rocky 9 `e2sar` RPM, unpacked there (as in [install-e2sar section B](../howto/install-e2sar.md)). It runs directly on the SLES 15 SP6 host, without a container *(check with the commands below)*.
 `$HOME` is shared by the login and compute nodes, so install once and use it on any compute node. The login shell is bash, so put this in `~/.bashrc` on the LCF:
 
 ```bash
@@ -108,7 +120,7 @@ cut -d@ -f2 ~/e2sar_instance.env           # must be 192.188.29.6:18048/... with
 
 Don't use the instance if someone else's workers are registered on it: the LB would give part of your events to them. `e2sar_perf --withcp` adds the LCF node to the sender allowlist when it starts (step 6).
 
-Only if you ever need a **new** instance (this needs the admin URI and stays at JLab), write it to another file so the current one is kept ([ESNET_LB_TESTING.md 3.3](ESNET_LB_TESTING.md#33-reserve-an-instance-or-reuse-one)):
+Only if you ever need a **new** instance (this needs the admin URI and stays at JLab), write it to another file so the current one is kept ([lbadm 3.3](../reference/lbadm.md#33-reserve-an-instance-or-reuse-one)):
 
 ```bash
 ls -l ~/e2sar_instance_new.env 2>/dev/null # must not exist: '>' would overwrite it
@@ -164,7 +176,7 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 
 ## The receiver script
 
-[`scripts/e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) does steps 4, 5, 7, 8 and 9 on the receivers. The manual commands follow below, for reference and for when something needs a closer look.
+[`scripts/e2sar_site2ebpf_recv.sh`](../../scripts/e2sar_site2ebpf_recv.sh) does steps 4, 5, 7, 8 and 9 on the receivers. The manual commands follow below, for reference and for when something needs a closer look.
 
 ```bash
 # recvA first, then recvB (each in bash, in its own terminal)
@@ -421,4 +433,4 @@ What to check first, based on how the LB and E2SAR work.
 | Receiver aborts right after `Dequeue threads:` with `boost::wrapexcept<boost::system::system_error>` / `Invalid argument [system:22]` | `--ip` isn't an IP address: `$MY_IP` is empty, holds an interface name, or is stale. Check `echo $MY_IP` (step 4) and its line in `~/.bashrc` |
 | `Key prefix:` at startup shows another node's name or an old run | `PREFIX` is left over in this shell. Set `RUNID` and `PREFIX` again as in step 5; `PREFIX` must equal `$RUNID` |
 | Receivers get 0 events, LB shows `totalPacketsRecv=0`, but `lbadm` works | The instance's data plane is unreachable. Ping its `data=` address from the LCF node: `Destination Host Unreachable` means the packets are dropped on the way. Check the URI in `~/e2sar_instance.env` is on stable4 (step 2); if not, reserve one on stable4 (data plane `192.188.29.54`) with an admin URI on `192.188.29.6:18048` |
-| A worker stays registered after a receiver was killed | Wait about 10 s for the LB to drop it ([ESNET_LB_TESTING.md 3.5](ESNET_LB_TESTING.md#35-workers-the-receivers)) |
+| A worker stays registered after a receiver was killed | Wait about 10 s for the LB to drop it ([lbadm 3.5](../reference/lbadm.md#35-workers-the-receivers)) |

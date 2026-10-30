@@ -19,7 +19,7 @@
 #   n2n  node-to-node, no LB. Segmenter i sends to port PORT+i (--port-per-segmenter), so use
 #        -T >= -P on the receiver.
 #
-# The receiver stores events in DAOS (docs/DAOS_LAYOUT.md): small events batched into -C KiB
+# The receiver stores events in DAOS (docs/concepts/daos-layout.md): small events batched into -C KiB
 # chunks (default 1024), written asynchronously.
 #
 # The nodes can't SSH to each other, so the roles meet through files in $RUN/bench/TAG/
@@ -44,7 +44,7 @@
 
 source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset variables
 set -u
-: "${E2SAR_BIN:?E2SAR_BIN not set (see docs/ESNET_LB_TESTING.md step 1)}"
+: "${E2SAR_BIN:?E2SAR_BIN not set (see docs/howto/lb-test.md step 1)}"
 BIN=$E2SAR_DAOS_BUILD/bin
 ANALYZE=$(cd "$(dirname "$0")/../bin" && pwd)/e2sar_e2e_analyze.py   # stays in bin/ next to the apps
 
@@ -62,7 +62,7 @@ fi
 TAG=${1:-}; shift || true
 [ -n "$TAG" ] && [[ "$ROLE" =~ ^(send|recv)$ ]] || usage
 
-# defaults: highest lossless setting found (docs/E2E_BENCHMARK.md)
+# defaults: highest lossless setting found (docs/howto/e2e-bench.md)
 MODE=lb SEGS=16 SOCKETS=1 EVENTS=6250 RATE=20 THREADS=32 DEQ= INFLIGHT=128 CHUNK=1024
 while getopts "m:P:s:n:r:T:D:I:C:F:" o; do
     case $o in
