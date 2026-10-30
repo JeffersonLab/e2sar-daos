@@ -3,14 +3,11 @@ type: How-To
 title: "Testing through the ESnet EJFAT load balancer"
 description: "Send files with e2sar_ft from ebpf2201 through the ESnet EJFAT LB to e2sar_daos_recv on ebpf2203, verify the restored files, and clean up."
 tags: [lb, ejfat, e2sar_ft, ebpf-testbed]
-stale_after: 2026-10-29T23:15:16Z
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/ESNET_LB_TESTING.md", title: "ESNET_LB_TESTING.md at 0d85d00" }
 ---
 
 # Testing through the ESnet EJFAT load balancer
-
-> **Stale since layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)):** the commands below still use `--prefix`, `--prefixes` or `--oid`, which `e2sar_daos_recv` and `e2sar_daos_read` no longer have. A run is now one container (`--cont-name` / `--cont`). Update and rerun before relying on them ([#26](https://github.com/JeffersonLab/e2sar-daos/issues/26)).
 
 This is the full procedure for sending files with `e2sar_ft` from **ebpf2201**, through the ESnet EJFAT load balancer (LB), to `e2sar_daos_recv` on **ebpf2203**.
 The receiver writes each event into DAOS, and `e2sar_daos_read` restores the files and checks them against the source digests.
@@ -21,7 +18,7 @@ Last run on 2026-10-19 against `feature/daos-kv-recv-apps`, using LB instance 63
 
 ```
 ebpf2201 (129.57.178.85)          ESnet LB                              ebpf2203 (129.57.178.86)
-/scratch/<user>/e2sar_src_lb                                            DAOS sc26/e2sar-lb ──▶ /scratch/<user>/e2sar_out_lb
+/scratch/<user>/e2sar_src_lb                                            DAOS sc26/e2sar-lb_<s> ──▶ /scratch/<user>/e2sar_out_lb
 e2sar_ft -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP──▶ e2sar_daos_recv --withcp :20600[..+N-1]
           ├── sync UDP ─────▶ sync=<ip:port> from the instance URI
           └── gRPC ─────────▶ stable4 192.188.29.6:18048 ◀──── gRPC ──── (register, state, deregister)
@@ -56,22 +53,13 @@ Node facts:
 - Other people run tests on these nodes. Before every run, check that both nodes are idle (step 4).
 ## 1. Environment: `~/.bashrc` and the LB instance (once)
 
-`$HOME` is shared, so one `~/.bashrc` serves both nodes. Add this block, with your own tokens, and keep the file private (`chmod 600 ~/.bashrc`, home directory mode 700).
-**Never copy the tokens into git.** To install E2SAR itself, see [install-e2sar](install-e2sar.md).
+`$HOME` is shared, so one `~/.bashrc` serves both nodes. It needs the [E2SAR environment](install-e2sar.md#the-e2sar-environment-bashrc) and, for the LB, this block with your own token. Keep the file private (`chmod 600 ~/.bashrc`, home directory mode 700).
+**Never copy the tokens into git.**
 
 ```bash
-## E2SAR
-export E2SAR_ROOT=$HOME/opt/e2sar           # E2SAR staging root
-export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
-export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
-export BOOST_ROOT=$E2SAR_ROOT/usr/local
-export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
-export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin   # not on PATH; call the tools as $E2SAR_BIN/<tool>
-
 ## ESnet EJFAT LB (secrets: keep this file private, never copy into git)
 export EJFAT_ADMIN_URI='ejfats://<admin token>@192.188.29.6:18048/lb/0'   # stable4; admin token: reserve/free/overview only
 ```
-`meson` and `ninja` must be on `PATH` too (`export PATH=$HOME/.local/bin:$PATH`).
 
 Next, reserve an LB instance with the admin URI. `-e` prints only `export EJFAT_URI='<instance URI>'`, so the output can go straight into a file that you source:
 
@@ -97,7 +85,6 @@ Then, in **each** terminal, source the instance and set the per-test variables. 
 bash                                   # from tcsh; this reads ~/.bashrc
 source ~/e2sar-instance.env            # EJFAT_URI: the reserved instance
 export PORT=20600                      # first receiver UDP port; the worker registers it with the LB
-export CONT=e2sar-lb                   # DAOS container used only for LB tests
 export SCR=/scratch/$USER
 export SRC=$SCR/e2sar_src_lb           # sender input (ebpf2201)
 export OUT=$SCR/e2sar_out_lb           # receiver output (ebpf2203)
@@ -114,12 +101,9 @@ Scripts run as `bash -s` or `bash script.sh` don't read `~/.bashrc`. Start them 
 
 ## 2. Build (once)
 
-```bash
-cd ~/daq/e2sar-daos
+Build in `~/daq/e2sar-daos` as in [build](build.md#configure-compile-and-test) (`meson setup --wipe build` after an E2SAR upgrade), run the `unit` suite, then check that the receiver has the control-plane option:
 
-meson setup build                          # --wipe after an E2SAR upgrade
-meson compile -C build
-meson test -C build --suite unit           # Ok: 3, Fail: 0
+```bash
 ./build/bin/e2sar_daos_recv --help | grep withcp     # -c [ --withcp ] enable control plane interactions
 ```
 
@@ -145,7 +129,7 @@ Any other allowlisted sender that sends while you are the only worker sends to *
 ```bash
 ps -eo user,pid,etime,args | grep -E 'e2sar_(ft|daos_recv)' | grep -v grep     # expect nothing
 ss -uanp | grep -E ':20(4[89]|6[0-3])[0-9]\b'                                # nothing on 20480-20499 or 20600-20639
-daos cont list sc26                                                           # e2sar-lb should not exist yet
+daos cont list sc26 | grep e2sar-lb_                                         # nothing left from earlier runs
 ethtool -g enp1s0f1np1 | sed -n '/Current/,$p' | grep '^RX:'                    # RX: 8192
 ```
 Concurrent tests share both NICs, the CPUs and DAOS, and they spoil each other's numbers and losses. If something is running, wait or ask its owner. Don't kill someone else's run.
@@ -164,22 +148,25 @@ cp $RUN/random_3500K.bin $SRC/
 
 ## 6. Start the receiver (ebpf2203)
 
-Use a new `PREFIX` for every send. `e2sar_ft` numbers events from 0 each time, so a second send under the same prefix overwrites the first in DAOS.
-Use the same `PREFIX` value on both nodes. It is only used on ebpf2203, but naming the logs after it helps.
+One run is one DAOS container. Use a new container for every send: `e2sar_ft` numbers events from 0 each time, so a second send into the same container would collide with the first.
+The container name also names the run's logs in `$RUN`.
 
 ```bash
-export PREFIX=lb_$(date +%s)
+export CONT=e2sar-lb_$(date -u +%s)              # this run's container
 nstat -n                                          # reset the UDP counter baseline for this run
-ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$PREFIX.nic0
+ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$CONT.nic0
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --withcp --ip 129.57.178.86 --port $PORT \
-    --pool sc26 --cont-name $CONT --prefix $PREFIX \
-    --timeout 10000 -b 1073741824 --verbose 2>&1 | tee $RUN/$PREFIX.recv.log
+    --pool sc26 --cont-name $CONT \
+    --timeout 10000 -b 1073741824 --verbose 2>&1 | tee $RUN/$CONT.recv.log
 ```
 
 Expected startup output:
 ```
-DAOS pool/container:  sc26/e2sar-lb (created)
+DAOS pool/container:  sc26/e2sar-lb_<s> (created)
+Run:                  new, started <s>
+Writer slot:          0
+...
 Control plane:        ON
 Listening on:         129.57.178.86 ports 20600:20600
 Receiving; Ctrl-C to stop
@@ -214,13 +201,13 @@ Removing senders: 129.57.178.85
 - With `--withcp`, `e2sar_ft` adds its own `--ip` to the LB sender allowlist and removes it at exit, so you don't need `lbadm --addsenders`.
   `--ip` must be the address the packets actually leave from (see `ip route get` in step 4), or the LB drops them.
 - Running two `e2sar_ft --withcp` processes from the same IP at the same time is unsafe. The first one to exit removes the shared IP from the allowlist while the other is still sending. For more throughput, use one process with several files (step 11).
-- The receiver prints one `committed <PREFIX>/<evt>/4321 (<bytes> bytes)` line per file.
+- With `--verbose`, the receiver prints one `committed batch` line per batch. Each large file is a batch of one.
 
-To try the path first, send the small file alone (`-p $SRC/random_3500K.bin`), then use a new `PREFIX` for the full run.
+To try the path first, send the small file alone (`-p $SRC/random_3500K.bin`), then restart the receiver with a new `CONT` for the full run.
 
 ## 8. Stop the receiver (ebpf2203)
 
-Press Ctrl-C after the last `committed` line. On exit the receiver deregisters from the LB and prints its statistics:
+Press Ctrl-C after the last `committed batch` line. On exit the receiver deregisters from the LB and prints its statistics:
 
 ```
 	Lost in reassembly:        0
@@ -235,8 +222,8 @@ Check that it left cleanly and that nothing was dropped:
 ```bash
 $E2SAR_BIN/lbadm --status | tail -2               # "Registered workers:" with nothing after it
 nstat -z UdpRcvbufErrors                          # kernel socket drops since step 6: 0
-ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$PREFIX.nic1
-paste $RUN/$PREFIX.nic0 $RUN/$PREFIX.nic1 | awk '{print $1, "+" $4-$2}'   # rx_out_of_buffer and rx_discards_phy: +0
+ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$CONT.nic1
+paste $RUN/$CONT.nic0 $RUN/$CONT.nic1 | awk '{print $1, "+" $4-$2}'   # rx_out_of_buffer and rx_discards_phy: +0
 ```
 For what the throughput numbers mean, and their caveats, see [Throughput metrics](../concepts/throughput-metrics.md#throughput-metrics).
 
@@ -244,22 +231,20 @@ For what the throughput numbers mean, and their caveats, see [Throughput metrics
 
 ```bash
 cd ~/daq/e2sar-daos
-./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX            # one row per file
-mkdir -p $OUT/$PREFIX
-./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --fetch -o $OUT/$PREFIX | tee $OUT/$PREFIX.sha256
+./build/bin/e2sar_daos_read --pool sc26 --cont $CONT --list | tail -1     # 2 committed events, <bytes> bytes
+./build/bin/e2sar_daos_read --pool sc26 --cont $CONT -o $OUT/$CONT --offline   # one file per event, with its SHA-256
 diff <(cut -d' ' -f1 $RUN/src_lb.sha256 | sort) \
-     <(grep -E '^[0-9a-f]{64} ' $OUT/$PREFIX.sha256 | cut -d' ' -f1 | sort) && echo PASS
+     <(cut -d' ' -f1 $OUT/$CONT/$CONT.sha256 | sort) && echo PASS
 ```
 
 Expected output:
 ```
-a2da2604...6617  lb_<ts>_0_4321.evio  (1776313996 bytes, 1695 chunks, EVIO v6 big-endian)
-51152dfc...403a  lb_<ts>_1_4321.evio  (3584000 bytes, 4 chunks, not EVIO)
-2 events verified, 0 failed
+a2da2604...6617  e2sar-lb_<s>_0_4321.evio
+51152dfc...403a  e2sar-lb_<s>_1_4321.evio
 PASS
 ```
 `$RUN/src_lb.sha256` was written on ebpf2201, but `$RUN` is in the shared `$HOME`, so it's readable here.
-Restored files are named `<PREFIX>_<evt>_4321.evio`. To view them, see the viewer part of [ebpf-testbed §4](../sites/ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203).
+Restored files are named `<CONT>_<evt>_4321.evio`, in `$OUT/$CONT`. To view them, see the viewer part of [ebpf-testbed §4](../sites/ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203).
 
 ## 10. Clean up (required, after every run)
 
@@ -267,10 +252,10 @@ Each run leaves the source copy on the sender, the restored files on the receive
 Keep `$RUN`, which holds the logs, digests and `random_3500K.bin`.
 
 ```bash
-# ebpf2203: restored files and the LB test container
+# ebpf2203: restored files and this run's container
 rm -rf $OUT
-daos cont destroy sc26 $CONT                      # e2sar_daos_recv recreates it on the next run
-ls /scratch/$USER; daos cont list sc26            # no e2sar_out_lb, no e2sar-lb
+./build/bin/e2sar_daos_read --pool sc26 --cont $CONT --delete
+ls /scratch/$USER; daos cont list sc26 | grep e2sar-lb_   # no e2sar_out_lb, no e2sar-lb_ containers
 # ebpf2201: source copies
 rm -rf $SRC
 ls /scratch/$USER                                 # no e2sar_src_lb
@@ -296,12 +281,12 @@ for i in $(seq 0 $((N-1))); do cp $HOME/evio-data/frames_thread0_file000$i.evio 
 
 **ebpf2203: the receiver with T ports** (T a power of 2, much larger than N):
 ```bash
-export PREFIX=lbhi_$(date +%s); T=16
-nstat -n; ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$PREFIX.nic0
+export CONT=e2sar-lbhi_$(date -u +%s); T=16
+nstat -n; ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$CONT.nic0
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --withcp --ip 129.57.178.86 --port $PORT --threads $T \
-    --pool sc26 --cont-name $CONT --prefix $PREFIX \
-    --timeout 10000 -b 1073741824 --deq 4 --inflight 128 --timing-csv $RUN/$PREFIX.csv 2>&1 | tee $RUN/$PREFIX.recv.log
+    --pool sc26 --cont-name $CONT \
+    --timeout 10000 -b 1073741824 --deq 4 --inflight 128 --timing-csv $RUN/$CONT.csv 2>&1 | tee $RUN/$CONT.recv.log
 ```
 It should print `Listening on: 129.57.178.86 ports 20600:20615`. Wait for `slotsassigned` > 0 as in step 6.
 
@@ -330,7 +315,7 @@ A run is lossless only if all N digests match. Check the NIC counters too: any i
 | Receiver | `-b 1073741824` | Avoids kernel socket drops (`RcvbufErrors`) |
 | Receiver | `--timeout 10000` | The maximum. The default 500 ms drops multi-GB events |
 | Receiver | `--deq 4 --inflight 128` for N > 1 | Keeps DAOS ahead of several events arriving at once |
-| Receiver | New `--prefix` per send | Event numbers restart at 0 |
+| Receiver | New `--cont-name` per send | Event numbers restart at 0; one run is one container |
 
 ## Troubleshooting
 

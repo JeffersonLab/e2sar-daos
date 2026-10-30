@@ -80,16 +80,22 @@ ln -sfn $DEST $HOME/opt/e2sar          # optional: a stable path that the env be
 ```
 On Debian/Ubuntu, the equivalent is `dpkg-deb -x e2sar_${VER}_amd64.deb $DEST`.
 
-The `*.pc` files inside still say `prefix=/usr/local`, so treat `$DEST` as a staging root. Set these in each shell, or in your env file:
+### The E2SAR environment (`~/.bashrc`)
+
+The `*.pc` files inside still say `prefix=/usr/local`, so treat `$DEST` as a staging root. Put this in `~/.bashrc`, so every shell, script and batch job gets it. It's the one E2SAR environment the other guides refer to; they add only what their site or test needs:
 
 ```bash
-export E2SAR_ROOT=$HOME/opt/e2sar
+## E2SAR
+export E2SAR_ROOT=$HOME/opt/e2sar           # E2SAR staging root
 export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
 export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
 export BOOST_ROOT=$E2SAR_ROOT/usr/local
 export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
-export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin
+export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin   # not on PATH; call the tools as $E2SAR_BIN/<tool>
+export PATH=$HOME/.local/bin:$PATH           # meson, ninja
 ```
+
+Why each variable is needed: [build](build.md#point-pkg-config-and-meson-to-e2sar). If E2SAR is installed straight into its prefix (section A), drop `E2SAR_ROOT` and `PKG_CONFIG_SYSROOT_DIR` and use the paths under `/usr/local`.
 
 On the ebpf nodes, `$HOME` is shared, so one extraction serves both nodes.
 `~/opt/e2sar` there is a plain directory holding 0.4.0rc1, not a symlink. Before you `ln -sfn` over it, move it aside, for example to `~/opt/e2sar-0.4.0rc1.old`.
@@ -140,7 +146,7 @@ export PATH=$HOME/.local/bin:$PATH            # meson, ninja
 cd ~/daq/e2sar-daos
 meson setup --wipe build                      # --wipe after an E2SAR upgrade
 meson compile -C build
-meson test -C build --suite unit              # Ok: 3, Fail: 0
+meson test -C build --suite unit              # Ok: 5, Fail: 0
 ```
 The project version printed by `meson setup` includes the E2SAR version, for example `0.1.0-e2sar_0.4.0rc1`.
 For link errors such as `grpc::experimental::...` undefined references, see [README.md, Build](build.md#point-pkg-config-and-meson-to-e2sar).

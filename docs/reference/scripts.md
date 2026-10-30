@@ -21,7 +21,7 @@ Bash scripts that drive the [applications](../../bin/README.md) for tests on the
 ## Before running them
 
 - **Build first.** The scripts run the apps from the build next to them, `../build/bin/` (`meson compile -C build`). Set `E2SAR_DAOS_BUILD` to use another build. Run the copy of a script in the checkout whose build you want, e.g. in a separate worktree.
-- **Environment.** They read `~/.bashrc` for `E2SAR_BIN` (the E2SAR tools, such as `lbadm`) and, through the LB, the instance URI (`EJFAT_URI`). `e2sar_site2ebpf_recv.sh` takes the URI as `EJFAT_URI` (passed in or exported) and its listen address from `MY_IP`. See [lb-test step 1](../howto/lb-test.md#1-environment-bashrc-and-the-lb-instance-once).
+- **Environment.** They read `~/.bashrc` for `E2SAR_BIN` (the E2SAR tools, such as `lbadm`) and, through the LB, the instance URI (`EJFAT_URI`). `e2sar_site2ebpf_recv.sh` takes the URI as `EJFAT_URI` (passed in or exported) and its listen address from `MY_IP`. See the [E2SAR environment](../howto/install-e2sar.md#the-e2sar-environment-bashrc) and, for the LB, [lb-test step 1](../howto/lb-test.md#1-environment-bashrc-and-the-lb-instance-once).
 - **Settings.** Every setting is an environment variable with a default for the ebpf testbed, listed at the top of the script, e.g. `DEQ=16 scripts/e2sar_site2ebpf_recv.sh start`.
 - **Shared `$HOME`.** The two ebpf nodes can't SSH to each other. The roles meet through files in `$RUN`, under the NFS `$HOME` both nodes share.
 - **bash.** The ebpf login shell is tcsh: start `bash` first, or run a script as `bash scripts/<name>.sh`.

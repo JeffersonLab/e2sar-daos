@@ -40,23 +40,14 @@ Go on to the next stage only when the current one passes.
 
 ### Environment (`~/.bashrc`)
 
-Every shell, PBS job and `scripts/e2sar_e2e_bench.sh` reads this:
+Every shell, PBS job and `scripts/e2sar_e2e_bench.sh` reads `~/.bashrc`. Put the [E2SAR environment](../howto/install-e2sar.md#the-e2sar-environment-bashrc) in it, with E2SAR built into the staging root `$HOME/opt/e2sar`, plus these Aurora lines:
 
 ```bash
 # e2sar-daos on Aurora
 module use /soft/modulefiles 2>/dev/null && module load daos 2>/dev/null   # (check) the module may be daos/base
-E2SAR_ROOT=$HOME/opt/e2sar
-export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin
-export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
-export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
-export BOOST_ROOT=$E2SAR_ROOT/usr/local
-export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
-export PATH=$HOME/.local/bin:$PATH                # meson, ninja
 export DAOS_POOL=e2sar-daos
 export PROJECT=<your ALCF project>
 ```
-
-If E2SAR is installed straight into a prefix instead of a staging root, drop `PKG_CONFIG_SYSROOT_DIR`, as in the [README](../howto/build.md#point-pkg-config-and-meson-to-e2sar).
 
 ### E2SAR and the repo
 
@@ -97,7 +88,7 @@ Interactive, the first time:
 qstat -Bf | grep valid_filesystems                # check the name daos_user
 qsub -I -A $PROJECT -q debug -l select=1 -l walltime=00:30:00 -l filesystems=home:flare:daos_user
 cd ~/daq/e2sar-daos
-meson test -C build --suite unit -v               # Ok: 3
+meson test -C build --suite unit -v               # Ok: 5
 meson test -C build --suite integration -v        # Ok: 1
 ```
 
@@ -118,7 +109,7 @@ meson test -C build --suite unit -v && meson test -C build --suite integration -
 qsub ~/daq/jobs/suites.pbs; qstat -u $USER
 ```
 
-**Pass:** `Ok: 3` and `Ok: 1`, with 5 matching `put`/`get` SHA-256 pairs in the log.
+**Pass:** `Ok: 5` and `Ok: 1`, with 5 matching `put`/`get` SHA-256 pairs in the log.
 
 ---
 

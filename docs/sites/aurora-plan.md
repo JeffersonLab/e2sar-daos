@@ -22,7 +22,7 @@ Aurora is unlike the JLab hosts in four ways that shape the plan:
 | Scheduler | none (ebpf220x), Slurm (TB) | **PBS Pro** (`qsub`, `qstat`, `$PBS_NODEFILE`) | Every DAOS test runs inside a PBS job with `daos_user` in `-l filesystems=`, which is how ALCF documents requesting DAOS. Run `qstat -Bf` and look at `resources_available.valid_filesystems` for the valid names. The `srun`/`sbatch` commands of section 3 don't apply |
 | Where DAOS is reachable | on every host | **compute nodes only** *(check)*, not the login nodes (UANs) | Build on a login node if the DAOS headers are there. Run `meson test` and the applications on a compute node |
 | OS and packages | AlmaLinux/Rocky 9 (RHEL family), `dnf`, `daos-devel` RPM | **SLES 15 SP7** on compute nodes and UANs (rolled out 2026-09-28, [ALCF system updates](https://docs.alcf.anl.gov/aurora/system-updates/)), no root, environment modules (`module use /soft/modulefiles; module load daos`, or `daos/base`) *(check)* | E2SAR has no SLES package, so build E2SAR from source. Packages built for EL9 (the E2SAR RPM, the dev container's prebuilt E2SAR) won't run on SLES. The DAOS headers may not be in `/usr/include`, which the top-level `meson.build` hard-codes |
-| Shell | bash | bash (default login shell) | The exports from section 2 go in `~/.bashrc`, which `scripts/e2sar_e2e_bench.sh` sources |
+| Shell | bash | bash (default login shell) | The [E2SAR environment](../howto/install-e2sar.md#the-e2sar-environment-bashrc) goes in `~/.bashrc`, which `scripts/e2sar_e2e_bench.sh` sources |
 | Network | 100 GbE, MTU 9000, DAOS over TCP/verbs | HPE Slingshot 11, several `hsn*` NICs per node, DAOS over `ofi+cxi` *(check)* | UDP between compute nodes goes over the `hsn*` IPs. A container would need the host's CXI libfabric, so the podman route of section 3 doesn't carry over. Build natively instead |
 
 Inbound traffic from outside ALCF to the compute nodes is blocked *(check)*, so the ESnet LB path (scenario 3) can't reach a receiver on Aurora.
@@ -56,7 +56,7 @@ Note the answers in this section. They decide the next phases.
 ## Phase 1: build
 
 1. **E2SAR.** Build it from source on a login node into `$HOME/opt/e2sar` (or a project directory on Flare). The no-root route in [install-e2sar](../howto/install-e2sar.md) is written for EL9, so use its source build, not the RPM. Building E2SAR's dependencies (gRPC, protobuf, Boost) may be the hardest part on SLES 15 SP7. Check first whether `module avail` already has a usable GCC, CMake, Boost or gRPC. If the bundled dependency build fails, try Spack.
-2. **e2sar-daos.** Set the same exports as in section 2 (`PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `BOOST_ROOT`, `LD_LIBRARY_PATH`), then run `meson setup build && meson compile -C build`.
+2. **e2sar-daos.** Set the [E2SAR environment](../howto/install-e2sar.md#the-e2sar-environment-bashrc), then run `meson setup build && meson compile -C build`.
    If the DAOS headers aren't in `/usr/include` and `/usr/lib64`, `meson setup` stops with `DAOS libraries or headers not found`.
    The fix is a meson option for the DAOS prefix (e.g. `-Ddaos_prefix=...`) instead of the hard-coded paths. Make that code change only if Phase 0 shows it's needed.
 3. Build on a login node only if it has the same DAOS headers as the compute nodes. Otherwise build in a short compute job.
@@ -66,7 +66,7 @@ Note the answers in this section. They decide the next phases.
 ```bash
 daos cont create e2sar-daos kv-test            # once
 meson configure build -Ddaos_pool=e2sar-daos -Ddaos_cont=kv-test
-meson test -C build --suite unit -v            # Ok: 4
+meson test -C build --suite unit -v            # Ok: 5
 meson test -C build --suite integration -v     # Ok: 1, 5 matching put/get SHA-256 pairs
 ```
 

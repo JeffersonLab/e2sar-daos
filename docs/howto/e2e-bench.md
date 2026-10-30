@@ -37,7 +37,7 @@ You don't need a different receiver. `e2sar_daos_recv` stores any event, and the
 
 - The event size is the frame size in the file. CODA streaming frames are small (~426 bytes for the cosmics data), so a file of them gives many small events: mind the Reassembler's ~85k events/s.
 - Each Segmenter sends events numbered 1…N, the file's K frames in order. Event n is frame (n − 1) mod K, so a run with N > K starts over from the first frame. `--digests` writes the SHA-256 of every frame, so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
-- Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`. See the [DAOS layout examples](../concepts/daos-layout.md#examples).
+- Each Segmenter has its own dataId (4321 + i), so every event is a distinct `(evtNum, dataId)` in DAOS. See the [DAOS layout examples](../concepts/daos-layout.md#examples).
 - Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
 - `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
 
@@ -103,9 +103,7 @@ Environment overrides: `EVIO_FILE` (instead of `-F`), `SEND_IP`, `RECV_IP`, `POR
 
 ## Recommended settings
 
-> Since the receiver tuning of 2026-10-29 ([receiver-tuning](../results/2026-10-29-receiver-tuning.md)), `e2sar_daos_recv` defaults to `--deq 8 --inflight 128`, not 16 × 128 as below.
-
-These are now the defaults of `e2sar_evio_send`, `e2sar_e2e_bench.sh` and (`--deq`, `--inflight`) `e2sar_daos_recv`:
+These are the defaults of `e2sar_evio_send` and `e2sar_e2e_bench.sh`. `e2sar_daos_recv` on its own defaults to `--deq 8 --inflight 128`, from the [receiver tuning](../results/2026-10-29-receiver-tuning.md) of 2026-10-29:
 
 | | Setting | Why |
 |---|---|---|

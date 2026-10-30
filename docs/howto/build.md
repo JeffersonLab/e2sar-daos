@@ -7,7 +7,7 @@ sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/README.md", title: "README.md at 0d85d00" }
 ---
 
-# Build
+# Build e2sar-daos
 
 ## Prerequisites
 - A C++17 compiler (e.g. GCC 11).
@@ -30,6 +30,7 @@ pkg-config --modversion e2sar   # sanity check
 pkg-config --libs e2sar         # confirm it resolves to $E2SAR_ROOT/usr/local/lib* and not /usr/lib64
 ```
 If E2SAR was installed directly to its prefix, only `PKG_CONFIG_PATH` is needed.
+All of these, as one `~/.bashrc` block: [install-e2sar](install-e2sar.md#the-e2sar-environment-bashrc).
 
 `libe2sar` is linked against the Boost installed with E2SAR. Meson's Boost lookup does not use pkg-config, so without `BOOST_ROOT` it picks up the system Boost (e.g. `/usr/include/boost`), which may be a different version or ABI. Set `BOOST_ROOT` to the E2SAR install prefix before `meson setup`:
 ```bash

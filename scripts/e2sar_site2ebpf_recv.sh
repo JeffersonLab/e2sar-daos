@@ -61,7 +61,7 @@
 
 source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset variables
 set -u
-: "${E2SAR_BIN:?E2SAR_BIN not set (see docs/howto/lb-test.md step 1)}"
+: "${E2SAR_BIN:?E2SAR_BIN not set (see docs/howto/install-e2sar.md, the E2SAR environment)}"
 BIN=$E2SAR_DAOS_BUILD/bin
 ME=$(hostname -s)
 

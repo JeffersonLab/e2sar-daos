@@ -3,18 +3,16 @@ type: Site
 title: "LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS"
 description: "Send e2sar_perf events from a Perlmutter compute node through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
 tags: [perlmutter, nersc, lcf, lb]
-stale_after: 2026-10-29T23:15:16Z
+stale_after: 2027-01-31T00:00:00Z
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/LCF2JLAB_GUIDE.md", title: "LCF2JLAB_GUIDE.md at 0d85d00" }
 ---
 
 # LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS
 
-> **Stale since layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)):** steps 5, 8 and 9, the recommended settings and the troubleshooting table still use `--prefix`, `--prefixes` or `--oid`, which `e2sar_daos_recv` and `e2sar_daos_read` no longer have. A run is now one container (`--cont-name` / `--cont`). Update and rerun before relying on them ([#26](https://github.com/JeffersonLab/e2sar-daos/issues/26)).
-
 This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF**, through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
 The LB splits the events between the two receivers, and each receiver writes the events it gets into the same DAOS container.
-Both receivers use the same key prefix, so the run reads back as one set of events. At the end, `e2sar_daos_read` checks that every event arrived exactly once, with the right size and content.
+Both receivers write into the run's one container, each under its own writer slot, so the run reads back as one set of events. At the end, `e2sar_daos_read` checks that every event arrived exactly once, with the right size and content.
 
 The worked example is **Perlmutter** at NERSC: its node details, addresses and commands are shown below. For another LCF (e.g. Lux, `SITE=lux` in [the receiver script](#the-receiver-script)), the JLab side is the same; redo steps 1 and 3 for that site's nodes, network and batch system.
 
@@ -22,10 +20,10 @@ The commands follow the JLab procedure in [lb-test](../howto/lb-test.md). The si
 
 ```
 LCF node (Perlmutter CPU, NERSC)            ESnet LB (stable4)                     JLab
-hsn0 128.55.x.x (not 10.x), MTU 9000                                          recvA 129.57.178.85 ──▶ DAOS sc26/e2sar-pm, prefix <RUNID>
+hsn0 128.55.x.x (not 10.x), MTU 9000                                          recvA 129.57.178.85 ──▶ DAOS sc26/e2sar_<s>, slot 0
 e2sar_perf -s --withcp ──UDP──▶ data 192.188.29.54:<ports> ──UDP──┬──────────────▶ e2sar_daos_recv --withcp :20600..
                                                                    └──────────────▶ e2sar_daos_recv --withcp :20600..
-           └── gRPC ─────────▶ CP 192.188.29.6:18048 ◀──── gRPC ──── both workers   recvB 129.57.178.86 ──▶ DAOS sc26/e2sar-pm, prefix <RUNID>
+           └── gRPC ─────────▶ CP 192.188.29.6:18048 ◀──── gRPC ──── both workers   recvB 129.57.178.86 ──▶ DAOS sc26/e2sar_<s>, slot 1
                (add/remove sender)                     (register, state, deregister)
 ```
 
@@ -68,7 +66,7 @@ The sender needs no DAOS: the LCF node only runs `e2sar_perf`.
 | DAOS 2.6.5 client, pool `sc26` | yes | yes |
 | E2SAR 0.4.0rc1 in `$HOME/opt/e2sar`, e2sar-daos in `~/daq/e2sar-daos/build` | shared `$HOME` | shared `$HOME` |
 
-- `$HOME` is NFS, shared by both receivers, so `~/.bashrc`, the build and `~/e2sar_run` are the same on both. Set up `~/.bashrc` and build e2sar-daos as in [lb-test steps 1–2](../howto/lb-test.md#1-environment-bashrc-and-the-lb-instance-once).
+- `$HOME` is NFS, shared by both receivers, so `~/.bashrc`, the build and `~/e2sar_run` are the same on both. Set up `~/.bashrc` with the [E2SAR environment](../howto/install-e2sar.md#the-e2sar-environment-bashrc) and build e2sar-daos as in [build](../howto/build.md).
 - The login shell is tcsh. Start `bash` in every receiver terminal.
 - Open three terminals: one on the LCF compute node, one on recvA and one on recvB.
 
@@ -190,10 +188,10 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 ```
 
 - `start` takes the instance URI from `EJFAT_URI` (passed in or exported; it shows it and asks before going on) and listens on `$MY_IP` from `~/.bashrc` (else the address of `enp1s0f1np1`). It stops if an e2sar process is already running, a receive port is in use, or someone else's worker is on the LB instance.
-- On recvA, `start` makes the new run directory `$RUN/run_<date>_<time>` and the run's container name, `<CONT_LABEL>_<UTC epoch s>` (default `CONT_LABEL=e2sar`). On recvB it waits up to 5 minutes for that directory and uses the same `RUNID` as the DAOS prefix and the same container (`--cont-name`).
+- On recvA, `start` makes the new run directory `$RUN/run_<date>_<time>` and the run's container name, `<CONT_LABEL>_<UTC epoch s>` (default `CONT_LABEL=e2sar`). On recvB it waits up to 5 minutes for that directory and uses the same `RUNID` and the same container (`--cont-name`).
 - `SITE` names the sender's LCF (default `pm` = Perlmutter, `lux` = Lux) and only picks the log directory, `$RUN` = `~/e2sar_run/$SITE`. It has no effect on DAOS.
 - Ctrl-C stops only the receiver. Its final statistics stay in `<node>.recv.log`, and the script then prints step 7's drop checks for that node.
-- Each run is its own DAOS container and object, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
+- Each run is its own DAOS container, which both receivers share, and is listed in the container's run catalog with each receiver's final statistics. `verify` takes the receivers' commit counts from there.
 - Every LB command uses `-v`. The script never reserves or frees the instance.
 - Settings such as `CONT_LABEL`, `PORT`, `THREADS`, `DEQ` and `RECV_ARGS` can be overridden with environment variables, e.g. `DEQ=16 .../e2sar_site2ebpf_recv.sh start`. See the top of the script.
 
@@ -204,14 +202,13 @@ On **both** recvA and recvB, in bash:
 ```bash
 source ~/e2sar_instance.env
 export PORT=20600                          # first receive port on each node (the LB uses each worker's own IP:port)
-export CONT=e2sar-pm                       # DAOS container for these tests only, shared by both receivers
 export RUN=$HOME/e2sar_run/pm; mkdir -p $RUN   # pm = the sender's LCF (SITE)
 export ME=$(hostname -s)                   # node name, for the log file names
 echo $NIC $MY_IP                           # confirm NIC and IP addresses (both from ~/.bashrc)
 
 ps -eo user,pid,etime,args | grep -E 'e2sar_(ft|perf|daos_recv)' | grep -v grep   # expect nothing
 ss -uanp | grep -E ':20(4[89]|6[0-3])[0-9]\b'                                    # nothing on 20480-20499 or 20600-20639
-daos cont list sc26 | grep $CONT                                                  # nothing: the container doesn't exist yet
+daos cont list sc26 | grep -E '^e2sar_[0-9]+'                                   # runs left in DAOS: clean them up first (step 9)
 ```
 
 And once, on either node:
@@ -227,32 +224,33 @@ If either node is busy with someone else's test, wait. Concurrent tests share th
 
 Every run gets its own directory, `$RUN/<RUNID>`, named after the date and time it started, such as `$RUN/run_20261027_143005/`. Both nodes write their logs and NIC counters into it, named after the host (`ebpf2201.recv.log`, `ebpf2203.recv.log`, ...).
 Both nodes need the **same** `RUNID`. recvA makes it and points `$RUN/latest` at the new directory; recvB reads it from there (`$RUN` is in the shared `$HOME`). So run the block on recvA first.
-In DAOS, **both receivers use one prefix, `$RUNID`** (no `/` allowed). That's safe: the LB sends each event to only one worker, and the keys are `<prefix>/<evt>/<dataId>/<chunk>`, so the two receivers never write the same key. One `e2sar_daos_read --prefix $RUNID` then sees the whole run.
-Which node got which event isn't recorded in DAOS. Each receiver's `Events committed` (step 7) gives the split.
-`e2sar_perf` numbers events from 0 on every send, so use a new `RUNID` for every send.
+In DAOS, **one run is one container**, `e2sar_<UTC epoch s>`, which recvA names and writes to `$D/cont`. Both receivers write into it: the first creates it and the run record, and each claims its own writer slot (0, 1). The LB sends each event to only one worker, so one `e2sar_daos_read --cont $CONT` sees the whole run.
+The run catalog records each writer's final statistics (`--list` shows `Writer <slot>: committed N events`), which gives the split between the nodes.
+`e2sar_perf` numbers events from 0 on every send, so use a new `RUNID` and container for every send.
 
 ```bash
 # recvA (host ebpf2201) only, first: a new run directory named by date and time
-[ $ME = ebpf2201 ] && D=$RUN/run_$(date +%Y%m%d_%H%M%S) && mkdir $D && ln -sfn $(basename $D) $RUN/latest
+[ $ME = ebpf2201 ] && D=$RUN/run_$(date +%Y%m%d_%H%M%S) && mkdir $D && echo e2sar_$(date -u +%s) > $D/cont && ln -sfn $(basename $D) $RUN/latest
 # both nodes
 export RUNID=$(readlink $RUN/latest)       # e.g. run_20261027_143005: the same on both nodes
 export D=$RUN/$RUNID                       # this run's directory
-export PREFIX=$RUNID                      # DAOS key prefix: the same for all receivers, no '/'
-ls -ld $D                                  # exists, and is from just now
+export CONT=$(cat $D/cont)                 # this run's container, e.g. e2sar_1793280000: the same on both nodes
+ls -ld $D; echo $CONT                      # exists, and is from just now
 nstat -n
 ethtool -S $NIC | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $D/$ME.nic0
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv -v --withcp --ip $MY_IP \
-    --port $PORT --threads 16 --pool sc26 --cont-name $CONT --prefix $PREFIX \
+    --port $PORT --threads 16 --pool sc26 --cont-name $CONT \
     --timeout 10000 -b 1073741824 --deq 32 --inflight 256 \
     --timing-csv $D/$ME.csv 2>&1 | tee $D/$ME.recv.log
 ```
 
 Expected startup output on each node:
 ```
-DAOS pool/container:  sc26/e2sar-pm (created)      # or (existing) on the node that came second
-Run catalog:          new run                      # or "joined run created by ebpf2201..." on the second node
-KV object id:         0x...e25a0001.0x...          # the same on both nodes: one object for the run
+DAOS pool/container:  sc26/e2sar_<s> (created)    # or (existing) on the node that came second
+Run:                  new, started <s>             # or "joined, started <s>" on the second node
+Writer slot:          0                            # 1 on the second node
+...
 Control plane:        ON
 Listening on:         129.57.178.8x ports 20600:20615
 Receiving; Ctrl-C to stop
@@ -290,7 +288,7 @@ e2sar_perf -v -s --withcp --ip $SEND_IP --mtu 9000 -l 1048576 -n 10000 --rate 20
     --sockets 8 -b 67108864
 ```
 
-Each run needs its own `RUNID` on the receivers (step 5), so restart the receivers between the two sends, or note that the smoke test's events 0–99 get overwritten by the second run's events 0–99 under the same prefix.
+Each run needs its own `RUNID` on the receivers (step 5), so restart the receivers between the sends. Otherwise the second send's events 0–99 land in the same run as the smoke test's, and step 8 reports them as duplicates.
 
 Expected output:
 ```
@@ -342,36 +340,36 @@ $E2SAR_BIN/lbadm -v --status | tail -3               # "Registered workers:" wit
 
 ## 8. Verify in DAOS
 
-**Once, on either node**, after both receivers have stopped. The whole run is under one prefix, so one read covers both receivers. `--fetch` reads every event and prints its SHA-256 without writing files. Set `N` to the `-n` of the send:
+**Once, on either node**, after both receivers have stopped. The whole run is one container, so one read covers both receivers. `--fetch` reads every event and prints its SHA-256 without writing files. Set `N` to the `-n` of the send:
 
 ```bash
 cd ~/daq/e2sar-daos
 N=10000; L=1048576
-./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX > $D/events.list
-tail -1 $D/events.list                     # committed events and bytes under '<RUNID>/'
+./build/bin/e2sar_daos_read --pool sc26 --cont $CONT --list > $D/events.list
+tail -1 $D/events.list                     # committed events and bytes in the run
 awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ {g++} END {printf "%d of %d events (%d lost, %.2f%%)\n", g, '$N', '$N'-g, 100*('$N'-g)/'$N'}' $D/events.list
 comm -23 <(seq 0 $((N-1)) | sort) <(awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ {print $1}' $D/events.list | sort -u) | sort -n > $D/missing.txt   # the lost event numbers
 awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ && $3!='$L $D/events.list | wc -l                  # 0: every event is L bytes
-./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --fetch > $D/events.sha
-tail -1 $D/events.sha                      # all stored events verified, 0 failed
+./build/bin/e2sar_daos_read --pool sc26 --cont $CONT --fetch > $D/events.sha
+tail -1 $D/events.sha                      # <n> events read, <bytes> bytes, 0 errors
 grep -E '^[0-9a-f]{64} ' $D/events.sha | cut -d' ' -f1 | sort | uniq -c  # ONE line: "  <stored> <digest>"
-grep -H 'Events committed' $D/ebpf220[13].recv.log                     # the split; adds up to the events in DAOS
+grep '^Writer ' $D/events.list                                         # the split; the writers' commits add up to the events in DAOS
+awk -F'\t' 'NF==5 && $1 ~ /^[0-9]+$/ {print $1}' $D/events.list | sort -n | uniq -d | wc -l   # 0: no event number twice
 ```
 
 **The loss rate is reported, not a failure.** Events lost on the way (reassembly loss, see [Troubleshooting](#troubleshooting)) never reach DAOS, so they show up only as missing numbers in `$D/missing.txt`. Record the rate with the run.
-**PASS** when every stored event is correct: numbered below N, `L` bytes, a single digest over all of them (every event was the same buffer), and the two receivers' `Events committed` add up to exactly the number of events in DAOS.
-That last check catches an event delivered to both receivers: with one prefix the second write overwrites the first, so DAOS counts it once but the two receivers count it twice.
-To look inside one event: `./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --fetch --event 0 -o /tmp/$USER-ev -e bin`, then `head -c 32` and `tail -c 10` on the file in `/tmp/$USER-ev`, which should show the start and end markers from step 6.
+**PASS** when every stored event is correct: numbered below N, `L` bytes, no event number twice, a single digest over all of them (every event was the same buffer), and the writers' commits add up to exactly the number of events in DAOS.
+An event number listed twice means an event was delivered to both receivers, or two sends went into one run.
+`scripts/e2sar_site2ebpf_recv.sh verify N` runs all of these checks.
+To look inside one event: `./build/bin/e2sar_daos_read --pool sc26 --cont $CONT -o /tmp/$USER-ev --offline --event 0`, then `head -c 32` and `tail -c 10` on `/tmp/$USER-ev/${CONT}_0_*.evio`, which should show the start and end markers from step 6.
 
 ## 9. Clean up (required, after every run)
 
 ```bash
-# either receiver: this run's data (both receivers wrote into the run's one object)
+# either receiver: this run's container (both receivers wrote into it)
 cd ~/daq/e2sar-daos
-./build/bin/e2sar_daos_read --cont $CONT --prefixes               # the runs in the container
-./build/bin/e2sar_daos_read --cont $CONT --prefix $PREFIX --delete
-# or all runs at once: the whole test container
-daos cont destroy sc26 $CONT
+./build/bin/e2sar_daos_read --pool sc26 --cont $CONT --delete
+daos cont list sc26 | grep -E '^e2sar_[0-9]+'     # runs still in DAOS; 'scripts/e2sar_site2ebpf_recv.sh clean' removes them all
 $E2SAR_BIN/lbadm -v --status                      # no workers; the senders as in step 4
 # only if the LCF sender's IP is still listed (sender was killed):
 $E2SAR_BIN/lbadm -v --removesenders -a <SEND_IP>
@@ -409,7 +407,7 @@ What to look at:
 | Sender | `-b 67108864` or larger | A Perlmutter node allows up to 2 GiB |
 | Sender | One `--withcp` process per sender IP | Each one removes the shared IP when it exits |
 | Sender | No `--realmalloc` | Step 8's single-digest check needs every event to be the same buffer |
-| Receivers | `--withcp`, the same `--port`, `--cont` and `--prefix $RUNID` on all of them | Each node registers its own worker. The LB gives each event to one worker, so one prefix holds the whole run without collisions |
+| Receivers | `--withcp`, the same `--port` and `--cont-name $CONT` on all of them | Each node registers its own worker and claims its own writer slot. The LB gives each event to one worker, so one container holds the whole run |
 | Receivers | `--threads 16`, `--deq 32 --inflight 256`, `-b 1073741824` | 16 ports spread the events over more receive threads. 32 dequeue threads, with 256 DAOS puts in flight each, keep DAOS ahead of the network. A 1 GiB socket buffer avoids socket drops |
 | Receivers | `--timeout 10000` | The maximum. Covers WAN jitter and slow starts; the default 500 ms is tight over the WAN |
 | Both | New `RUNID` per send | `e2sar_perf` restarts event numbers at 0 |
@@ -429,8 +427,8 @@ What to check first, based on how the LB and E2SAR work.
 | Events lost, 0 socket drops and 0 NIC discards on both nodes | The packets were lost before JLab: on the LCF node, the LCF's egress, the WAN or the LB. Lower `--rate`, check the MTU (step 3) |
 | Events lost with `rx_discards_phy` > 0 | The receiving NIC port overflowed. Lower `--rate` or use more `--sockets` |
 | Digest check shows more than one line | An event was corrupted, or the sender used `--realmalloc`. Compare the odd digests' event numbers with the receiver logs |
-| The receivers' `Events committed` add up to more than N | Either two sends ran under the same `RUNID` (use a new one per send, step 5), or the LB delivered some events to both workers. With one prefix, the later write overwrote the earlier one |
+| An event number is listed twice in DAOS | Either two sends went into the same run (use a new `RUNID` and container per send, step 5), or the LB delivered some events to both workers |
 | Receiver aborts right after `Dequeue threads:` with `boost::wrapexcept<boost::system::system_error>` / `Invalid argument [system:22]` | `--ip` isn't an IP address: `$MY_IP` is empty, holds an interface name, or is stale. Check `echo $MY_IP` (step 4) and its line in `~/.bashrc` |
-| `Key prefix:` at startup shows another node's name or an old run | `PREFIX` is left over in this shell. Set `RUNID` and `PREFIX` again as in step 5; `PREFIX` must equal `$RUNID` |
+| `DAOS pool/container:` at startup shows an old run, or `(existing)` on the first node | `CONT` is left over in this shell. Set `RUNID`, `D` and `CONT` again as in step 5 |
 | Receivers get 0 events, LB shows `totalPacketsRecv=0`, but `lbadm` works | The instance's data plane is unreachable. Ping its `data=` address from the LCF node: `Destination Host Unreachable` means the packets are dropped on the way. Check the URI in `~/e2sar_instance.env` is on stable4 (step 2); if not, reserve one on stable4 (data plane `192.188.29.54`) with an admin URI on `192.188.29.6:18048` |
 | A worker stays registered after a receiver was killed | Wait about 10 s for the LB to drop it ([lbadm 3.5](../reference/lbadm.md#35-workers-the-receivers)) |

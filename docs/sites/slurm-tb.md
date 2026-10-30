@@ -150,7 +150,7 @@ With node-local image storage, add the `CONTAINERS_STORAGE_CONF` export and `pod
 
 ## Without a container
 
-Alternatively, build natively on ebpf2201 (section 2) and run the binary directly on a node:
+Alternatively, build natively on ebpf2201 ([ebpf-testbed section 2](ebpf-testbed.md#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel)) and run the binary directly on a node:
 ```bash
 srun -p <tb-partition> -N1 -n1 env DAOS_POOL=sc26 DAOS_CONT=kv-test \
     ./build/tests/daos/daos_kv_test --log_level=message
