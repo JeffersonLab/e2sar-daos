@@ -6,7 +6,6 @@
 | `e2sar_daos_read` | Lists the runs in a container and what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
 | `e2sar_evio_send` | Test sender: synthetic EVIO v6 streaming time frames through several E2SAR Segmenters, paced, with per-event timing and digests |
 | `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
-| [`docs/data/e2sar_e2e_sweep_report.py`](../docs/data/e2sar_e2e_sweep_report.py) | Summarizes a sweep's `.jsonl` (one result per run) as Markdown tables per sweep and rate: loss, throughput, latency per stage, warm-up. `--csv` writes one flat row per run. E.g. `docs/data/e2sar_e2e_sweep_report.py docs/data/e2e_sweep_2026-10-20.jsonl --merge` |
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
 

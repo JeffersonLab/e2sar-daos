@@ -270,8 +270,7 @@ $B recv TAG -m n2n -T 32 -D 32                               $B send TAG -m n2n 
 ```
 
 The sweep ran from a laptop with SSH to both nodes, with [`scripts/e2sar_e2e_sweep.sh`](../scripts/e2sar_e2e_sweep.sh): `e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3`.
-Every run's result, with the warm-up fields of the current analyzer, is in [`data/e2e_sweep_2026-10-20.jsonl`](data/e2e_sweep_2026-10-20.jsonl) (54 runs: `"sweep"` is `kv`, `kv-staggered-start` or `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
-The tables below can be rebuilt from it with [`data/e2sar_e2e_sweep_report.py`](data/e2sar_e2e_sweep_report.py): `--merge` groups kv and kv-staggered-start, `--sweep pil4dfs` shows only pil4dfs, `--csv runs.csv` gives one row per run for plotting.
+54 runs (`kv`, `kv-staggered-start` and `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
 
 | Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
 |---|---|---|---|---|---|---|
@@ -507,7 +506,7 @@ BENCH="bash -c 'source ~/e2sar-instance.env; exec bash ~/daq/e2sar-daos/scripts/
   scripts/e2sar_e2e_sweep.sh 1021a "25 30 35 40 45" 2
 ```
 `BENCH` sources the instance URI, since `~/.bashrc` doesn't set `EJFAT_URI`.
-The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10-21.jsonl) (`"sweep": "kv-lb"`). The tables and plots come from `data/e2sar_e2e_sweep_report.py data/e2e_sweep_2026-10-21.jsonl [--plot FILE | --plot-loss FILE]`.
+11 runs (`kv-lb`).
 
 | Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
 |---|---|---|---|---|---|---|
@@ -517,10 +516,6 @@ The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10
 | 35 | 0 / 2 | 35.35–35.36 | 33.72–33.74 | 3, 16 | 2 / 2 | 15, 77 |
 | 40 | 0 / 2 | 40.40–40.48 | 38.37 | 10, 20 | 2 / 2 | 54, 139 |
 | 45 | 0 / 2 | 45.56–45.61 | 42.94 | 4, 9 | 2 / 2 | 8, 45 |
-
-![LB sweep: E2E throughput, lost events, latency after the warm-up, NIC discards](data/e2e_sweep_2026-10-21.png)
-
-![LB sweep: lossless runs, and the loss rate of the others](data/e2e_sweep_2026-10-21_loss.png)
 
 - **Highest lossless E2E through the LB: 24.3 Gbps**, in 1 of 2 runs at 25 Gbps (25.2 Gbps received). The other 25 Gbps run lost 1 event. 20 Gbps was lossless.
 - **Unlike on 2026-10-19 ([section 4](#4-highest-lossless-rate)), 30 and 35 Gbps lost events in every run.** Then 35 Gbps passed 2 of 2, with 16 dequeue threads on LB 638. With 2 runs per rate, both days fit a threshold that varies from run to run between 25 and 35 Gbps, not a sharp ceiling.
