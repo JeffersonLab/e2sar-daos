@@ -80,7 +80,7 @@ $E2SAR_BIN/lbadm --status                  # the new LB ID, with 129.57.178.85 u
 
 Do this once per reservation, on either node, since `$HOME` is shared.
 
-Then, in **each** terminal, source the instance and set the per-test variables. The port, container and directories differ from the node-to-node procedure in [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md), which uses 20480 and `e2sar-test`, so the two can't collide:
+Then, in **each** terminal, source the instance and set the per-test variables. The port, container and directories differ from the node-to-node tests, which use 20480 and `e2sar-test`, so the two can't collide:
 
 ```bash
 bash                                   # from tcsh; this reads ~/.bashrc

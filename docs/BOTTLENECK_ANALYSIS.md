@@ -2,7 +2,7 @@
 
 Where the e2sar_ft → e2sar_daos_recv → DAOS path is limited on the ebpf testbed, measured on 2026-10-19 with PR #11 (`feature/daos-kv-recv-apps`), E2SAR 0.4.0rc1 and DAOS 2.6.5 (pool `sc26`).
 Table 9 (2026-10-26 and 2026-10-28) is different: it uses E2SAR's `e2sar_perf` at both ends, without DAOS.
-For how to run the tests, see [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
+For how to run the tests, see [TESTING.md](TESTING.md).
 
 ## Summary
 

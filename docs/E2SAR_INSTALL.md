@@ -85,6 +85,28 @@ export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin
 On the ebpf nodes, `$HOME` is shared, so one extraction serves both nodes.
 `~/opt/e2sar` there is a plain directory holding 0.4.0rc1, not a symlink. Before you `ln -sfn` over it, move it aside, for example to `~/opt/e2sar-0.4.0rc1.old`.
 
+## C. On an LCF: add re2
+
+The `e2sar` package bundles gRPC but not **re2**, the regular-expression library gRPC links against. Its gRPC needs `libre2.so.9` from the system (and its `grpc.pc` lists `re2` under `Requires.private`). EL9 hosts such as the ebpf nodes have it from the `re2` package. An LCF that isn't EL9, such as Perlmutter (SLES 15), doesn't, and the E2SAR tools fail to start:
+
+```bash
+ldd $(which e2sar_perf) | grep 'not found'    # libre2.so.9 => not found
+```
+
+Without root, unpack the Rocky/Alma 9 `re2` RPM next to E2SAR, in the same directory as section B:
+
+```bash
+# on an EL9 machine (e.g. ebpf2201), then copy the RPM to the LCF (over your own machine)
+dnf download --destdir ~/pkg re2                  # re2-20211101-20.el9.x86_64.rpm on 2026-10-29
+# on the LCF, into the E2SAR directory (on Perlmutter: $HOME/daq/e2sar-install)
+cd $DEST && rpm2cpio ~/pkg/re2-*.el9.x86_64.rpm | cpio -idm --quiet
+ls $DEST/usr/lib64/libre2.so.9                     # not under usr/local
+export LD_LIBRARY_PATH=$DEST/usr/lib64:$LD_LIBRARY_PATH
+```
+
+The library lands in `$DEST/usr/lib64`, not `$DEST/usr/local/lib64`, so that directory has to be on `LD_LIBRARY_PATH` too. The LCF's `~/.bashrc` in [LCF2JLAB_GUIDE.md step 1](LCF2JLAB_GUIDE.md#1-e2sar-on-the-lcf-once) already has it.
+That is enough to run the tools (`e2sar_perf`, `lbadm`). Building against E2SAR (e2sar-daos, `pkg-config --libs e2sar`) also needs `re2.pc` from `re2-devel`; on EL9 that's `dnf install re2-devel`, as in [containers/rocky-dev/Dockerfile](../containers/rocky-dev/Dockerfile).
+
 ## 2. Verify
 
 ```bash

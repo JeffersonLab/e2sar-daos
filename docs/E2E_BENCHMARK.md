@@ -105,7 +105,7 @@ The same as one JSON line goes to `$RUN/bench/results.jsonl`. The exit status is
 | `-T` | recv | 32 | Receive threads (ports). Node-to-node, use T ≥ P |
 | `-D`, `-I` | recv | 16, 128 | Dequeue threads, and in-flight puts per thread |
 | `-C` | recv | 1024 | DAOS chunk size in KiB (0: whole event in one value). KV sink only |
-| `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Removed with dfuse support. The pil4dfs and dfuse results below were taken with it. See [DFUSE_TESTING.md](DFUSE_TESTING.md) |
+| `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Removed with dfuse support. The pil4dfs and dfuse results below were taken with it |
 
 Environment overrides: `EVIO_FILE` (instead of `-F`), `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS="-b 8388608"` for an 8 MiB send socket buffer).
 
@@ -429,7 +429,7 @@ Grouping the lost events of each run into clusters queued within 1 ms of each ot
 
 #### KV vs files through pil4dfs
 
-The same sweep with `-S pil4dfs`: one file per event through dfuse with `libpil4dfs.so` preloaded (see [DFUSE_TESTING.md](DFUSE_TESTING.md)), the same 32 dequeue threads, each a blocking writer. 3 runs per rate, 15:00–15:21.
+The same sweep with `-S pil4dfs`: one file per event through dfuse with `libpil4dfs.so` preloaded, the same 32 dequeue threads, each a blocking writer. 3 runs per rate, 15:00–15:21.
 The KV rows are the 6 runs per rate above. "Committed" is the rate at which events landed in DAOS. "daos" is the write of one event (KV: its puts; pil4dfs: open, write, close).
 
 | Rate | Sink | Lossless | Committed (Gbps) | Events/s | daos p50 / p99 (ms) | total p50 (ms) | Lost events per run | NIC discards |
@@ -448,7 +448,7 @@ The KV rows are the 6 runs per rate above. "Committed" is the rate at which even
 - **KV is the better sink for these events.** One KV write takes 0.23–0.30 ms. One pil4dfs file takes 0.9–1.7 ms, 4–6× longer, so 32 writers manage only ~18–33k files/s, against the 26k/s that 20 Gbps needs and the 66k/s of 50 Gbps.
 - **pil4dfs can't sustain 20 Gbps.** Its 20 Gbps runs pass only because the receiver holds the backlog in memory: the 100,000 events took 4.3–5.7 s to commit after 3.8 s of sending, and waited up to 1.9 s. A continuous stream at that rate would grow the queue until events are lost. At 40 and 50 Gbps it committed less than at 30 (18–20 vs 22–25 Gbps), as the larger backlog seems to slow the writers down.
 - **The lost events are again at the start** (all within 0.08 s except two runs at 30 Gbps). The 20 Gbps pil4dfs runs had no NIC discards at all, where KV had some in 5 of 6. They also wrote to DAOS at a lower rate, which fits [cause 2](#possible-causes), but the 40–50 Gbps runs wrote at about the same rate and still had discards.
-- This doesn't contradict [DFUSE_TESTING.md](DFUSE_TESTING.md), where pil4dfs matched KV: those were 1.5 MB events (16× fewer files per byte), and 95 KB events only at 10 Gbps (13,200 files/s), below what pil4dfs can take.
+- This doesn't contradict the earlier dfuse tests, where pil4dfs matched KV: those were 1.5 MB events (16× fewer files per byte), and 95 KB events only at 10 Gbps (13,200 files/s), below what pil4dfs can take.
 - Untested: more pil4dfs writers (`-D 64`; with 1.5 MB events 32 was no better than 16), and larger events per file.
 
 #### Staggered Segmenter start: no effect
@@ -493,7 +493,7 @@ What this says about the E2E results:
 - **The 4-thread cap in [section 3](#3-dequeue-threads-the-hidden-bottleneck) is the sink.** 4 dequeue threads commit 27.5 Gbps without a sender and 24.3 with one. That's about 8.8k events/s per thread, with one blocking `recvEvent`, two puts and their completions per event.
 - **The ~85k events/s ceiling is the Reassembler, not DAOS.** Without it, 32 threads commit 167k events/s.
 - **1.5 MB events reach the IB link** (183 Gbps ≈ 91% of 200 Gb/s). Their latency is queueing: 16 × 128 puts in flight at once, unpaced. At an E2E rate DAOS takes ~0.5 ms per event.
-- **Plain dfuse is the sink's own limit**, the same 3.2k files/s as in the [dfuse sweep](DFUSE_TESTING.md). pil4dfs reaches 16k files/s with 95 KB events and about the KV rate with 1.5 MB events.
+- **Plain dfuse is the sink's own limit**, the same 3.2k files/s as in the earlier dfuse sweep. pil4dfs reaches 16k files/s with 95 KB events and about the KV rate with 1.5 MB events.
 - **Paced at 20 Gbps, DAOS adds 0.33 ms p50**, the same as the "daos" stage in the node-to-node E2E runs. E2SAR traffic on the shared adapter doesn't slow the DAOS writes.
 - `--chunk 0` makes no difference at 95 KB: both layouts are one data put and one metadata put.
 
