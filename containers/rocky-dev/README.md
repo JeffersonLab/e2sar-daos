@@ -12,8 +12,8 @@ A Rocky Linux 9 image with everything needed to build and unit-test e2sar-daos:
 **The e2sar-daos source is not in the image.** Mount the repo into the container at `/work`.
 
 There is **no DAOS server** in the image, and `daos_agent` is not running. Anything that needs to
-connect to a real pool still has to run on a testbed. Compiling, linking and the header/version unit
-tests all work.
+connect to a real pool still has to run on a testbed. Compiling, linking and the unit tests
+all work.
 
 Because DAOS and E2SAR only ship `x86_64` packages, the image is always `linux/amd64`. On Apple
 Silicon Macs it runs under emulation, so expect it to be slower than native.

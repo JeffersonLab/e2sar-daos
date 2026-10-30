@@ -1,6 +1,10 @@
 #pragma once
 /**
-    How one E2SAR event is laid out in a DAOS KV object, shared by writer and reader.
+    How one E2SAR event was laid out in a DAOS KV object in layout v1.
+
+    Legacy: layout v1, before one container per run (#31). The applications no longer use it;
+    the current layout is in layout.hpp (docs/concepts/daos-layout.md).
+
     Each run has its own object (run_catalog.hpp); the keys still start with the prefix.
 
         <prefix>/<evtNum>/<dataId>/<i>   chunk i of the payload, i = 0..nchunks-1

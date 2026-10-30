@@ -1,6 +1,10 @@
 #pragma once
 /**
-    Per-run KV objects and the run catalog, shared by e2sar_daos_recv and e2sar_daos_read.
+    Per-run KV objects and the run catalog of layout v1.
+
+    Legacy: layout v1, before one container per run (#31). The applications no longer use it;
+    the run catalog is now Catalog (catalog.hpp). Only the record helpers (Record,
+    formatRecord, parseRecord) are still used, by layout.hpp.
 
     Each run (key prefix) is written to its own KV object in the container. The object id
     comes from the prefix, so every receiver of a run (e.g. two nodes behind the LB) opens

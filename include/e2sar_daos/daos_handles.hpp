@@ -6,11 +6,11 @@
         DaosRuntime  -> daos_init() / daos_fini()
         DaosPool     -> daos_pool_connect() / daos_pool_disconnect()
         DaosContainer-> daos_cont_open() (optionally create) / daos_cont_close()
-        DaosKV       -> daos_kv_open() / daos_kv_close()   (RunCatalog holds one too)
+        DaosKV       -> daos_kv_open() / daos_kv_close()   (the run's catalog, catalog.hpp)
 
     All handles are non-copyable. Failures throw DaosError carrying the DER_* code.
     Pool, container and KV handles may be shared across threads; event queues may not
-    (see AsyncKVWriter).
+    (see AsyncOps).
 */
 
 #include <daos.h>

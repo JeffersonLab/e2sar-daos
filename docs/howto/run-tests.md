@@ -29,7 +29,7 @@ There are two test suites:
 
 | Suite | Test | Needs |
 |---|---|---|
-| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking that `e2sar_daos_recv`/`e2sar_daos_read` use.<br>`RunCatalogTests`: checks the per-run object ids (FNV-1a hash of the prefix) and the run catalog's keys and records.<br>`LayoutTests`: checks the run layout of [daos-layout](../concepts/daos-layout.md): object ids, index keys, batch tables and catalog records.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary | DAOS headers and libraries, no DAOS server |
+| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`EventLayoutTests`: checks the key names and 1 MiB chunking of the old KV layout (v1), no longer used by the apps.<br>`RunCatalogTests`: checks the v1 per-run object ids (FNV-1a hash of the prefix) and catalog keys, and the record format the current catalog still uses.<br>`LayoutTests`: checks the run layout of [daos-layout](../concepts/daos-layout.md): object ids, index keys, batch tables and catalog records.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary | DAOS headers and libraries, no DAOS server |
 | `integration` | `DAOSKVTest`: writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and compares SHA-256 digests | A reachable DAOS pool and container, plus `openssl-devel` at build time |
 
 `DAOSKVTest` reads the pool and container from `DAOS_POOL` and `DAOS_CONT` (defaults `sc26` and `kv-test`).

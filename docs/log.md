@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-10-30
+* **Update**: Brought comments and READMEs up to layout v2: [run-tests](howto/run-tests.md) marks `EventLayoutTests` and `RunCatalogTests` as tests of the old KV layout (v1); [e2e-bench](howto/e2e-bench.md) `-C` is the array chunk (= batch) size; the top-level README links to [daos-layout](concepts/daos-layout.md) instead of listing v1 classes, and shows the DAOS monitor.
 * **Creation**: [2026-10-30-evio-20kb-2p5gbps](results/2026-10-30-evio-20kb-2p5gbps.md): 20 KB EVIO events (`-f 50`) at 2.5 Gbps through the streaming chain, lossless and byte-exact; the `--live-rm` reader takes ~2.1 s per 2 s bundle at this rate.
 * **Update**: `e2sar_evio_send -f/--frames-per-event F` sends F consecutive frames per event: [e2e-bench](howto/e2e-bench.md#the-events), [streaming-workflow](concepts/streaming-workflow.md#senders), [scripts](reference/scripts.md). `--digests` now has one line per distinct event (per frame with `-f 1`, as before).
 * **Update**: [e2sar_daos_monitor](reference/e2sar_daos_monitor.md) and [live-monitoring](howto/live-monitoring.md) are no longer drafts: run on the ebpf testbed (17.4M events at 61k Events/s, `--live-rm`). Screenshots now from that run. Outgoing Events/s is per second of data removed (`out.d_seconds`), which stays steady.

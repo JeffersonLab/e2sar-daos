@@ -2,6 +2,9 @@
 /**
     Asynchronous KV writer built on a DAOS event queue.
 
+    Legacy: layout v1, before one container per run (#31). The applications no longer use it;
+    e2sar_daos_recv now writes arrays through AsyncOps (async_ops.hpp).
+
     Each writer owns one event queue (EQ) and a fixed pool of in-flight slots. submit()
     launches a non-blocking daos_kv_put(); if every slot is busy it first polls the EQ
     until one frees up, which is how back-pressure reaches the caller. Completion

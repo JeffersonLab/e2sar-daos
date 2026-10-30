@@ -54,7 +54,7 @@ if libcrypto_app_dep.found()
         dependencies: [e2sar_daos_dep, app_boost_dep, libcrypto_app_dep],
         install: true
     )
-    # Synthetic EVIO time-frame sender for end-to-end tests (see docs/howto/e2e-bench.md).
+    # Sends the frames of an EVIO file, for end-to-end tests (see docs/howto/e2e-bench.md).
     executable('e2sar_evio_send', 'e2sar_evio_send.cpp',
         dependencies: [e2sar_dep, app_boost_dep, e2sar_boost_dep, boost_url_dep, libcrypto_app_dep,
                        grpc_link_deps, dependency('threads')],

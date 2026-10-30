@@ -1,5 +1,6 @@
 /**
-    Unit tests for the per-run object ids and run catalog records (run_catalog.hpp).
+    Unit tests for the layout v1 per-run object ids and catalog records (run_catalog.hpp),
+    and the record helpers that layout.hpp still uses.
     Header-only logic; needs the DAOS headers but no DAOS server.
 */
 

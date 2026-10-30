@@ -10,7 +10,7 @@
 #                                          [-n events_per_segmenter] [-r gbps]
 #
 # The sender reads the EVIO v6 file (-F, or $EVIO_FILE) and sends its frames (records), one per
-# event; with -n larger than the file's frames it starts over from the first.
+# event (SEND_ARGS="-f F": F per event); with -n larger than that it starts over from the first.
 #   either:    e2sar_e2e_bench.sh clean
 #
 # Modes:

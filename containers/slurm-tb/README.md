@@ -6,11 +6,13 @@ It is the [Rocky 9 dev image](../rocky-dev/) with e2sar-daos built and installed
 
 | Binary | From | Role |
 |---|---|---|
-| `e2sar_daos_recv` | this repo | receive E2SAR events and write them to DAOS (async KV puts) |
-| `e2sar_daos_read` | this repo | list, verify (SHA-256) and restore what was written |
+| `e2sar_daos_recv` | this repo | receive E2SAR events and write them to DAOS (asynchronous array writes, one container per run) |
+| `e2sar_daos_read` | this repo | read a run live (`--live`, `--live-rm`) or restore it (`--offline`); list, verify (SHA-256) and delete runs |
+| `e2sar_daos_monitor` | this repo | watch a run's container, read-only, for the [live dashboard](../../docs/reference/e2sar_daos_monitor.md) |
+| `e2sar_evio_send` | this repo | send the frames of an EVIO file, for tests |
 | `e2sar_ft` | E2SAR RPM | send files (`-s`) from another node |
 
-Option reference and the DAOS data layout are in [bin/README.md](../../bin/README.md). For podman setup on the nodes (node-local image storage, the agent socket, SELinux, InfiniBand), see [docs/slurm-tb §3](../../docs/sites/slurm-tb.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel). Everything there applies here too.
+Every option is in the [reference docs](../../docs/reference/index.md), and the DAOS data layout in [daos-layout](../../docs/concepts/daos-layout.md). For podman setup on the nodes (node-local image storage, the agent socket, SELinux, InfiniBand), see [docs/slurm-tb §3](../../docs/sites/slurm-tb.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel). Everything there applies here too.
 
 ---
 

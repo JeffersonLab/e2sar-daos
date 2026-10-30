@@ -12,7 +12,7 @@
 
     Threading: --segmenters P independent Segmenters, each driven by its own thread with
     dataId = --dataid + i and eventSrcId = --srcid + i, so the receiver keeps their events
-    apart (DAOS key <prefix>/<evtNum>/<dataId>). Each Segmenter sends on --sockets threads.
+    apart (each event is a distinct (evtNum, dataId) in DAOS). Each Segmenter sends on --sockets threads.
     Each one sends the file's E distinct events in order as events 1..N (--events, default E:
     the file once); event n is distinct event (n - 1) % E, so it starts over when N > E.
     --digests writes "<i> <sha256>" for every distinct event i (with F = 1: every frame), so

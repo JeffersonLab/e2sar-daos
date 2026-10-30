@@ -6,7 +6,7 @@ Inputs (all in the run directory):
   timing.csv   e2sar_daos_recv --timing-csv: evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms
                (seconds since the receiver's clock start, printed as "Clock start" in recv.log)
   digests      e2sar_evio_send --digests: <i> <sha256> (event n is distinct event (n - 1) % --frames)
-  fetch.txt    e2sar_daos_read --fetch output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
+  fetch.txt    e2sar_daos_read --fetch output: <sha256>  <run>_<evt>_<dataId>.evio  (...)
 
 Latency stages per event, matched on (evt_num, data_id):
   sender   queue_ns -> sent_ns    waiting in the Segmenter queue, segmenting, sending every packet

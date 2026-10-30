@@ -12,7 +12,7 @@
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
 
-The bash scripts that drive these apps on the test nodes (the end-to-end bench, its rate sweep, and the LCF receiver) are in [scripts/](../scripts/README.md).
+The bash scripts that drive these apps on the test nodes (the end-to-end bench, its rate sweep, the receiver tuning sweep, and the LCF receiver) are in [scripts/](../scripts/README.md).
 
 The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `e2sar_daos_read` and `e2sar_evio_send` need `openssl-devel` for SHA-256.
 

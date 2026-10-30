@@ -89,11 +89,11 @@ The same as one JSON line goes to `$RUN/bench/results.jsonl`. The exit status is
 | `-F` | send | `$EVIO_FILE` | EVIO v6 file whose frames are sent. Required |
 | `-P` | send | 16 | Segmenters, each with its own producing thread and dataId |
 | `-s` | send | 1 | Send sockets (threads) per Segmenter |
-| `-n` | send | 6250 | Events per Segmenter (100,000 in total by default). More than the file's frames starts over |
+| `-n` | send | 6250 | Events per Segmenter (100,000 in total by default). More than the file's distinct events starts over |
 | `-r` | send | 20 | Total rate in Gbps (−1: unlimited) |
 | `-T` | recv | 32 | Receive threads (ports). Node-to-node, use T ≥ P |
 | `-D`, `-I` | recv | 16, 128 | Dequeue threads, and in-flight puts per thread |
-| `-C` | recv | 1024 | DAOS chunk size in KiB (0: whole event in one value). KV sink only |
+| `-C` | recv | 1024 | DAOS array chunk size = batch size, in KiB (`e2sar_daos_recv --chunk`) |
 | `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Removed with dfuse support. The pil4dfs and dfuse results below were taken with it |
 
 Environment overrides: `EVIO_FILE` (instead of `-F`), `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS="-b 8388608"` for an 8 MiB send socket buffer).

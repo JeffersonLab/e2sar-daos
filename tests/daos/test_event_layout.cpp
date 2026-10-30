@@ -1,5 +1,5 @@
 /**
-    Unit tests for the event -> KV layout shared by e2sar_daos_recv and e2sar_daos_read.
+    Unit tests for the event -> KV layout of layout v1 (event_layout.hpp; no longer used by the apps).
     Header-only logic; needs no DAOS server.
 */
 
