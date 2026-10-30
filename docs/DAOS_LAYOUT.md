@@ -67,7 +67,7 @@ oid.lo = K SSSS TTTTTTTTTT     (decimal digits)
 
 | Object | Kind | `oid.lo` | Example `oid.lo` | DAOS object type | Class (default) |
 |---|---|---|---|---|---|
-| catalog | 1 | `1 0000 0000000000` | `100000000000000` | `DAOS_OT_KV_HASHED` | `--index-oclass` |
+| catalog | 1 | `1 0000 0000000000` | `100000000000000` | `DAOS_OT_KV_HASHED` | `S1`, fixed: a reader opens it before it knows the run's classes |
 | seconds | 2 | `2 0000 0000000000` | `200000000000000` | `DAOS_OT_MULTI_UINT64` | `--index-oclass` |
 | index[T] | 3 | `3 0000 T` | `300001793280042` = index[1793280042] | `DAOS_OT_MULTI_UINT64` | `--index-oclass`, default `S8` |
 | data[T, s] | 4 | `4 ssss T` | `400011793280042` = data[1793280042, slot 1] | `DAOS_OT_ARRAY_BYTE` | `--oclass`, default `SX` |
@@ -94,7 +94,7 @@ A receiver prints its slot in its own log ("writer slot 1"), so a slot can be ma
 ### Watermarks
 
 - `index=S`: every index write this receiver started before second S has completed. No new entry can appear in `index[T]` for T < S, because its clock is already past T.
-- `data=S'`: every batch whose data write this receiver started before second S' is committed: its data write and its index write have both completed. Used by readers that remove data from DAOS, to know when `data[T, s]` can go.
+- `data=S'`: every batch this receiver opened before second S' (so every batch in `data[T, s]` with T < S') is committed: its data write and its index write have both completed. Used by readers that remove data from DAOS, to know when `data[T, s]` can go.
 
 **A second T is complete** when every claimed slot has `index > T` or a `done/<slot>` entry. The reader reads `index[T]` only after that, so it never misses an entry that is still being written. If a slot's watermark hasn't changed for `--stall` seconds (default 30, measured on the reader's clock as time since it last saw the value change; receiver killed), the reader warns and continues without that slot. If the slot's watermark moves again later, its entries for seconds the reader already passed are read and counted as late.
 
@@ -200,12 +200,12 @@ Lines from several receivers can then be merged and sorted as numbers, and match
 | `--pool`, `--cont-name` | required | pool, and the run's container (created if missing) |
 | `--chunk` | 1024 KiB | array chunk size = batch size |
 | `--oclass` | `SX` | data array class |
-| `--index-oclass` | `S8` | catalog, seconds and index class |
+| `--index-oclass` | `S8` | seconds and index class |
 | `--batch-threshold` | 0.9 | events ≤ θ × chunk are batched |
 | `--flush-us` | 5000 | flush a partly filled batch after this long |
 | `--batch-buffers` | 8 | batch buffers per dequeue thread |
 | `--max-write` | 64 MiB | largest single array write; larger events are split |
-| `--deq`, `--inflight` | to be tuned | dequeue threads; DAOS operations in flight per thread |
+| `--deq`, `--inflight` | 8, 128 (to be tuned) | dequeue threads; DAOS operations in flight per thread |
 
 ## Examples
 
@@ -230,7 +230,7 @@ data[T, 1]   chunk 2000: frames 1043, 1047, 1048, 1052, 1053 (~100 KB) | hole |
 index[T]     dkey (1 << 48) | 391: header {T_data T, offset 2000 × 1 MiB, length ~100 KB, n 5}, 5 entries
 ```
 
-With the default `--interval 5`, `e2sar_daos_read --live` writes one ~1.6 GB file per 5 seconds with ~78,000 frames in frame order. Fewer dequeue threads or a longer flush fill the batches more: see the tuning plan in [STREAMING_SENDER.md](STREAMING_SENDER.md#tuning).
+With the default `--interval 5`, `e2sar_daos_read --live` writes one ~1.6 GB file per 5 seconds with ~78,000 frames in frame order. Fewer dequeue threads or a longer flush fill the batches more: see the tuning plan in [STREAMING_WORKFLOW.md](STREAMING_WORKFLOW.md#tuning).
 
 ## Cost per event
 
