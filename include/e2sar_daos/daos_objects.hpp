@@ -1,6 +1,6 @@
 #pragma once
 /**
-    Handles for the object types of the run layout (docs/DAOS_LAYOUT.md):
+    Handles for the object types of the run layout (docs/concepts/daos-layout.md):
 
         DaosIntObject   DAOS_OT_MULTI_UINT64: 64-bit integer dkeys and akeys, single values
                         (the seconds and index[T] objects)

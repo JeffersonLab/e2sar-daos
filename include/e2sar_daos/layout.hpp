@@ -1,6 +1,6 @@
 #pragma once
 /**
-    The DAOS layout of a run (docs/DAOS_LAYOUT.md): object ids, catalog keys and records,
+    The DAOS layout of a run (docs/concepts/daos-layout.md): object ids, catalog keys and records,
     and the binary batch table stored in index[T]. Header-only; no DAOS calls.
 
     One run per container. Object ids keep the user part in oid.lo as decimal digits,

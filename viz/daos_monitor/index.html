@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E2SAR → DAOS live monitor</title>
+<style>
+/* Palette: the viewer's (evio-interactive-view) tokens. Event states: in DAOS = series blue,
+   left DAOS = series aqua, missing = status critical (+ full-height mark), pending = status warning. */
+:root {
+  --bg: #f6f6f3; --surface: #fcfcfb; --line: #e3e2dc; --grid: #ecebe6; --hover: #efeee9;
+  --fg: #0b0b0b; --fg2: #52514e; --fg3: #7a7974; --q0: #ecebe6;
+  --in: #2a78d6; --out: #1baf7a; --miss: #d03b3b; --pend: #fab219; --s2: #eb6834;
+  --good: #0ca30c; --crit: #d03b3b;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121211; --surface: #1a1a19; --line: #33332f; --grid: #2a2a27; --hover: #252523;
+  --fg: #f0efec; --fg2: #c3c2b7; --fg3: #8f8e86; --q0: #2a2a27;
+  --in: #3987e5; --out: #199e70; --s2: #d95926; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121211; --surface: #1a1a19; --line: #33332f; --grid: #2a2a27; --hover: #252523;
+  --fg: #f0efec; --fg2: #c3c2b7; --fg3: #8f8e86; --q0: #2a2a27;
+  --in: #3987e5; --out: #199e70; --s2: #d95926; color-scheme: dark }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+.wrap { max-width: 1500px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; }
+h2 { font-size: 15px; margin: 0; font-weight: 600; }
+.bar { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.pill { font: 600 12px var(--sans); padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.live { color: var(--good); } .pill.replay { color: var(--in); } .pill.ended, .pill.stale { color: var(--fg3); }
+.meta { color: var(--fg2); font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+.btn { font: 500 13px var(--sans); background: transparent; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.btn:hover { background: var(--hover); } .btn[aria-pressed="true"] { background: var(--in); border-color: var(--in); color: #fff; }
+.btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--in); outline-offset: 2px; }
+select { font: 13px var(--sans); background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+input[type=range] { width: min(420px, 40vw); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 2px; }
+.tile .k { color: var(--fg2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.tile .v { font: 600 28px var(--sans); }
+.tile .s { color: var(--fg2); font: 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.panel p { margin: 0; color: var(--fg2); font-size: 13px; }
+.legend { display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 13px; color: var(--fg2); align-items: center; }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+canvas#strip { width: 100%; display: block; cursor: crosshair; }
+svg { display: block; overflow: visible; width: 100%; }
+svg text { fill: var(--fg3); font: 11px var(--mono); }
+table.t { border-collapse: collapse; font: 12.5px var(--mono); font-variant-numeric: tabular-nums; width: 100%; }
+table.t th, table.t td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--grid); }
+table.t th { color: var(--fg2); font-weight: 500; } table.t td:first-child, table.t th:first-child { text-align: left; }
+.ok { color: var(--good); } .bad { color: var(--crit); } .mut { color: var(--fg3); }
+.ico { font: 600 11px var(--sans); display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; color: #fff; }
+.ico.ok { background: var(--good); color: #fff; } .ico.bad { background: var(--crit); color: #fff; }
+.tip { position: fixed; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: 12px/1.45 var(--mono); color: var(--fg); box-shadow: 0 4px 14px rgb(0 0 0 / .14); z-index: 10; white-space: nowrap; }
+.empty { color: var(--fg2); padding: 30px; text-align: center; }
+</style>
+</head><body>
+<div class="wrap">
+  <div class="bar">
+    <h1>E2SAR → DAOS live monitor</h1>
+    <span class="pill live" id="mode">connecting</span>
+    <span class="meta" id="runInfo"></span>
+    <span class="grow"></span>
+    <span class="meta" id="clock"></span>
+  </div>
+  <div class="bar">
+    <button class="btn" id="bLive" type="button" aria-pressed="true">Live</button>
+    <button class="btn" id="bReplay" type="button" aria-pressed="false">Replay</button>
+    <button class="btn" id="bPlay" type="button" hidden>Pause</button>
+    <label class="meta" for="speed" id="speedL" hidden>speed <select id="speed"><option>1</option><option>2</option><option selected>4</option><option>8</option><option>16</option><option>32</option></select>×</label>
+    <input type="range" id="slider" min="0" max="0" value="0" aria-label="Frame" hidden>
+    <span class="meta" id="frameInfo"></span>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="grid2">
+    <section class="panel"><h2>Events/s</h2><p>Committed to DAOS (incoming) and removed from DAOS (outgoing), all dataIds, over the last 3 updates (~6 s). <span style="color:var(--miss)">▲</span> marks an update in which event numbers went missing; hover for how many.</p><svg id="cRate"></svg></section>
+    <section class="panel"><h2>Data in DAOS</h2><p>GiB committed and not yet removed, mean of the last 3 updates</p><svg id="cDaos"></svg></section>
+  </div>
+
+  <section class="panel"><h2>Writers (e2sar_daos_recv)</h2><div id="writers"></div></section>
+
+  <section class="panel">
+    <div class="bar"><h2>Event numbers per dataId</h2><span class="grow"></span>
+      <div class="legend" id="stripLegend">
+        <span><i class="sw" style="background:var(--in)"></i>in DAOS</span>
+        <span><i class="sw" style="background:var(--out)"></i>left DAOS (read out)</span>
+        <span><i class="sw" style="background:var(--miss)"></i>missing ▲</span>
+        <span><i class="sw" style="background:var(--pend)"></i>pending</span>
+        <span><i class="sw" style="background:var(--q0);border:1px solid var(--line)"></i>not seen</span>
+      </div></div>
+    <p id="stripSub">Each row is one dataId (one stream, e.g. one VTP crate); the newest event number is at the right edge. New events enter on the right in blue, turn aqua when the reader removes their second from DAOS, and slide left. A bin is red, and marked ▲, if any event number in it is missing.</p>
+    <canvas id="strip" height="10" role="img" aria-label="Event number state per dataId"></canvas>
+  </section>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => Math.round(n).toLocaleString('en-US');
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const si = v => { const a = Math.abs(v); return a >= 1e9 ? (v / 1e9).toFixed(2) + 'G' : a >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : a >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : (+v).toFixed(a < 10 && v % 1 ? 1 : 0); };
+const gib = b => (b / 2 ** 30).toFixed(b < 2 ** 30 ? 3 : 2) + ' GiB';
+const gbps = (b, dt) => (b * 8 / dt / 1e9).toFixed(2) + ' Gbps';
+const clock = t => new Date(t * 1000).toISOString().slice(11, 19) + ' UTC';
+const tip = $('tip');
+function showTip(e, html) { tip.innerHTML = html; tip.hidden = false; const r = tip.getBoundingClientRect(); let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14; if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14; tip.style.left = x + 'px'; tip.style.top = y + 'px'; }
+const hideTip = () => tip.hidden = true;
+
+// ---------------------------------------------------------------- state
+const F = [];          // every tick line so far
+let ended = null, next = 0, cur = -1, live = true, playing = true, lastFetch = 0, fileName = '';
+
+async function poll() {
+  try {
+    const r = await fetch('api/frames?from=' + next, { cache: 'no-store' });
+    const j = await r.json(); fileName = j.file;
+    if (j.next < next) { F.length = 0; ended = null; }        // file replaced: start over
+    for (const f of j.frames) {
+      if (f.type === 'tick') { if (F.length && f.run !== F[F.length - 1].run) { F.length = 0; ended = null; } F.push(f); }   // a new run in the same file: start over
+      else if (f.type === 'end') ended = f; }
+    next = j.next; lastFetch = Date.now();
+    if (live && F.length) show(F.length - 1);
+    $('slider').max = Math.max(0, F.length - 1);
+  } catch (e) { setMode('stale', 'server not answering'); }
+}
+setInterval(poll, 1000); poll();
+
+// Replay: one frame per (frame dt / speed) seconds
+let replayTimer = null;
+function stepReplay() {
+  clearTimeout(replayTimer);
+  if (live || !playing || !F.length) return;
+  if (cur >= F.length - 1) { playing = false; $('bPlay').textContent = 'Play'; return; }
+  show(cur + 1);
+  replayTimer = setTimeout(stepReplay, 1000 * (F[cur].dt || 2) / +$('speed').value);
+}
+function setLive(on) {
+  live = on; $('bLive').setAttribute('aria-pressed', on); $('bReplay').setAttribute('aria-pressed', !on);
+  ['bPlay', 'speedL', 'slider'].forEach(id => $(id).hidden = on);
+  if (on) { clearTimeout(replayTimer); if (F.length) show(F.length - 1); }
+  else { playing = true; $('bPlay').textContent = 'Pause'; show(0); stepReplay(); }
+}
+$('bLive').onclick = () => setLive(true);
+$('bReplay').onclick = () => setLive(false);
+$('bPlay').onclick = () => { playing = !playing; $('bPlay').textContent = playing ? 'Pause' : 'Play'; if (playing && cur >= F.length - 1) show(0); stepReplay(); };
+$('speed').onchange = stepReplay;
+$('slider').oninput = () => { playing = false; $('bPlay').textContent = 'Play'; show(+$('slider').value); };
+addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === ' ' && !live) { e.preventDefault(); $('bPlay').click(); }
+  if (e.key === 'ArrowRight' && !live) show(Math.min(F.length - 1, cur + 1));
+  if (e.key === 'ArrowLeft' && !live) show(Math.max(0, cur - 1));
+  if (e.key === 'l') setLive(true); });
+
+function setMode(cls, text) { $('mode').className = 'pill ' + cls; $('mode').textContent = text; }
+
+// Rates over the last SMOOTH updates (~6 s): the reader removes one --interval window at a time,
+// at times that jitter against the monitor's 2 s looks, so one look can catch 0 or 2 windows.
+const SMOOTH = 3;
+function rateAt(j, key, field = 'events') {
+  // outgoing: events per second of data removed, over the last 5 looks. Steady whatever the phase of the
+  // reader's removals, and equal to the wall-clock rate over time. Needs out.d_seconds (monitor ≥ 2026-10-30).
+  if (key === 'out' && F[j].out.d_seconds !== undefined) { let n = 0, s = 0;
+    for (let k = Math.max(0, j - 4); k <= j; k++) { n += F[k].out['d_' + field]; s += F[k].out.d_seconds; }
+    return s ? n / s : 0; }
+  const k = Math.max(0, j - SMOOTH), a = F[k], b = F[j];
+  return k === j ? b[key]['d_' + field] / (b.dt || 2) : (b[key][field] - a[key][field]) / (b.t - a.t); }
+function daosAt(j) { let s = 0, n = 0; for (let k = Math.max(0, j - SMOOTH + 1); k <= j; k++, n++) s += F[k].daos.bytes; return s / n; }
+
+// ---------------------------------------------------------------- one frame
+function show(i) {
+  if (i < 0 || i >= F.length) return;
+  cur = i; const f = F[i]; $('slider').value = i;
+  if (live) setMode(ended && i === F.length - 1 ? 'ended' : Date.now() / 1000 - f.t > 3 * (f.dt || 2) + 2 ? 'stale' : 'live',
+    ended && i === F.length - 1 ? 'run ended' : Date.now() / 1000 - f.t > 3 * (f.dt || 2) + 2 ? 'no new data' : 'LIVE');
+  else setMode('replay', 'REPLAY');
+  $('runInfo').textContent = `${f.run} · ${f.writers.length} writer${f.writers.length === 1 ? '' : 's'} · ${f.streams.length} dataIds`;
+  $('clock').textContent = `${clock(f.t)} · ${fmtDur(f.t - f.start)} into the run`;
+  $('frameInfo').textContent = `frame ${i + 1} of ${F.length}`;
+  tiles(f, i); strip(f); charts(i); writers(f);
+}
+const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return (h ? h + ' h ' : '') + (h || m ? m + ' min ' : '') + (s % 60) + ' s'; };
+
+function tiles(f, i) {
+  const mi = f.missing;
+  const T = [
+    ['var(--in)', 'Incoming', si(rateAt(i, 'in')) + ' Events/s', `${gbps(rateAt(i, 'in', 'bytes'), 1)} · ${si(f.in.events)} events total`],
+    ['var(--out)', 'Outgoing (left DAOS)', si(rateAt(i, 'out')) + ' Events/s', `${gbps(rateAt(i, 'out', 'bytes'), 1)} · ${si(f.out.events)} events total`],
+    [null, 'In DAOS now', gib(daosAt(i)), `${si(f.daos.events)} events · ${f.daos.seconds} index seconds`],
+    ['var(--miss)', 'Missing so far', fmt(mi.total ?? mi.events), `${fmt(mi.events)} still open · ${fmt(mi.late)} arrived late · ${fmt(mi.pending)} pending · ${fmt(mi.dups)} dup`],
+  ];
+  $('tiles').innerHTML = T.map(([c, k, v, s]) => `<div class="tile"><div class="k">${c ? `<i class="sw" style="background:${c}"></i>` : ''}${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('');
+}
+
+// ---------------------------------------------------------------- event strip (canvas)
+const COLOR = { d: '--in', o: '--out', m: '--miss', p: '--pend', u: '--q0' };
+let SM = null;  // strip geometry for hover
+function decode(s, bins) { const out = new Array(bins); let k = 0; for (const [, c, n] of s.matchAll(/([a-z])(\d+)/g)) for (let i = 0; i < +n && k < bins; i++) out[k++] = c; while (k < bins) out[k++] = 'u'; return out; }
+function strip(f) {
+  const cv = $('strip'), S = f.streams, st = f.strip;
+  const rowH = S.length > 24 ? 14 : 22, gap = 4, L = 92, R = 150, T = 18, B = 22;
+  const W = cv.clientWidth || 1000, H = T + S.length * (rowH + gap) + B, dpr = devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const fg2 = css('--fg2'), fg3 = css('--fg3'), cols = {}; for (const k in COLOR) cols[k] = css(COLOR[k]);
+  g.font = '11px ' + css('--mono'); g.textBaseline = 'middle';
+  if (!st || !S.length || !S[0].strip) { g.fillStyle = fg2; g.fillText('Waiting for events (the strip appears once the rate is known, after 2 updates).', L, T + 10); SM = null; return; }
+  const bins = st.bins, bw = (W - L - R) / bins;
+  g.fillStyle = fg3; g.textAlign = 'left'; g.fillText('older event numbers', L, 8); g.textAlign = 'right'; g.fillText('newest →', W - R, 8);
+  g.fillText('missing', W - 80, 8); g.fillText('Events/s', W - 4, 8);
+  S.forEach((s, r) => {
+    const y = T + r * (rowH + gap), b = decode(s.strip || '', bins);
+    g.textAlign = 'right'; g.fillStyle = fg2; g.fillText('dataId ' + s.id, L - 8, y + rowH / 2);
+    for (let i = 0; i < bins;) { let j = i; while (j < bins && b[j] === b[i]) j++;
+      if (b[i] !== 'm') { g.fillStyle = cols[b[i]]; g.fillRect(L + i * bw, y + 2, (j - i) * bw, rowH - 4); }
+      i = j; }
+    // missing last, full height, with a ▲ above: shape as well as color
+    g.fillStyle = cols.m;
+    for (let i = 0; i < bins; i++) if (b[i] === 'm') { const x = L + i * bw; g.fillRect(x, y - 1, Math.max(bw, 2), rowH + 2);
+      g.beginPath(); g.moveTo(x + bw / 2 - 3, y - 2); g.lineTo(x + bw / 2 + 3, y - 2); g.lineTo(x + bw / 2, y - 6); g.fill(); }
+    const mt = s.missing_total ?? s.missing; g.textAlign = 'right'; g.fillStyle = mt ? cols.m : fg3; g.fillText(fmt(mt), W - 80, y + rowH / 2);
+    g.fillStyle = fg3; g.textAlign = 'right'; g.fillText(si(s.d_events / (f.dt || 2)), W - 4, y + rowH / 2);
+  });
+  const lo = S[0].strip_lo, hi = lo + st.span - 1;
+  g.fillStyle = fg3; g.textAlign = 'left'; g.fillText(fmt(lo), L, H - 8); g.textAlign = 'right'; g.fillText(fmt(hi), W - R, H - 8);
+  g.textAlign = 'center'; g.fillText(`event number · ${fmt(st.width)} per bin · ${fmt(st.span)} shown`, (L + W - R) / 2, H - 8);
+  SM = { f, L, R, T, rowH, gap, bw, W, bins };
+}
+const STATE = { d: 'in DAOS', o: 'left DAOS (read out)', m: 'missing (at least one)', p: 'pending', u: 'not seen' };
+$('strip').addEventListener('mousemove', e => {
+  if (!SM) return; const r = $('strip').getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  const row = Math.floor((y - SM.T) / (SM.rowH + SM.gap)), i = Math.floor((x - SM.L) / SM.bw), s = SM.f.streams[row];
+  if (!s || i < 0 || i >= SM.bins) return hideTip();
+  const b = decode(s.strip || '', SM.bins)[i], w = SM.f.strip.width, e0 = s.strip_lo + i * w;
+  showTip(e, `dataId ${s.id}<br>events ${fmt(e0)}–${fmt(e0 + w - 1)}<br><b>${STATE[b]}</b><br>dataId total: ${fmt(s.events)} events, ${fmt(s.missing_total ?? s.missing)} missing so far`);
+});
+$('strip').addEventListener('mouseleave', hideTip);
+addEventListener('resize', () => { if (cur >= 0) { strip(F[cur]); charts(cur); } });
+
+// ---------------------------------------------------------------- time charts (SVG)
+const NS = 'http://www.w3.org/2000/svg';
+const el = (tag, a, p) => { const n = document.createElementNS(NS, tag); for (const k in a) n.setAttribute(k, a[k]); p && p.appendChild(n); return n; };
+// marks: optional [{ i, html }]: a ▲ on the time axis at xs[i], its html added to the tooltip there
+function lineChart(svg, xs, series, yFmt, marks = []) {
+  svg.innerHTML = ''; const W = Math.max(320, svg.clientWidth || svg.parentNode.clientWidth - 32), H = 240, m = { l: 56, r: 70, t: 10, b: 26 };
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('height', H);   // one pixel per unit: text stays 11 px
+  if (xs.length < 2) { el('text', { x: m.l, y: H / 2 }, svg).textContent = 'collecting…'; return; }
+  const x0 = xs[0], x1 = xs[xs.length - 1], yMax = Math.max(1e-9, ...series.flatMap(s => s.y)) * 1.1;
+  const X = v => m.l + (v - x0) / (x1 - x0 || 1) * (W - m.l - m.r), Y = v => H - m.b - v / yMax * (H - m.t - m.b);
+  for (let k = 0; k <= 4; k++) { const v = yMax * k / 4; el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: k ? 'var(--grid)' : 'var(--line)' }, svg);
+    el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, svg).textContent = yFmt(v); }
+  el('text', { x: m.l, y: H - 6 }, svg).textContent = '−' + fmtDur(x1 - x0);
+  el('text', { x: W - m.r, y: H - 6, 'text-anchor': 'end' }, svg).textContent = 'now';
+  series.forEach(s => { el('path', { d: s.y.map((v, i) => (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ',' + Y(v).toFixed(1)).join(''), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+    if (series.length > 1) { const t = el('text', { x: W - m.r + 6, y: Y(s.y[s.y.length - 1]) + 4 - (s.dy || 0) }, svg); t.textContent = s.name; t.style.fill = 'var(--fg2)'; } });
+  const markAt = new Map(marks.map(k => [k.i, k.html]));
+  marks.forEach(k => { const x = X(xs[k.i]), y = H - m.b; el('path', { d: `M${x - 4},${y + 1} L${x + 4},${y + 1} L${x},${y - 6} Z`, fill: 'var(--miss)', stroke: 'var(--surface)', 'stroke-width': 1 }, svg); });
+  const cross = el('line', { y1: m.t, y2: H - m.b, stroke: 'var(--fg3)', visibility: 'hidden' }, svg);
+  const dots = series.map(s => el('circle', { r: 4, fill: s.color, stroke: 'var(--surface)', 'stroke-width': 2, visibility: 'hidden' }, svg));
+  const hit = el('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' }, svg);
+  hit.addEventListener('mousemove', e => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; const sp = p.matrixTransform(svg.getScreenCTM().inverse());
+    const tx = x0 + (sp.x - m.l) / (W - m.l - m.r) * (x1 - x0); let i = 0; while (i < xs.length - 1 && xs[i + 1] <= tx) i++;
+    cross.setAttribute('x1', X(xs[i])); cross.setAttribute('x2', X(xs[i])); cross.setAttribute('visibility', 'visible');
+    series.forEach((s, k) => { dots[k].setAttribute('cx', X(xs[i])); dots[k].setAttribute('cy', Y(s.y[i])); dots[k].setAttribute('visibility', 'visible'); });
+    showTip(e, clock(xs[i]) + '<br>' + series.map(s => `<span style="color:${s.color}">■</span> ${s.name}: ${yFmt(s.y[i])}`).join('<br>') + (markAt.has(i) ? '<br>' + markAt.get(i) : '')); });
+  hit.addEventListener('mouseleave', () => { hideTip(); cross.setAttribute('visibility', 'hidden'); dots.forEach(d => d.setAttribute('visibility', 'hidden')); });
+}
+const WINDOW_S = 300;   // charts show the last 5 minutes before the shown frame
+function charts(i) {
+  const t1 = F[i].t; let a = i; while (a > 0 && F[a - 1].t >= t1 - WINDOW_S) a--;
+  const W = F.slice(a, i + 1), xs = W.map(f => f.t);
+  const inR = W.map((f, k) => rateAt(a + k, 'in')), outR = W.map((f, k) => rateAt(a + k, 'out'));
+  const lastIn = inR[inR.length - 1], lastOut = outR[outR.length - 1];
+  const tot = f => f.missing.total ?? f.missing.events, marks = [];
+  W.forEach((f, k) => { const prev = a + k > 0 ? tot(F[a + k - 1]) : 0, d = tot(f) - prev;
+    if (d > 0) marks.push({ i: k, html: `<span style="color:var(--miss)">▲</span> +${fmt(d)} missing (${fmt(tot(f))} so far)` }); });
+  lineChart($('cRate'), xs, [{ name: 'incoming', y: inR, color: 'var(--in)', dy: lastIn >= lastOut ? 6 : -6 },
+                             { name: 'outgoing', y: outR, color: 'var(--out)', dy: lastIn >= lastOut ? -6 : 6 }], v => si(v), marks);
+  lineChart($('cDaos'), xs, [{ name: 'in DAOS', y: W.map((f, k) => daosAt(a + k) / 2 ** 30), color: 'var(--in)' }], v => v.toFixed(v < 10 ? 2 : 0));
+}
+
+function writers(f) {
+  if (!f.writers.length) { $('writers').innerHTML = '<p>No writer has claimed a slot yet.</p>'; return; }
+  $('writers').innerHTML = '<table class="t"><tr><th>slot</th><th>state</th><th>index watermark</th><th>lag</th><th>events committed</th><th>GiB</th></tr>' +
+    f.writers.map(w => { const late = !w.done && w.lag > 5;
+      const state = w.done ? '<span class="mut">done</span>' : late ? '<span class="ico bad">!</span> <span class="bad">behind</span>' : '<span class="ico ok">✓</span> running';
+      return `<tr><td>${w.slot}</td><td>${state}</td><td>${w.wm_index ?? '–'}</td><td>${w.lag != null ? w.lag.toFixed(1) + ' s' : '–'}</td><td>${fmt(w.events)}</td><td>${(w.bytes / 2 ** 30).toFixed(2)}</td></tr>`; }).join('') + '</table>';
+}
+</script>
+</body></html>

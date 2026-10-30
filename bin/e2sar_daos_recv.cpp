@@ -1,6 +1,6 @@
 /**
     e2sar_daos_recv: receive events from an E2SAR sender and store them in DAOS with the
-    run layout of docs/DAOS_LAYOUT.md, using asynchronous writes on DAOS event queues.
+    run layout of docs/concepts/daos-layout.md, using asynchronous writes on DAOS event queues.
 
     The pool must exist. --cont-name is the run: one run per container. The first
     receiver creates the container and the run record; every receiver claims a writer

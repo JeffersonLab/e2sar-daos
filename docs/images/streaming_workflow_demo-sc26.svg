@@ -1,14 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="290" viewBox="0 0 980 290" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1f2328">
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="430" viewBox="0 0 980 430" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1f2328">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
     </marker>
   </defs>
-  <rect width="980" height="290" fill="#ffffff"/>
+  <rect width="980" height="430" fill="#ffffff"/>
 
   <!-- regions -->
   <text x="20" y="28" font-weight="bold" fill="#57606a">Offsite</text>
-  <rect x="440" y="10" width="530" height="270" rx="10" fill="none" stroke="#8c959f" stroke-dasharray="6 4"/>
+  <rect x="440" y="10" width="530" height="370" rx="10" fill="none" stroke="#8c959f" stroke-dasharray="6 4"/>
   <text x="955" y="30" text-anchor="end" font-weight="bold" fill="#57606a">JLab</text>
 
   <!-- senders -->
@@ -48,4 +48,28 @@
   <text x="845" y="228" text-anchor="middle" font-weight="bold">e2sar_daos_read --live</text>
   <text x="845" y="247" text-anchor="middle" font-size="12">one file per --interval s, in order</text>
   <line x1="845" y1="159" x2="845" y2="203" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- monitors (optional, read-only) -->
+  <rect x="470" y="245" width="220" height="70" rx="8" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="580" y="267" text-anchor="middle" font-weight="bold">e2sar_daos_monitor</text>
+  <text x="580" y="285" text-anchor="middle" font-size="12">reads the index every 2 s (read-only)</text>
+  <text x="580" y="302" text-anchor="middle" font-size="12">+ viz/daos_monitor/serve.py :8766</text>
+  <path d="M735,150 C712,150 712,270 692,270" fill="none" stroke="#57606a" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+  <rect x="735" y="300" width="220" height="62" rx="8" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="845" y="323" text-anchor="middle" font-weight="bold">EVIO viewer: serve.py --live</text>
+  <text x="845" y="341" text-anchor="middle" font-size="12">newest bundle, sampled :8765</text>
+  <line x1="845" y1="261" x2="845" y2="298" stroke="#57606a" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="852" y="285" font-size="12" fill="#57606a">files in -o DIR</text>
+
+  <!-- booth laptop -->
+  <text x="20" y="262" font-weight="bold" fill="#57606a">SC26 booth</text>
+  <rect x="20" y="275" width="300" height="70" rx="8" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="170" y="299" text-anchor="middle" font-weight="bold">Laptop: two browser tabs</text>
+  <text x="170" y="318" text-anchor="middle" font-size="12">ssh -L 8766:… -L 8765:…</text>
+  <text x="170" y="335" text-anchor="middle" font-size="12">localhost:8766 · localhost:8765</text>
+  <line x1="468" y1="290" x2="322" y2="300" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M845,362 L845,400 L170,400 L170,347" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="395" y="290" text-anchor="middle" font-size="12" fill="#57606a">SSH tunnel</text>
+  <text x="500" y="415" text-anchor="middle" font-size="12" fill="#57606a">SSH tunnel: ≤ 32 MiB sample per bundle</text>
 </svg>

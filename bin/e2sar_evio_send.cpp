@@ -26,7 +26,7 @@
 
     The defaults (16 Segmenters x 1 socket, 20 Gbps) are the highest setting that was lossless
     in repeated runs on the testbed (with synthetic ~95 KB events), with e2sar_daos_recv
-    --threads 32 --deq 16 --inflight 128 (docs/E2E_BENCHMARK.md).
+    --threads 32 --deq 16 --inflight 128 (docs/howto/e2e-bench.md).
 
     --rate is the total for all Segmenters, paced by the producing threads (the Segmenter's
     own rate limit works in whole microseconds per event, too coarse for small events).

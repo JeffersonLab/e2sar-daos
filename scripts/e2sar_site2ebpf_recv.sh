@@ -1,5 +1,5 @@
 #!/bin/bash
-# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/LCF2JLAB_GUIDE.md
+# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/sites/perlmutter.md
 # (remote sender ──▶ ESnet LB ──▶ e2sar_daos_recv on ebpf2201 and ebpf2203 ──▶ DAOS; the sender is
 # on Perlmutter by default, or on Lux with SITE=lux, see below).
 #
@@ -61,7 +61,7 @@
 
 source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset variables
 set -u
-: "${E2SAR_BIN:?E2SAR_BIN not set (see docs/ESNET_LB_TESTING.md step 1)}"
+: "${E2SAR_BIN:?E2SAR_BIN not set (see docs/howto/install-e2sar.md, the E2SAR environment)}"
 BIN=$E2SAR_DAOS_BUILD/bin
 ME=$(hostname -s)
 

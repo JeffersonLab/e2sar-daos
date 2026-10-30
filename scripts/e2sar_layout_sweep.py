@@ -5,7 +5,7 @@ driven from a machine that can SSH to both nodes (as e2sar_e2e_sweep.sh).
 
   e2sar_layout_sweep.py SCENARIO [SCENARIO ...] [--out results.jsonl] [--dry]
 
-Scenarios (docs/STREAMING_WORKFLOW.md#tuning):
+Scenarios (docs/results/2026-10-29-receiver-tuning.md):
   a      e2sar_perf 20 KB events at 2.5 Gbps, one stream; --deq x --flush-us
   b      e2sar_ft: one 2 GB EVIO file at 5 Gbps (lossless), then several files unpaced (lossy)
   c1     e2sar_daos_recv --synthetic 1 MiB events, unpaced: the DAOS side alone; --deq x --inflight

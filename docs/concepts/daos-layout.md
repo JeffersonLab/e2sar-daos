@@ -1,3 +1,12 @@
+---
+type: Concept
+title: "Data layout in DAOS"
+description: "Layout v2: one container per run, with a catalog, a seconds object, an index per UTC second and byte arrays per second and writer; the writer–reader contract."
+tags: [daos, layout, e2sar_daos_recv, e2sar_daos_read]
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/DAOS_LAYOUT.md", title: "DAOS_LAYOUT.md at 0d85d00" }
+---
+
 # Data layout in DAOS
 
 ## Overview
@@ -25,12 +34,12 @@ pool sc26
     └── data[1793280001, 0]  …
 ```
 
-- **One run per container.** The container label is the run's name. Deleting a run is destroying its container. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one container per run, `<CONT_LABEL>_<UTC epoch s>`.
+- **One run per container.** The container label is the run's name. Deleting a run is destroying its container. [`e2sar_site2ebpf_recv.sh`](../../scripts/e2sar_site2ebpf_recv.sh) makes one container per run, `<CONT_LABEL>_<UTC epoch s>`.
 - **Mixed object types.** The container is a plain DAOS container (layout type "unknown"). It holds a KV object, integer-key objects and byte arrays. It isn't POSIX, so dfuse can't mount it.
 - **Times are UTC seconds** from each receiver's own clock. The receivers need NTP (or PTP). The reader never compares its own clock with the receivers': it decides from the watermarks they publish.
 - **No host information.** Writers are known only by their slot.
 
-Reading is described in [DAOS_READER.md](DAOS_READER.md).
+Reading is described in [e2sar_daos_read](../reference/e2sar_daos_read.md).
 
 ## Writer–reader contract
 
@@ -51,7 +60,7 @@ Rules that follow:
   - The first writer creates the container and the `run` record. A reader started before that exits with an error ("container not found: start the writers first"); it doesn't wait.
   - The reader can start any time after that: before the senders, during the run, or after it. A reader started late, or restarted, catches up, since everything it needs is still in the container.
   - A writer that joins late claims the next slot. A running reader picks the new slot up from `writer/<slot>` and waits for its watermark from then on.
-- **Readers don't change anything a writer reads.** Readers only read, except the modes that remove data from DAOS once it is in files ([DAOS_READER.md](DAOS_READER.md)). Those never touch the catalog, and destroy the container only once every writer is done.
+- **Readers don't change anything a writer reads.** Readers only read, except the modes that remove data from DAOS once it is in files ([e2sar_daos_read](../reference/e2sar_daos_read.md)). Those never touch the catalog, and destroy the container only once every writer is done.
 - **End of run** is decided from the container alone: every claimed slot has `done/<slot>`, the reader has read past every final watermark, and no new slot has appeared for `--end-wait` seconds (default 10).
 - **A reader's own state** (restart point, missing-event list) stays in its output directory, never in the container.
 
@@ -96,7 +105,7 @@ A receiver prints its slot in its own log ("writer slot 1"), so a slot can be ma
 - `index=S`: every index write this receiver started before second S has completed. No new entry can appear in `index[T]` for T < S, because its clock is already past T.
 - `data=S'`: every batch this receiver opened before second S' (so every batch in `data[T, s]` with T < S') is committed: its data write and its index write have both completed. Used by readers that remove data from DAOS, to know when `data[T, s]` can go.
 
-**A second T is complete** when every claimed slot has `index > T` or a `done/<slot>` entry. The reader reads `index[T]` only after that, so it never misses an entry that is still being written. If a slot's watermark hasn't changed for `--stall` seconds (default 30, measured on the reader's clock as time since it last saw the value change; receiver killed), the reader warns and continues without that slot. If the slot's watermark moves again later, the reader reads those seconds again for that slot and writes what it adds there to a separate late file ([DAOS_READER.md](DAOS_READER.md#--live-and---live-rm-one-file-per---interval-seconds)).
+**A second T is complete** when every claimed slot has `index > T` or a `done/<slot>` entry. The reader reads `index[T]` only after that, so it never misses an entry that is still being written. If a slot's watermark hasn't changed for `--stall` seconds (default 30, measured on the reader's clock as time since it last saw the value change; receiver killed), the reader warns and continues without that slot. If the slot's watermark moves again later, the reader reads those seconds again for that slot and writes what it adds there to a separate late file ([e2sar_daos_read](../reference/e2sar_daos_read.md#--live-and---live-rm-one-file-per---interval-seconds)).
 
 ## Batches
 
@@ -219,7 +228,7 @@ index[T']    dkey (0 << 48) | 17: header {T_data = T, offset = c × 1 MiB, lengt
                                    entry  {evtNum 0, offset 0, size 1776313996, dataId 4321}
 ```
 
-`T'` is the second the last write completed, a few seconds after T. `e2sar_daos_read --offline` restores it byte for byte ([DAOS_READER.md](DAOS_READER.md#--offline-one-file-per-event)). If any packet of the file was lost, E2SAR dropped the whole event and nothing is written to DAOS.
+`T'` is the second the last write completed, a few seconds after T. `e2sar_daos_read --offline` restores it byte for byte ([e2sar_daos_read](../reference/e2sar_daos_read.md#--offline-one-file-per-event)). If any packet of the file was lost, E2SAR dropped the whole event and nothing is written to DAOS.
 
 ### coda-fb frames, ~20 KB at 2.5 Gbps
 
@@ -230,7 +239,7 @@ data[T, 1]   chunk 2000: frames 1043, 1047, 1048, 1052, 1053 (~100 KB) | hole |
 index[T]     dkey (1 << 48) | 391: header {T_data T, offset 2000 × 1 MiB, length ~100 KB, n 5}, 5 entries
 ```
 
-With the default `--interval 5`, `e2sar_daos_read --live` writes one ~1.6 GB file per 5 seconds with ~78,000 frames in frame order. Fewer dequeue threads or a longer flush fill the batches more: see the tuning plan in [STREAMING_WORKFLOW.md](STREAMING_WORKFLOW.md#tuning).
+With the default `--interval 5`, `e2sar_daos_read --live` writes one ~1.6 GB file per 5 seconds with ~78,000 frames in frame order. Fewer dequeue threads or a longer flush fill the batches more: see the tuning plan in [2026-10-29-receiver-tuning](../results/2026-10-29-receiver-tuning.md#tuning).
 
 ## Cost per event
 
@@ -242,4 +251,4 @@ With the default `--interval 5`, `e2sar_daos_read --live` writes one ~1.6 GB fil
 | 20 KB | ~0.04 with full batches |
 | Finding events to read | one index listing per second |
 
-The receive side (E2SAR and the NIC, ~25 Gbps lossless in [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md)) remains the limit. The few DAOS operations show up as few dequeue threads and little CPU for the rate, and a reader whose cost doesn't grow with the run.
+The receive side (E2SAR and the NIC, ~25 Gbps lossless in [2026-10-19-bottleneck-e2sar-ft](../results/2026-10-19-bottleneck-e2sar-ft.md)) remains the limit. The few DAOS operations show up as few dequeue threads and little CPU for the rate, and a reader whose cost doesn't grow with the run.

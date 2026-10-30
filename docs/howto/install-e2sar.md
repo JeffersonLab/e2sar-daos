@@ -1,3 +1,12 @@
+---
+type: How-To
+title: "Install E2SAR from a GitHub release"
+description: "Install the latest E2SAR release with root, without root (testbed), or on an LCF (adding re2), verify it, and build e2sar-daos against it."
+tags: [e2sar, install, rpm, lcf]
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/E2SAR_INSTALL.md", title: "E2SAR_INSTALL.md at 0d85d00" }
+---
+
 # Installing the latest E2SAR from a GitHub release
 
 e2sar-daos builds against a prebuilt [E2SAR](https://github.com/JeffersonLab/E2SAR), and uses its tools (`e2sar_ft`, `lbadm`) for testing.
@@ -53,7 +62,7 @@ export PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig
 export BOOST_ROOT=/usr/local
 export LD_LIBRARY_PATH=/usr/local/lib64:/usr/local/lib:$LD_LIBRARY_PATH
 ```
-This is what [containers/rocky-dev/Dockerfile](../containers/rocky-dev/Dockerfile) does. To change the version there, use `--build-arg E2SAR_VERSION=<ver> --build-arg ROCKY_VERSION=<9.x>`.
+This is what [containers/rocky-dev/Dockerfile](../../containers/rocky-dev/Dockerfile) does. To change the version there, use `--build-arg E2SAR_VERSION=<ver> --build-arg ROCKY_VERSION=<9.x>`.
 
 A system-wide install replaces any older E2SAR in `/usr/local` for every user on the node.
 Don't upgrade a shared node without asking its admins. Use section B instead.
@@ -71,16 +80,22 @@ ln -sfn $DEST $HOME/opt/e2sar          # optional: a stable path that the env be
 ```
 On Debian/Ubuntu, the equivalent is `dpkg-deb -x e2sar_${VER}_amd64.deb $DEST`.
 
-The `*.pc` files inside still say `prefix=/usr/local`, so treat `$DEST` as a staging root. Set these in each shell, or in your env file:
+### The E2SAR environment (`~/.bashrc`)
+
+The `*.pc` files inside still say `prefix=/usr/local`, so treat `$DEST` as a staging root. Put this in `~/.bashrc`, so every shell, script and batch job gets it. It's the one E2SAR environment the other guides refer to; they add only what their site or test needs:
 
 ```bash
-export E2SAR_ROOT=$HOME/opt/e2sar
+## E2SAR
+export E2SAR_ROOT=$HOME/opt/e2sar           # E2SAR staging root
 export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
 export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
 export BOOST_ROOT=$E2SAR_ROOT/usr/local
 export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
-export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin
+export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin   # not on PATH; call the tools as $E2SAR_BIN/<tool>
+export PATH=$HOME/.local/bin:$PATH           # meson, ninja
 ```
+
+Why each variable is needed: [build](build.md#point-pkg-config-and-meson-to-e2sar). If E2SAR is installed straight into its prefix (section A), drop `E2SAR_ROOT` and `PKG_CONFIG_SYSROOT_DIR` and use the paths under `/usr/local`.
 
 On the ebpf nodes, `$HOME` is shared, so one extraction serves both nodes.
 `~/opt/e2sar` there is a plain directory holding 0.4.0rc1, not a symlink. Before you `ln -sfn` over it, move it aside, for example to `~/opt/e2sar-0.4.0rc1.old`.
@@ -104,8 +119,8 @@ ls $DEST/usr/lib64/libre2.so.9                     # not under usr/local
 export LD_LIBRARY_PATH=$DEST/usr/lib64:$LD_LIBRARY_PATH
 ```
 
-The library lands in `$DEST/usr/lib64`, not `$DEST/usr/local/lib64`, so that directory has to be on `LD_LIBRARY_PATH` too. The LCF's `~/.bashrc` in [LCF2JLAB_GUIDE.md step 1](LCF2JLAB_GUIDE.md#1-e2sar-on-the-lcf-once) already has it.
-That is enough to run the tools (`e2sar_perf`, `lbadm`). Building against E2SAR (e2sar-daos, `pkg-config --libs e2sar`) also needs `re2.pc` from `re2-devel`; on EL9 that's `dnf install re2-devel`, as in [containers/rocky-dev/Dockerfile](../containers/rocky-dev/Dockerfile).
+The library lands in `$DEST/usr/lib64`, not `$DEST/usr/local/lib64`, so that directory has to be on `LD_LIBRARY_PATH` too. The LCF's `~/.bashrc` in [perlmutter step 1](../sites/perlmutter.md#1-e2sar-on-the-lcf-once) already has it.
+That is enough to run the tools (`e2sar_perf`, `lbadm`). Building against E2SAR (e2sar-daos, `pkg-config --libs e2sar`) also needs `re2.pc` from `re2-devel`; on EL9 that's `dnf install re2-devel`, as in [containers/rocky-dev/Dockerfile](../../containers/rocky-dev/Dockerfile).
 
 ## 2. Verify
 
@@ -119,7 +134,7 @@ pkg-config --libs e2sar                       # paths under $E2SAR_ROOT/usr/loca
 
 Always call the tools by full path (`$E2SAR_BIN/e2sar_ft`). If an older E2SAR is ever installed in `/usr/local/bin`, a bare `e2sar_ft` runs that one instead.
 
-If you have an LB instance URI (see [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md)), check the control plane too:
+If you have an LB instance URI (see [lb-test](lb-test.md)), check the control plane too:
 ```bash
 $E2SAR_BIN/lbadm --status                     # LB ID, registered senders and workers
 ```
@@ -131,10 +146,10 @@ export PATH=$HOME/.local/bin:$PATH            # meson, ninja
 cd ~/daq/e2sar-daos
 meson setup --wipe build                      # --wipe after an E2SAR upgrade
 meson compile -C build
-meson test -C build --suite unit              # Ok: 3, Fail: 0
+meson test -C build --suite unit              # Ok: 5, Fail: 0
 ```
 The project version printed by `meson setup` includes the E2SAR version, for example `0.1.0-e2sar_0.4.0rc1`.
-For link errors such as `grpc::experimental::...` undefined references, see [README.md, Build](../README.md#point-pkg-config-and-meson-to-e2sar).
+For link errors such as `grpc::experimental::...` undefined references, see [README.md, Build](build.md#point-pkg-config-and-meson-to-e2sar).
 
 ## Upgrading
 

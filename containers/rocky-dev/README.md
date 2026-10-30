@@ -32,7 +32,7 @@ Silicon Macs it runs under emulation, so expect it to be slower than native.
 
 The JLab border firewall re-signs HTTPS traffic with the JLab CA. Without that CA, `dnf` and `curl`
 inside the build fail with `SSL certificate problem: self-signed certificate in certificate chain`.
-Any `*.crt` or `*.pem` file in [`certs/`](./certs/) is trusted during the build. These files are
+Any `*.crt` or `*.pem` file in [`certs/`](certs/) is trusted during the build. These files are
 git-ignored.
 
 On a Mac, export the JLab CAs from the keychain:

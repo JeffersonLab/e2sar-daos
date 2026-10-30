@@ -1,0 +1,7 @@
+# Agent notes for e2sar-daos
+
+- **Docs:** start at [docs/index.md](docs/index.md) and load only the files you need. The docs are an [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle: one topic per file, each opening with a YAML header (`type`, `title`, `description`, `tags`, `sources`; `status`, `stale_after`, `daos_layout` where they apply). Folder indexes list every file with its description.
+- **Trust:** a file with `status: draft` hasn't been run yet. Once `stale_after` has passed, check the file against the code before relying on it. In `results/`, `daos_layout` says which DAOS layout the numbers are for (`v1` is the old KV layout).
+- **Keeping the docs in shape:** a new doc goes in the folder of its `type` (`concepts/`, `howto/`, `sites/`, `reference/`, `results/`), with a header and a line in that folder's `index.md` (a bullet: title linked to the file, a dash, the description). `index.md` files have no frontmatter, except `okf_version` in `docs/index.md`. Note changes in `docs/log.md`, newest first. Name results `YYYY-MM-DD-<topic>.md`. Use relative links, so they also work on GitHub.
+- **Build:** `meson setup build && meson compile -C build && meson test -C build --suite unit` ([docs/howto/build.md](docs/howto/build.md)). The `integration` suite and the apps need a DAOS pool; the sites in [docs/sites/](docs/sites/index.md) have one.
+- **Secrets:** never put LB tokens or instance URIs in the repo. The docs only refer to the private `~/.bashrc` and `~/e2sar-instance.env`.

@@ -1,7 +1,18 @@
+---
+type: Site
+title: "Testing workflow on ALCF Aurora"
+description: "The commands for one test cycle on Aurora, in order: one-time setup, build, then one PBS job per stage. Not yet run."
+tags: [aurora, alcf, pbs]
+status: draft
+stale_after: 2027-01-31T00:00:00Z
+sources:
+  - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/AURORA_WORKFLOW.md", title: "AURORA_WORKFLOW.md at 0d85d00" }
+---
+
 # Testing workflow on ALCF Aurora
 
 The commands for one test cycle on Aurora, in order: one-time setup, build, then one PBS job per test stage.
-For why Aurora needs a different procedure, the benchmark sweeps and the open questions, see [TESTING.md, section 5](TESTING.md#5-alcf-aurora-planned).
+For why Aurora needs a different procedure, the benchmark sweeps and the open questions, see [aurora-plan, section 5](aurora-plan.md#5-alcf-aurora-planned).
 
 **Status: not yet run on Aurora.** Steps marked *(check)* rest on assumptions. When a step behaves differently, fix it here and update section 5.
 
@@ -29,30 +40,21 @@ Go on to the next stage only when the current one passes.
 
 ### Environment (`~/.bashrc`)
 
-Every shell, PBS job and `scripts/e2sar_e2e_bench.sh` reads this:
+Every shell, PBS job and `scripts/e2sar_e2e_bench.sh` reads `~/.bashrc`. Put the [E2SAR environment](../howto/install-e2sar.md#the-e2sar-environment-bashrc) in it, with E2SAR built into the staging root `$HOME/opt/e2sar`, plus these Aurora lines:
 
 ```bash
 # e2sar-daos on Aurora
 module use /soft/modulefiles 2>/dev/null && module load daos 2>/dev/null   # (check) the module may be daos/base
-E2SAR_ROOT=$HOME/opt/e2sar
-export E2SAR_BIN=$E2SAR_ROOT/usr/local/bin
-export PKG_CONFIG_PATH=$E2SAR_ROOT/usr/local/lib64/pkgconfig:$E2SAR_ROOT/usr/local/lib/pkgconfig
-export PKG_CONFIG_SYSROOT_DIR=$E2SAR_ROOT
-export BOOST_ROOT=$E2SAR_ROOT/usr/local
-export LD_LIBRARY_PATH=$BOOST_ROOT/lib64:$BOOST_ROOT/lib:$LD_LIBRARY_PATH
-export PATH=$HOME/.local/bin:$PATH                # meson, ninja
 export DAOS_POOL=e2sar-daos
 export PROJECT=<your ALCF project>
 ```
-
-If E2SAR is installed straight into a prefix instead of a staging root, drop `PKG_CONFIG_SYSROOT_DIR`, as in the [README](../README.md#point-pkg-config-and-meson-to-e2sar).
 
 ### E2SAR and the repo
 
 ```bash
 # login node
 python3 -m pip install --user meson ninja
-# E2SAR: build from source into $E2SAR_ROOT (see E2SAR_INSTALL.md; the EL9 RPM doesn't run on SLES)
+# E2SAR: build from source into $E2SAR_ROOT (see docs/howto/install-e2sar.md; the EL9 RPM doesn't run on SLES)
 pkg-config --modversion e2sar                     # sanity check
 
 git clone git@github.com:JeffersonLab/e2sar-daos.git ~/daq/e2sar-daos
@@ -86,7 +88,7 @@ Interactive, the first time:
 qstat -Bf | grep valid_filesystems                # check the name daos_user
 qsub -I -A $PROJECT -q debug -l select=1 -l walltime=00:30:00 -l filesystems=home:flare:daos_user
 cd ~/daq/e2sar-daos
-meson test -C build --suite unit -v               # Ok: 3
+meson test -C build --suite unit -v               # Ok: 5
 meson test -C build --suite integration -v        # Ok: 1
 ```
 
@@ -107,7 +109,7 @@ meson test -C build --suite unit -v && meson test -C build --suite integration -
 qsub ~/daq/jobs/suites.pbs; qstat -u $USER
 ```
 
-**Pass:** `Ok: 3` and `Ok: 1`, with 5 matching `put`/`get` SHA-256 pairs in the log.
+**Pass:** `Ok: 5` and `Ok: 1`, with 5 matching `put`/`get` SHA-256 pairs in the log.
 
 ---
 
@@ -115,7 +117,7 @@ qsub ~/daq/jobs/suites.pbs; qstat -u $USER
 
 ### 3a. One node, loopback
 
-In an interactive 1-node job, follow [TESTING.md, section 4](TESTING.md#4-applications-end-to-end-on-ebpf2203) with these changes:
+In an interactive 1-node job, follow [ebpf-testbed, section 4](ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203) with these changes:
 - Add `--pool e2sar-daos` to both `e2sar_daos_recv` and `e2sar_daos_read`. `e2sar_daos_recv` defaults to `sc26`; `e2sar_daos_read` has no default and requires `--pool`.
 - Run the receiver in the background in the same shell (`... &> /tmp/$USER/recv.log &`), or in a second `ssh` session to the same compute node.
 - Source files: copy a few EVIO files to `/tmp/$USER/e2sar_src` on the node, plus the random file.
@@ -174,7 +176,7 @@ wait
 ```bash
 qsub -v RATE=20,DEQ=16 ~/daq/jobs/bench.pbs        # one point of a sweep
 ```
-Sweep one variable per job series, in the order of the table in [TESTING.md, Phase 4](TESTING.md#phase-4-throughput-and-latency-n2n-bench). Run each point twice.
+Sweep one variable per job series, in the order of the table in [aurora-plan, Phase 4](aurora-plan.md#phase-4-throughput-and-latency-n2n-bench). Run each point twice.
 `ethtool -S hsn0` may not have the counters the script reads for drops *(check)*. If so, the bench still checks every digest, but the drop column will be empty.
 
 ---
