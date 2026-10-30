@@ -6,14 +6,13 @@ tags: [monitoring, e2sar_daos_monitor, evio-interactive-view, ssh, sc26]
 sources:
   - { id: monitor, resource: "../reference/e2sar_daos_monitor.md", title: "e2sar_daos_monitor and its dashboard" }
   - { id: viewer, resource: "https://code.jlab.org/xmei/evio-interactive-view/-/tree/sc26-live-viz", title: "evio-interactive-view, branch sc26-live-viz: serve.py --live, live_replay.py, live_demo.py" }
-status: draft
 ---
 
 # Live monitoring of a run from a laptop (SC26 booth)
 
 Two pages for one run, on a laptop that reaches the reader node only through SSH: the DAOS monitor (port 8766) and the EVIO live viewer (port 8765). What each shows and where it runs: [streaming-workflow, Monitoring](../concepts/streaming-workflow.md#monitoring).
 
-Status: both pages were tested on a Mac with their demo modes, and the viewer with a real EVIO file replayed as bundles; not yet against a run in DAOS.
+Status: run on the ebpf testbed on 2026-10-30 (receiver on ebpf2203; monitor, reader, sender and both pages on ebpf2201), viewed from a Mac through the tunnel of step 4.
 
 ## 0. Once: get the code on the reader node
 
@@ -91,5 +90,3 @@ python serve.py --live /tmp/live                                                
 # or made-up bundles at SC26 scale: 18 crates × 16 boards × 16 channels, ~230 MB each
 python live_demo.py /tmp/live
 ```
-
-![EVIO live viewer with real data: frames_thread0_file0000.part000.evio (EC5/EC6 cosmics, 2 crates) replayed with live_replay.py](../images/sc26_evio_live_viewer_real.png)

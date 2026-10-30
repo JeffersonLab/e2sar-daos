@@ -6,16 +6,15 @@ tags: [e2sar_daos_monitor, monitoring, dashboard, sc26]
 sources:
   - { id: monitor, resource: "../../bin/e2sar_daos_monitor.cpp", title: "bin/e2sar_daos_monitor.cpp" }
   - { id: dashboard, resource: "../../viz/daos_monitor/serve.py", title: "viz/daos_monitor/serve.py and index.html" }
-status: draft
 ---
 
 # `e2sar_daos_monitor` and its dashboard
 
 `e2sar_daos_monitor` watches one run's DAOS container and writes its state every `--every` seconds (default 2) as one JSON line. [`viz/daos_monitor/serve.py`](../../viz/daos_monitor/serve.py) serves a web page that follows those lines live or replays them. Where it fits in the run: [streaming-workflow, Monitoring](../concepts/streaming-workflow.md#monitoring). Steps for the SC26 booth: [live-monitoring](../howto/live-monitoring.md).
 
-Status: the dashboard was tested with `serve.py --demo`; the monitor has not yet run against DAOS.
+Status: run against DAOS on the ebpf testbed (2026-10-30, 17.4M events at 61k Events/s, 4 dataIds, `--live-rm`): ~8% of one core, one look every 2.02 s, its incoming count within 0.1% of the receiver's committed count. In a second run it flagged 4,330 frames the sender failed to send, within one update, matching the reader's `_missing.txt`.
 
-![The DAOS monitor dashboard, demo data: 18 dataIds, 2 writers, --live-rm reader](../images/sc26_daos_monitor.png)
+![The DAOS monitor dashboard during a real run on the ebpf testbed: frames_thread0_file0020.evio, 4 streams × ~15k frames/s (0.2 Gbps), e2sar_daos_read --live-rm --interval 2 --rm-after 2. The 4,330 missing are frames the sender failed to send (sendto: Operation not permitted, 1,082–1,083 per stream); the receiver lost none, and the reader's _missing.txt lists the same numbers](../images/sc26_daos_monitor.png)
 
 ## What it counts
 
@@ -66,7 +65,7 @@ python3 viz/daos_monitor/serve.py /scratch/$USER/<run>_monitor.jsonl          # 
 | `-o, --out` | `<cont>_monitor.jsonl` | JSON lines file, appended |
 | `--every` | 2 | Seconds between looks at the container |
 | `--grace` | 5 | Seconds an event number may be absent before it counts as missing |
-| `--span` | 0 | Event numbers per `dataId` in the strip. 0: `--strip-seconds` of events at the fastest `dataId`'s rate, rounded up to a power of two × `--bins`, fixed once known |
+| `--span` | 0 | Event numbers per `dataId` in the strip. 0: `--strip-seconds` of events at the fastest `dataId`'s rate, rounded up to a power of two × `--bins`; it only grows, so it settles after the first updates with data |
 | `--strip-seconds` | 32 | With `--span 0`: about this many seconds of events in the strip |
 | `--bins` | 600 | Bins per strip |
 

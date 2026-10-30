@@ -53,9 +53,9 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 | Load on the run | One read of each 32-byte index entry, one `seconds` listing per 2 s (estimated, not yet measured on DAOS) | None on DAOS. Reads at most the sample (default 32 MiB) of each bundle from the page cache |
 | Load on the page | ~4 KB per update; the page draws one canvas and three small charts | The browser decodes the sample: ~4,300 frames of 18 crates per 32 MiB, under 1 s |
 
-![DAOS monitor, demo data](../images/sc26_daos_monitor.png)
+![DAOS monitor during a real run on the ebpf testbed: frames_thread0_file0020.evio, 4 streams × ~15k frames/s (0.2 Gbps), e2sar_daos_read --live-rm --interval 2 --rm-after 2. The 4,330 missing are frames the sender failed to send (sendto: Operation not permitted, 1,082–1,083 per stream); the receiver lost none, and the reader's _missing.txt lists the same numbers](../images/sc26_daos_monitor.png)
 
-![EVIO live viewer, Live tab, demo data: 18 crates × 16 boards × 16 channels](../images/sc26_evio_live_viewer.png)
+![EVIO live viewer, Live tab, during the same run: EC5/EC6 cosmics, 2 crates, 256 channels](../images/sc26_evio_live_viewer.png)
 
 **What the DAOS monitor counts.** *Incoming*: events newly committed (index entries). *Outgoing*: events whose index second was removed from DAOS, by `--live-rm`; 0 with `--live`. *Missing*: event numbers absent for more than 5 s while a higher number of that `dataId` is committed, counted cumulatively (a late arrival doesn't lower it) and marked ▲ on the Events/s chart. The strip shows each `dataId`'s newest ~32 s of event numbers, moving left as new ones come in. **Replay** plays back the whole run from the JSON lines file.
 
