@@ -3,16 +3,20 @@
     end-to-end throughput and latency tests with e2sar_daos_recv.
 
     The file (--file) is read into memory. Every record in it is one frame (e.g. a built time
-    frame of the CODA streaming data in frames_thread0_*.evio), and every frame is sent as one
-    E2SAR event: the record's bytes as they are in the file, header included. The file header
-    and the trailer aren't sent.
+    frame of the CODA streaming data in frames_thread0_*.evio). Each E2SAR event is
+    --frames-per-event F consecutive frames (default 1): the records' bytes as they are in the
+    file, headers included, back to back. The file header and the trailer aren't sent. With
+    F > 1 the file's K frames make ceil(K / F) distinct events; the last one has fewer frames
+    when F doesn't divide K. CODA streaming frames are ~400 bytes, so F of 50 or so gives the
+    ~20 KB events coda-fb is expected to send, well under the Reassembler's ~85k events/s.
 
     Threading: --segmenters P independent Segmenters, each driven by its own thread with
     dataId = --dataid + i and eventSrcId = --srcid + i, so the receiver keeps their events
     apart (DAOS key <prefix>/<evtNum>/<dataId>). Each Segmenter sends on --sockets threads.
-    Each one sends the file's K frames in order as events 1..N (--events, default K: the file
-    once); event n is frame (n - 1) % K, so it starts over when N > K. --digests writes
-    "<frame> <sha256>" for every frame, so every received event can be checked.
+    Each one sends the file's E distinct events in order as events 1..N (--events, default E:
+    the file once); event n is distinct event (n - 1) % E, so it starts over when N > E.
+    --digests writes "<i> <sha256>" for every distinct event i (with F = 1: every frame), so
+    every received event can be checked.
 
     Paths: with --withcp the events go to the LB, which spreads them over the receiver's ports
     by their random entropy. Without it (node-to-node) everything goes to the data= address in
@@ -68,7 +72,7 @@ uint64_t nowNs() {
 
 // ------------------------------------------------------------------ EVIO file
 
-// One frame of the file: a whole record, as bytes in the file.
+// Bytes of the file: one frame (a whole record), or several consecutive ones.
 struct Frame {
     const uint8_t* data;
     size_t size;
@@ -136,6 +140,17 @@ std::string sha256(const Frame& b) {
     return hex;
 }
 
+// Group the file's frames into events of `perEvent` consecutive frames. The records are back
+// to back in the file, so each event is one span of its bytes; the last one may be shorter.
+std::vector<Frame> groupFrames(const std::vector<Frame>& frames, size_t perEvent) {
+    std::vector<Frame> events;
+    for (size_t i = 0; i < frames.size(); i += perEvent) {
+        const Frame& last = frames[std::min(i + perEvent, frames.size()) - 1];
+        events.push_back({frames[i].data, static_cast<size_t>(last.data + last.size - frames[i].data)});
+    }
+    return events;
+}
+
 // ------------------------------------------------------------------ sending
 
 // The URI with every data=<host>:<port> port moved up by `by` (node-to-node, no LB).
@@ -176,7 +191,7 @@ void onSent(boost::any a) {
 struct Worker {
     std::unique_ptr<Segmenter> seg;
     uint16_t dataId = 0;
-    const std::vector<Frame>* frames = nullptr;   // shared by all workers
+    const std::vector<Frame>* frames = nullptr;   // the distinct events, shared by all workers
     std::vector<EventTimes> times;
     std::atomic<uint64_t> queued{0}, done{0};
 };
@@ -221,13 +236,14 @@ int main(int argc, char** argv) {
     bool withCP = false, validate = true, multiPort = false;
     uint16_t mtu, dataId;
     uint32_t srcId;
-    size_t sockets, segmenters;
+    size_t sockets, segmenters, perEvent;
     uint64_t events;
     double rate;
     int sndBuf;
 
     opts("help,h", "show this help message");
-    opts("file,F", po::value<std::string>(&evioPath), "EVIO v6 file whose frames (records) are sent, one per event (required)");
+    opts("file,F", po::value<std::string>(&evioPath), "EVIO v6 file whose frames (records) are sent (required)");
+    opts("frames-per-event,f", po::value<size_t>(&perEvent)->default_value(1), "consecutive frames of the file per event");
     opts("uri,u", po::value<std::string>(&uriStr), "EJFAT URI (default: $EJFAT_URI)");
     opts("withcp,c", po::bool_switch(&withCP), "use the control plane: add --ip to the LB sender list, send sync packets");
     opts("ip", po::value<std::string>(&senderIP), "sender IP to add to the LB (required with --withcp)");
@@ -238,11 +254,11 @@ int main(int argc, char** argv) {
     opts("sockets,s", po::value<size_t>(&sockets)->default_value(1), "send sockets/threads per Segmenter");
     opts("bufsize,b", po::value<int>(&sndBuf)->default_value(3 * 1024 * 1024), "send socket buffer size");
     opts("rate,r", po::value<double>(&rate)->default_value(20), "total send rate in Gbps over all Segmenters (< 0: unlimited)");
-    opts("events,n", po::value<uint64_t>(&events)->default_value(0), "events per Segmenter (0: the file's frames once; more starts over)");
+    opts("events,n", po::value<uint64_t>(&events)->default_value(0), "events per Segmenter (0: the file once; more starts over)");
     opts("dataid", po::value<uint16_t>(&dataId)->default_value(4321), "dataId of the first Segmenter (+i for Segmenter i)");
     opts("srcid", po::value<uint32_t>(&srcId)->default_value(1234), "eventSrcId of the first Segmenter (+i for Segmenter i)");
     opts("timing-csv", po::value<std::string>(&timingCsv), "write per-event queue/sent times here");
-    opts("digests", po::value<std::string>(&digests), "write '<frame> <sha256>' for every frame here (event n is frame (n - 1) % frames)");
+    opts("digests", po::value<std::string>(&digests), "write '<i> <sha256>' for every distinct event i here (event n is (n - 1) % distinct events)");
 
     po::variables_map vm;
     try {
@@ -258,12 +274,13 @@ int main(int argc, char** argv) {
     }
     if (uriStr.empty() && std::getenv("EJFAT_URI"))
         uriStr = std::getenv("EJFAT_URI");
-    if (evioPath.empty() || uriStr.empty() || (withCP && senderIP.empty()) || segmenters == 0) {
-        std::cerr << "Need --file, --uri (or $EJFAT_URI), --ip with --withcp, and non-zero --segmenters" << std::endl;
+    if (evioPath.empty() || uriStr.empty() || (withCP && senderIP.empty()) || segmenters == 0 || perEvent == 0) {
+        std::cerr << "Need --file, --uri (or $EJFAT_URI), --ip with --withcp, and non-zero --segmenters and --frames-per-event"
+                  << std::endl;
         return 1;
     }
 
-    // the file's frames (records): one per event
+    // the file's frames (records), F per event
     EvioFile file;
     try {
         readEvio(evioPath, file);
@@ -271,7 +288,7 @@ int main(int argc, char** argv) {
         std::cerr << e.what() << std::endl;
         return 1;
     }
-    const std::vector<Frame>& frames = file.frames;
+    const std::vector<Frame> frames = groupFrames(file.frames, perEvent);   // the distinct events
     if (events == 0)
         events = frames.size();
     if (!digests.empty()) {
@@ -282,6 +299,7 @@ int main(int argc, char** argv) {
     size_t frameBytes = 0;
     for (auto& fr : frames)
         frameBytes += fr.size;
+    const double meanFrame = static_cast<double>(frameBytes) / file.frames.size();
     const double meanEvent = static_cast<double>(frameBytes) / frames.size();
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
@@ -342,9 +360,11 @@ int main(int argc, char** argv) {
               << "Segmenters:           " << segmenters << " x " << sockets << " sockets, dataId "
               << dataId << ".." << dataId + segmenters - 1 << std::endl
               << "File:                 " << evioPath << " (" << (file.bigEndian ? "big" : "little") << "-endian)" << std::endl
-              << "Frames:               " << frames.size() << " (records), mean "
-              << std::fixed << std::setprecision(0) << meanEvent << " bytes" << std::endl
-              << "Event:                one frame" << std::endl
+              << "Frames:               " << file.frames.size() << " (records), mean "
+              << std::fixed << std::setprecision(0) << meanFrame << " bytes" << std::endl
+              << "Event:                " << (perEvent == 1 ? std::string("one frame") : std::to_string(perEvent) + " frames")
+              << ", mean " << meanEvent << " bytes" << std::endl
+              << "Distinct events:      " << frames.size() << " (event n is (n - 1) % " << frames.size() << ")" << std::endl
               << "Events:               " << events << " per Segmenter, " << events * segmenters << " total" << std::endl
               << "Rate:                 " << (rate > 0 ? std::to_string(rate) + " Gbps total" : "unlimited") << std::endl;
 

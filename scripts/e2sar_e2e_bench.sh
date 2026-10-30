@@ -97,8 +97,9 @@ if [ "$ROLE" = send ]; then
         > "$D/send.log" 2>&1
     RC=$?
     NFRAMES=$(grep -oP 'Frames:\s+\K\d+' "$D/send.log")
-    echo "rc=$RC mode=$MODE segmenters=$SEGS sockets=$SOCKETS events=$((SEGS * EVENTS)) rate=$RATE frames=${NFRAMES:-0} evio=$(basename "$EVIO_FILE" | tr -c "A-Za-z0-9._\n-" _)" > "$D/sent"
-    grep -E "File:|Frames:|Sent:|Sender goodput" "$D/send.log" | sed "s/^/[send $TAG] /"
+    NDISTINCT=$(grep -oP 'Distinct events:\s+\K\d+' "$D/send.log")   # event n is (n - 1) % NDISTINCT
+    echo "rc=$RC mode=$MODE segmenters=$SEGS sockets=$SOCKETS events=$((SEGS * EVENTS)) rate=$RATE frames=${NFRAMES:-0} distinct=${NDISTINCT:-${NFRAMES:-0}} evio=$(basename "$EVIO_FILE" | tr -c "A-Za-z0-9._\n-" _)" > "$D/sent"
+    grep -E "File:|Frames:|Event:|Sent:|Sender goodput" "$D/send.log" | sed "s/^/[send $TAG] /"
     exit $RC
 fi
 
@@ -148,7 +149,7 @@ RCVBUF=$(nstat -z UdpRcvbufErrors | awk '/UdpRcvbufErrors/{print $2}')
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
 
 GP=$(grep -oP 'Sender goodput:\s+\K[0-9.]+' "$D/send.log")
-R=$(python3 -I "$ANALYZE" "$D" --frames "$S_frames" --expected "$S_events" --set \
+R=$(python3 -I "$ANALYZE" "$D" --frames "${S_distinct:-$S_frames}" --expected "$S_events" --set \
     tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" file_frames="$S_frames" evio_file="$S_evio" \
     rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" chunk_kib="$CHUNK" sink=array \
     sender_goodput_gbps="${GP:-0}" rx_discards_phy="$DISC" \
