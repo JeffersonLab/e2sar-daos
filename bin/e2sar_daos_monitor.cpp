@@ -413,21 +413,21 @@ public:
             j << ",\"first\":" << listed.front() << ",\"last\":" << listed.back();
         j << "}";
         uint64_t miss = 0, pend = 0, late = 0, dups = 0, total = 0;
-        // The strip's span is fixed once known, so the strip moves smoothly: --span, or
-        // --strip-seconds of events at the fastest dataId's rate, as a power of two.
-        if (!span_) {
-            if (o_.span) {
-                span_ = o_.span;
-            } else {
-                uint64_t fastest = 0;
-                for (const auto& [id, st] : streams_)
-                    fastest = std::max(fastest, st.events - st.prevEvents);
-                if (fastest && tick_ > 1) {
-                    const double want = fastest / dt * o_.stripSeconds;
-                    span_ = o_.bins;
-                    while (span_ < want)
-                        span_ *= 2;
-                }
+        // The strip's span: --span, or --strip-seconds of events at the fastest dataId's rate,
+        // as a power of two × --bins. It only grows (the first update with data can be partly
+        // filled), so the strip moves smoothly once the rate is steady.
+        if (o_.span) {
+            span_ = o_.span;
+        } else {
+            uint64_t fastest = 0;
+            for (const auto& [id, st] : streams_)
+                fastest = std::max(fastest, st.events - st.prevEvents);
+            if (fastest && tick_ > 1) {
+                const double want = fastest / dt * o_.stripSeconds;
+                uint64_t span = o_.bins;
+                while (span < want)
+                    span *= 2;
+                span_ = std::max(span_, span);
             }
         }
         const uint64_t width = span_ ? (span_ + o_.bins - 1) / o_.bins : 1;
