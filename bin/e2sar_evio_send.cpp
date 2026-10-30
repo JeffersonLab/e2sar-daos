@@ -1,26 +1,18 @@
 /**
-    e2sar_evio_send: send synthetic EVIO v6 streaming time frames with E2SAR Segmenters,
-    for end-to-end throughput and latency tests with e2sar_daos_recv.
+    e2sar_evio_send: read an EVIO v6 file and send its frames with E2SAR Segmenters, for
+    end-to-end throughput and latency tests with e2sar_daos_recv.
 
-    Each E2SAR event is one EVIO v6 record (14-word record header, index array when it
-    holds more than one frame) carrying --frames built time-frame banks. A frame has the
-    layout of the CODA streaming data in frames_thread0_*.evio and EC5_EC6_cosmics_*.evio:
-
-      bank 0xFF60 (bank of banks)               built time frame
-        bank 0xFF31 (bank of segments)          stream info: TSS 0x32 (frame, timestamp), AIS 0x42 (ROC ids)
-        bank <ROC id> (bank of banks) x --rocs
-          bank 0xFF30                           ROC stream info: TSS 0x31, AIS 0x41 (port info)
-          bank <port 1,3,...,15> x 8            hit words; ~74% empty, as in the real data
-
-    With the defaults (2 ROCs, --hits 23) a frame is ~350 bytes, like the real ones.
-    Frame n has timestamp n * 65536 ns.
+    The file (--file) is read into memory. Every record in it is one frame (e.g. a built time
+    frame of the CODA streaming data in frames_thread0_*.evio), and every frame is sent as one
+    E2SAR event: the record's bytes as they are in the file, header included. The file header
+    and the trailer aren't sent.
 
     Threading: --segmenters P independent Segmenters, each driven by its own thread with
     dataId = --dataid + i and eventSrcId = --srcid + i, so the receiver keeps their events
     apart (DAOS key <prefix>/<evtNum>/<dataId>). Each Segmenter sends on --sockets threads.
-    Each one sends --events events, numbered 1..N. Event n of Segmenter i is copy
-    n % --pool of a pool of distinct events built up front, so its SHA-256 is known:
-    --digests writes "<dataId> <slot> <sha256>" for every pool slot.
+    Each one sends the file's K frames in order as events 1..N (--events, default K: the file
+    once); event n is frame (n - 1) % K, so it starts over when N > K. --digests writes
+    "<frame> <sha256>" for every frame, so every received event can be checked.
 
     Paths: with --withcp the events go to the LB, which spreads them over the receiver's ports
     by their random entropy. Without it (node-to-node) everything goes to the data= address in
@@ -32,9 +24,9 @@
     Joined with e2sar_daos_recv --timing-csv on (evt_num, data_id) this splits the latency
     into sender, network + LB + reassembly, and DAOS commit.
 
-    The defaults (16 Segmenters x 1 socket, 256 frames = ~95 KB per event, 20 Gbps) are the
-    highest setting that was lossless in repeated runs on the ebpf testbed, with
-    e2sar_daos_recv --threads 32 --deq 16 --inflight 128 (docs/E2E_BENCHMARK.md).
+    The defaults (16 Segmenters x 1 socket, 20 Gbps) are the highest setting that was lossless
+    in repeated runs on the testbed (with synthetic ~95 KB events), with e2sar_daos_recv
+    --threads 32 --deq 16 --inflight 128 (docs/E2E_BENCHMARK.md).
 
     --rate is the total for all Segmenters, paced by the producing threads (the Segmenter's
     own rate limit works in whole microseconds per event, too coarse for small events).
@@ -50,7 +42,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <random>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -74,121 +66,67 @@ uint64_t nowNs() {
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// ------------------------------------------------------------------ synthetic EVIO
+// ------------------------------------------------------------------ EVIO file
 
-struct FrameShape {
-    unsigned rocs = 2;
-    double hitsPerFrame = 23;  // mean hit words per frame (real data: ~23.5)
+// One frame of the file: a whole record, as bytes in the file.
+struct Frame {
+    const uint8_t* data;
+    size_t size;
 };
 
-class Words {
-public:
-    void put(uint32_t w) { v.push_back(w); }
-    size_t size() const { return v.size(); }
-    uint32_t& at(size_t i) { return v[i]; }
-    std::vector<uint32_t> v;
+// An EVIO v6 file in memory, and its frames (records), in file order.
+struct EvioFile {
+    std::vector<uint8_t> bytes;
+    bool bigEndian = true;
+    std::vector<Frame> frames;
+
+    uint32_t word(size_t byteOff) const {
+        if (byteOff + 4 > bytes.size())
+            throw std::runtime_error("truncated EVIO file");
+        const uint8_t* p = &bytes[byteOff];
+        return bigEndian ? (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]
+                         : (uint32_t(p[3]) << 24) | (uint32_t(p[2]) << 16) | (uint32_t(p[1]) << 8) | p[0];
+    }
 };
 
-// One built time frame bank (tag 0xFF60), word for word in the layout of the real data.
-void appendFrame(Words& w, uint64_t frame, const FrameShape& s, std::mt19937_64& rng) {
-    const uint64_t ts = frame * 65536;
-    const unsigned kPorts = 8;
-    const double pNonEmpty = 0.26;
-    const double meanPerBank = std::max(1.0, s.hitsPerFrame / (s.rocs * kPorts * pNonEmpty));
-    std::bernoulli_distribution nonEmpty(pNonEmpty);
-    std::uniform_int_distribution<unsigned> extra(0, static_cast<unsigned>(2 * (meanPerBank - 1)));
+constexpr uint32_t kMagic = 0xc0da0100u;
+size_t pad4(size_t n) { return (n + 3) & ~size_t(3); }
 
-    const size_t top = w.size();
-    w.put(0);                                    // length, filled in below
-    w.put(0xFF601000u | (s.rocs & 0xff));        // tag FF60, bank of banks, num = ROCs
-    w.put(5 + s.rocs);                           // stream info bank
-    w.put(0xFF312000u | (s.rocs & 0xff));
-    w.put(0x32010003u);                          // TSS segment: frame, timestamp lo, hi
-    w.put(static_cast<uint32_t>(frame));
-    w.put(static_cast<uint32_t>(ts));
-    w.put(static_cast<uint32_t>(ts >> 32));
-    w.put(0x42010000u | s.rocs);                 // AIS segment: one word per ROC
-    for (unsigned r = 0; r < s.rocs; r++)
-        w.put((0x12u + r) << 16);
-
-    for (unsigned r = 0; r < s.rocs; r++) {
-        const size_t roc = w.size();
-        w.put(0);
-        w.put(((0x12u + r) << 16) | 0x1011u);    // tag = ROC id, bank of banks
-        w.put(0xa);                              // ROC stream info bank
-        w.put(0xFF302011u);
-        w.put(0x31010003u);                      // TSS segment
-        w.put(static_cast<uint32_t>(frame));
-        w.put(static_cast<uint32_t>(ts));
-        w.put(static_cast<uint32_t>(ts >> 32));
-        w.put(0x41050004u);                      // AIS segment: 16-bit info per port
-        w.put(0x00830081u); w.put(0x00870085u); w.put(0x008b0089u); w.put(0x008f008du);
-        for (unsigned p = 0; p < kPorts; p++) {
-            const uint32_t port = 2 * p + 1;
-            if (!nonEmpty(rng)) {
-                w.put(1);
-                w.put((port << 16) | 0x0001u);   // empty payload bank, as written by the DAQ
-                continue;
-            }
-            const unsigned n = 1 + extra(rng);
-            w.put(n + 1);
-            w.put(port << 16);
-            for (unsigned h = 0; h < n; h++) {   // hit word: time (16), flags, channel, charge
-                const uint64_t x = rng();
-                w.put(static_cast<uint32_t>((x & 0xffff) << 16) | ((x >> 16) & 1 ? 0x6000u : 0x4000u) |
-                      static_cast<uint32_t>((x >> 20) & 0xff));
-            }
-        }
-        w.at(roc) = static_cast<uint32_t>(w.size() - roc - 1);
+// Read the file and find its frames: every record up to the trailer.
+void readEvio(const std::string& path, EvioFile& f) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        throw std::runtime_error("can't open " + path);
+    f.bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    if (f.bytes.size() < 56)
+        throw std::runtime_error(path + ": too short for an EVIO v6 file header");
+    if (f.word(28) != kMagic) {
+        f.bigEndian = false;
+        if (f.word(28) != kMagic)
+            throw std::runtime_error(path + ": no EVIO magic number in the file header");
     }
-    w.at(top) = static_cast<uint32_t>(w.size() - top - 1);
+    if ((f.word(20) & 0xff) != 6)
+        throw std::runtime_error(path + ": not EVIO version 6");
+
+    // file header: length (words), index array (bytes), user header (bytes, padded)
+    size_t pos = f.word(8) * 4ull + f.word(16) + pad4(f.word(24));
+    while (pos + 56 <= f.bytes.size()) {
+        const size_t recBytes = f.word(pos) * 4ull;
+        if (f.word(pos + 28) != kMagic || recBytes < 56 || pos + recBytes > f.bytes.size())
+            throw std::runtime_error(path + ": bad record header at byte " + std::to_string(pos));
+        if (((f.word(pos + 20) >> 28) & 0xf) == 3)   // trailer
+            break;
+        f.frames.push_back({&f.bytes[pos], recBytes});
+        pos += recBytes;
+    }
+    if (f.frames.empty())
+        throw std::runtime_error(path + ": no records");
 }
 
-// One EVIO v6 record holding `frames` frames, starting at frame number `first`.
-std::vector<uint8_t> buildRecord(uint32_t recordNum, uint64_t first, unsigned frames,
-                                 const FrameShape& s, std::mt19937_64& rng) {
-    Words body;
-    std::vector<uint32_t> lens;
-    for (unsigned f = 0; f < frames; f++) {
-        const size_t before = body.size();
-        appendFrame(body, first + f, s, rng);
-        lens.push_back(static_cast<uint32_t>((body.size() - before) * 4));
-    }
-    const uint32_t indexWords = frames > 1 ? frames : 0;   // real files: no index for 1 event
-    const uint32_t dataWords = indexWords + static_cast<uint32_t>(body.size());
-
-    Words w;
-    w.put(14 + dataWords);          // record length (words)
-    w.put(recordNum);               // record number
-    w.put(14);                      // header length (words)
-    w.put(frames);                  // event count
-    w.put(indexWords * 4);          // index array length (bytes)
-    w.put(0x80004206u);             // bit info + version 6, as in the real data
-    w.put(0);                       // user header length
-    w.put(0xc0da0100u);             // magic
-    w.put(dataWords);               // uncompressed data length (words, as in the real data)
-    for (int i = 0; i < 5; i++)
-        w.put(0);                   // compression, user registers
-    if (indexWords)
-        for (auto l : lens)
-            w.put(l);
-    for (auto x : body.v)
-        w.put(x);
-
-    std::vector<uint8_t> out(w.size() * 4);
-    for (size_t i = 0; i < w.size(); i++) {   // big-endian, like the DAQ output
-        out[4 * i] = w.v[i] >> 24;
-        out[4 * i + 1] = w.v[i] >> 16;
-        out[4 * i + 2] = w.v[i] >> 8;
-        out[4 * i + 3] = w.v[i];
-    }
-    return out;
-}
-
-std::string sha256(const std::vector<uint8_t>& b) {
+std::string sha256(const Frame& b) {
     unsigned char md[EVP_MAX_MD_SIZE];
     unsigned int len = 0;
-    EVP_Digest(b.data(), b.size(), md, &len, EVP_sha256(), nullptr);
+    EVP_Digest(b.data, b.size, md, &len, EVP_sha256(), nullptr);
     std::string hex;
     char x[3];
     for (unsigned i = 0; i < len; i++) {
@@ -238,10 +176,9 @@ void onSent(boost::any a) {
 struct Worker {
     std::unique_ptr<Segmenter> seg;
     uint16_t dataId = 0;
-    std::vector<std::vector<uint8_t>> pool;
+    const std::vector<Frame>* frames = nullptr;   // shared by all workers
     std::vector<EventTimes> times;
     std::atomic<uint64_t> queued{0}, done{0};
-    uint64_t bytes = 0;
 };
 
 // Pace to `gbps` (total over all workers, so each gets gbps / nWorkers); < 0 = unlimited.
@@ -250,7 +187,7 @@ void produce(Worker& w, uint64_t events, double gbps) {
     uint64_t sentBytes = 0;
     for (uint64_t e = 0; e < events && running; e++) {
         const uint64_t n = e + 1;   // event number; always passed explicitly (0 = "continue")
-        auto& ev = w.pool[n % w.pool.size()];
+        const Frame& ev = (*w.frames)[e % w.frames->size()];
         if (gbps > 0) {
             const double due = sentBytes * 8.0 / gbps;   // ns since t0
             while (std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() < due)
@@ -259,7 +196,7 @@ void produce(Worker& w, uint64_t events, double gbps) {
         w.times[e].queueNs = nowNs();
         while (running) {
             // random entropy per event (0), which spreads events over the receiver's ports
-            auto r = w.seg->addToSendQueue(ev.data(), ev.size(), n, w.dataId, 0, &onSent,
+            auto r = w.seg->addToSendQueue(const_cast<uint8_t*>(ev.data), ev.size, n, w.dataId, 0, &onSent,
                                            SentArg{&w.times[e], &w.done});
             if (!r.has_error())
                 break;
@@ -271,27 +208,26 @@ void produce(Worker& w, uint64_t events, double gbps) {
             std::this_thread::yield();   // queue full
         }
         w.queued++;
-        sentBytes += ev.size();
+        sentBytes += ev.size;
     }
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    po::options_description od("e2sar_evio_send: send synthetic EVIO v6 time frames with E2SAR");
+    po::options_description od("e2sar_evio_send: read an EVIO v6 file and send its frames (records) with E2SAR");
     auto opts = od.add_options();
-    std::string uriStr, senderIP, timingCsv, digests;
+    std::string uriStr, senderIP, timingCsv, digests, evioPath;
     bool withCP = false, validate = true, multiPort = false;
     uint16_t mtu, dataId;
     uint32_t srcId;
-    size_t sockets, segmenters, poolSize;
+    size_t sockets, segmenters;
     uint64_t events;
-    unsigned framesPerEvent;
-    FrameShape shape;
     double rate;
     int sndBuf;
 
     opts("help,h", "show this help message");
+    opts("file,F", po::value<std::string>(&evioPath), "EVIO v6 file whose frames (records) are sent, one per event (required)");
     opts("uri,u", po::value<std::string>(&uriStr), "EJFAT URI (default: $EJFAT_URI)");
     opts("withcp,c", po::bool_switch(&withCP), "use the control plane: add --ip to the LB sender list, send sync packets");
     opts("ip", po::value<std::string>(&senderIP), "sender IP to add to the LB (required with --withcp)");
@@ -302,15 +238,11 @@ int main(int argc, char** argv) {
     opts("sockets,s", po::value<size_t>(&sockets)->default_value(1), "send sockets/threads per Segmenter");
     opts("bufsize,b", po::value<int>(&sndBuf)->default_value(3 * 1024 * 1024), "send socket buffer size");
     opts("rate,r", po::value<double>(&rate)->default_value(20), "total send rate in Gbps over all Segmenters (< 0: unlimited)");
-    opts("events,n", po::value<uint64_t>(&events)->default_value(6250), "events per Segmenter");
-    opts("frames,f", po::value<unsigned>(&framesPerEvent)->default_value(256), "EVIO time frames per event (one EVIO record, ~95 KB at 256)");
-    opts("rocs", po::value<unsigned>(&shape.rocs)->default_value(2), "ROC banks per frame");
-    opts("hits", po::value<double>(&shape.hitsPerFrame)->default_value(23), "mean hit words per frame");
-    opts("pool", po::value<size_t>(&poolSize)->default_value(64), "distinct events per Segmenter (event e is copy e % pool)");
+    opts("events,n", po::value<uint64_t>(&events)->default_value(0), "events per Segmenter (0: the file's frames once; more starts over)");
     opts("dataid", po::value<uint16_t>(&dataId)->default_value(4321), "dataId of the first Segmenter (+i for Segmenter i)");
     opts("srcid", po::value<uint32_t>(&srcId)->default_value(1234), "eventSrcId of the first Segmenter (+i for Segmenter i)");
     opts("timing-csv", po::value<std::string>(&timingCsv), "write per-event queue/sent times here");
-    opts("digests", po::value<std::string>(&digests), "write '<dataId> <slot> <sha256>' for every pool event here");
+    opts("digests", po::value<std::string>(&digests), "write '<frame> <sha256>' for every frame here (event n is frame (n - 1) % frames)");
 
     po::variables_map vm;
     try {
@@ -326,10 +258,31 @@ int main(int argc, char** argv) {
     }
     if (uriStr.empty() && std::getenv("EJFAT_URI"))
         uriStr = std::getenv("EJFAT_URI");
-    if (uriStr.empty() || (withCP && senderIP.empty()) || segmenters == 0 || poolSize == 0 || framesPerEvent == 0) {
-        std::cerr << "Need --uri (or $EJFAT_URI), --ip with --withcp, and non-zero --segmenters/--pool/--frames" << std::endl;
+    if (evioPath.empty() || uriStr.empty() || (withCP && senderIP.empty()) || segmenters == 0) {
+        std::cerr << "Need --file, --uri (or $EJFAT_URI), --ip with --withcp, and non-zero --segmenters" << std::endl;
         return 1;
     }
+
+    // the file's frames (records): one per event
+    EvioFile file;
+    try {
+        readEvio(evioPath, file);
+    } catch (std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    }
+    const std::vector<Frame>& frames = file.frames;
+    if (events == 0)
+        events = frames.size();
+    if (!digests.empty()) {
+        std::ofstream dig(digests, std::ios::trunc);
+        for (size_t r = 0; r < frames.size(); r++)
+            dig << r << ' ' << sha256(frames[r]) << '\n';
+    }
+    size_t frameBytes = 0;
+    for (auto& fr : frames)
+        frameBytes += fr.size;
+    const double meanEvent = static_cast<double>(frameBytes) / frames.size();
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
 
@@ -351,30 +304,14 @@ int main(int argc, char** argv) {
         std::cout << "Added sender " << senderIP << " to the LB" << std::endl;
     }
 
-    // build the event pools and digests
     std::vector<std::unique_ptr<Worker>> workers;
-    std::ofstream dig;
-    if (!digests.empty())
-        dig.open(digests, std::ios::trunc);
-    size_t poolBytes = 0;
     for (size_t i = 0; i < segmenters; i++) {
         auto w = std::make_unique<Worker>();
         w->dataId = static_cast<uint16_t>(dataId + i);
-        std::mt19937_64 rng(0xE25A0000ull + w->dataId);
-        for (size_t s = 0; s < poolSize; s++) {
-            w->pool.push_back(buildRecord(static_cast<uint32_t>(s), s * framesPerEvent, framesPerEvent, shape, rng));
-            poolBytes += w->pool.back().size();
-            if (dig)
-                dig << w->dataId << ' ' << s << ' ' << sha256(w->pool.back()) << '\n';
-        }
+        w->frames = &frames;
         w->times.resize(events);
-        for (uint64_t e = 0; e < events; e++)
-            w->bytes += w->pool[(e + 1) % poolSize].size();
         workers.push_back(std::move(w));
     }
-    if (dig)
-        dig.close();
-    const double meanEvent = static_cast<double>(poolBytes) / (segmenters * poolSize);
 
     Segmenter::SegmenterFlags sflags;
     sflags.useCP = withCP;
@@ -404,9 +341,10 @@ int main(int argc, char** argv) {
               << "Control plane:        " << (withCP ? "ON" : "OFF") << (multiPort ? ", data port + i per Segmenter" : "") << std::endl
               << "Segmenters:           " << segmenters << " x " << sockets << " sockets, dataId "
               << dataId << ".." << dataId + segmenters - 1 << std::endl
-              << "Event:                EVIO v6 record of " << framesPerEvent << " frame(s), mean "
-              << std::fixed << std::setprecision(0) << meanEvent << " bytes ("
-              << std::setprecision(1) << meanEvent / framesPerEvent << " bytes/frame)" << std::endl
+              << "File:                 " << evioPath << " (" << (file.bigEndian ? "big" : "little") << "-endian)" << std::endl
+              << "Frames:               " << frames.size() << " (records), mean "
+              << std::fixed << std::setprecision(0) << meanEvent << " bytes" << std::endl
+              << "Event:                one frame" << std::endl
               << "Events:               " << events << " per Segmenter, " << events * segmenters << " total" << std::endl
               << "Rate:                 " << (rate > 0 ? std::to_string(rate) + " Gbps total" : "unlimited") << std::endl;
 
@@ -426,15 +364,15 @@ int main(int argc, char** argv) {
         for (uint64_t e = 0; e < w->queued; e++) {
             first = std::min(first, w->times[e].queueNs);
             t1 = std::max(t1, w->times[e].sentNs);
-            bytes += w->pool[(e + 1) % poolSize].size();
+            bytes += frames[e % frames.size()].size;
             nev++;
         }
 
-    uint64_t frames = 0, errors = 0;
+    uint64_t packets = 0, errors = 0;
     for (auto& w : workers) {
         w->seg->stopThreads();
         auto st = w->seg->getSendStats();
-        frames += st.msgCnt;
+        packets += st.msgCnt;
         errors += st.errCnt;
         if (st.errCnt)
             std::cerr << "dataId " << w->dataId << ": " << st.errCnt << " send errors, last: "
@@ -448,13 +386,13 @@ int main(int argc, char** argv) {
         csv << "evt_num,data_id,bytes,queue_ns,sent_ns\n";
         for (auto& w : workers)
             for (uint64_t e = 0; e < w->queued; e++)
-                csv << e + 1 << ',' << w->dataId << ',' << w->pool[(e + 1) % poolSize].size() << ','
+                csv << e + 1 << ',' << w->dataId << ',' << frames[e % frames.size()].size << ','
                     << w->times[e].queueNs << ',' << w->times[e].sentNs << '\n';
     }
 
     const double secs = (t1 - first) / 1e9;
     std::cout << std::setprecision(3)
-              << "Sent:                 " << nev << " events, " << bytes / 1e9 << " GB, " << frames
+              << "Sent:                 " << nev << " events, " << bytes / 1e9 << " GB, " << packets
               << " packets, " << errors << " errors" << std::endl
               << "Send window:          " << secs << " s (first queued -> last sent)" << std::endl
               << "Sender goodput:       " << (secs > 0 ? bytes * 8 / secs / 1e9 : 0) << " Gbps, "

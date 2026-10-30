@@ -1,13 +1,16 @@
 #!/bin/bash
-# e2sar_e2e_bench.sh: one end-to-end run of synthetic EVIO time frames into DAOS.
+# e2sar_e2e_bench.sh: one end-to-end run of the frames of an EVIO file into DAOS.
 #
 #   sender node:    e2sar_evio_send ──▶ [EJFAT LB] ──▶ e2sar_daos_recv ──▶ DAOS   :receiver node
 #
 # Run both roles at the same time, one on each node, with the same TAG and mode:
 #   receiver:  e2sar_e2e_bench.sh recv TAG [-m lb|n2n] [-T recv_threads] [-D deq_threads] [-I inflight]
 #                                          [-C chunk_kib]
-#   sender:    e2sar_e2e_bench.sh send TAG [-m lb|n2n] [-P segmenters] [-s sockets]
-#                                          [-n events_per_segmenter] [-f frames_per_event] [-r gbps]
+#   sender:    e2sar_e2e_bench.sh send TAG -F file.evio [-m lb|n2n] [-P segmenters] [-s sockets]
+#                                          [-n events_per_segmenter] [-r gbps]
+#
+# The sender reads the EVIO v6 file (-F, or $EVIO_FILE) and sends its frames (records), one per
+# event; with -n larger than the file's frames it starts over from the first.
 #   either:    e2sar_e2e_bench.sh clean
 #
 # Modes:
@@ -16,8 +19,8 @@
 #   n2n  node-to-node, no LB. Segmenter i sends to port PORT+i (--port-per-segmenter), so use
 #        -T >= -P on the receiver.
 #
-# The receiver stores events in a DAOS KV object with async puts, in -C KiB chunks
-# (default 1024; 0 = one value per event).
+# The receiver stores events in DAOS (docs/DAOS_LAYOUT.md): small events batched into -C KiB
+# chunks (default 1024), written asynchronously.
 #
 # The nodes can't SSH to each other, so the roles meet through files in $RUN/bench/TAG/
 # (an NFS $HOME shared by both nodes): recv writes "ready" once it listens (with the LB:
@@ -34,6 +37,7 @@
 : "${POOL:=sc26}"
 : "${CONT:=e2sar-bench}"                 # DAOS container, destroyed after every run
 : "${NIC:=enp1s0f1np1}"                  # receiver data-plane NIC, for drop counters
+: "${EVIO_FILE:=}"                        # EVIO v6 file the sender reads (or -F)
 : "${SEND_ARGS:=}"                        # extra e2sar_evio_send options, e.g. "-b 8388608" (send buffer)
 : "${RUN:=$HOME/e2sar_run}"              # shared: logs and rendezvous files
 : "${E2SAR_DAOS_BUILD:=$(cd "$(dirname "$0")/.." && pwd)/build}"
@@ -59,12 +63,12 @@ TAG=${1:-}; shift || true
 [ -n "$TAG" ] && [[ "$ROLE" =~ ^(send|recv)$ ]] || usage
 
 # defaults: highest lossless setting found (docs/E2E_BENCHMARK.md)
-MODE=lb SEGS=16 SOCKETS=1 EVENTS=6250 FRAMES=256 RATE=20 THREADS=32 DEQ= INFLIGHT=128 CHUNK=1024 POOLSZ=64
-while getopts "m:P:s:n:f:r:T:D:I:C:" o; do
+MODE=lb SEGS=16 SOCKETS=1 EVENTS=6250 RATE=20 THREADS=32 DEQ= INFLIGHT=128 CHUNK=1024
+while getopts "m:P:s:n:r:T:D:I:C:F:" o; do
     case $o in
         m) MODE=$OPTARG ;; P) SEGS=$OPTARG ;; s) SOCKETS=$OPTARG ;; n) EVENTS=$OPTARG ;;
-        f) FRAMES=$OPTARG ;; r) RATE=$OPTARG ;; T) THREADS=$OPTARG ;;
-        D) DEQ=$OPTARG ;; I) INFLIGHT=$OPTARG ;; C) CHUNK=$OPTARG ;; *) usage ;;
+        r) RATE=$OPTARG ;; T) THREADS=$OPTARG ;;
+        D) DEQ=$OPTARG ;; I) INFLIGHT=$OPTARG ;; C) CHUNK=$OPTARG ;; F) EVIO_FILE=$OPTARG ;; *) usage ;;
     esac
 done
 : "${DEQ:=16}"
@@ -79,6 +83,7 @@ mkdir -p "$D"
 
 # ---------------------------------------------------------------- sender
 if [ "$ROLE" = send ]; then
+    [ -r "$EVIO_FILE" ] || die "sender needs a readable EVIO file: -F FILE or EVIO_FILE"
     echo "[send $TAG] waiting for the receiver"
     wait_for "$D/ready" 180 || die "receiver not ready after 180 s ($D/ready)"
     if [ "$MODE" = lb ]; then
@@ -88,11 +93,12 @@ if [ "$ROLE" = send ]; then
     fi
     # shellcheck disable=SC2086  # SEND_ARGS is a list of options
     "$BIN/e2sar_evio_send" -u "$URI" "${ARGS[@]}" $SEND_ARGS --mtu 9000 -P "$SEGS" -s "$SOCKETS" -n "$EVENTS" \
-        -f "$FRAMES" -r "$RATE" --pool "$POOLSZ" --timing-csv "$D/send.csv" --digests "$D/digests" \
+        -F "$EVIO_FILE" -r "$RATE" --timing-csv "$D/send.csv" --digests "$D/digests" \
         > "$D/send.log" 2>&1
     RC=$?
-    echo "rc=$RC mode=$MODE segmenters=$SEGS sockets=$SOCKETS events=$((SEGS * EVENTS)) frames=$FRAMES rate=$RATE pool=$POOLSZ" > "$D/sent"
-    grep -E "Event:|Sent:|Sender goodput" "$D/send.log" | sed "s/^/[send $TAG] /"
+    NFRAMES=$(grep -oP 'Frames:\s+\K\d+' "$D/send.log")
+    echo "rc=$RC mode=$MODE segmenters=$SEGS sockets=$SOCKETS events=$((SEGS * EVENTS)) rate=$RATE frames=${NFRAMES:-0} evio=$(basename "$EVIO_FILE" | tr -c "A-Za-z0-9._\n-" _)" > "$D/sent"
+    grep -E "File:|Frames:|Sent:|Sender goodput" "$D/send.log" | sed "s/^/[send $TAG] /"
     exit $RC
 fi
 
@@ -102,7 +108,7 @@ daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
 SINKARGS=(--pool "$POOL" --cont-name "$CONT" --deq "$DEQ" --inflight "$INFLIGHT" --chunk "$CHUNK")
 nic_counters > "$D/nic0"; nstat -n
 "$BIN/e2sar_daos_recv" -u "$URI" $CP --ip "$RECV_IP" --port "$PORT" \
-    --threads "$THREADS" --prefix "$TAG" --timeout 10000 -b 1073741824 "${SINKARGS[@]}" \
+    --threads "$THREADS" --timeout 10000 -b 1073741824 "${SINKARGS[@]}" \
     --timing-csv "$D/timing.csv" > "$D/recv.log" 2>&1 < /dev/null &
 PID=$!
 trap 'kill -INT $PID 2>/dev/null; wait $PID' EXIT
@@ -120,7 +126,7 @@ touch "$D/ready"
 echo "[recv $TAG] $MODE: listening on $THREADS ports from $PORT; waiting for the sender"
 
 wait_for "$D/sent" 3600 || die "no sender after 1 h"
-eval "$(tr ' ' '\n' < "$D/sent" | sed 's/^/S_/')"   # S_events, S_pool, ...
+eval "$(tr ' ' '\n' < "$D/sent" | sed 's/^/S_/')"   # S_events, S_frames, ...
 # events can still be in reassembly (--timeout 10 s) or in DAOS puts: wait until all are
 # committed, or the progress line (once a second) shows no new commits for 15 s
 last=-1; idle=0
@@ -138,13 +144,13 @@ DISC=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_discards_phy" {print $4 
 OOB=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_out_of_buffer" {print $4 - $2}')
 RCVBUF=$(nstat -z UdpRcvbufErrors | awk '/UdpRcvbufErrors/{print $2}')
 
-"$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$TAG" --fetch > "$D/fetch.txt" 2>&1
+"$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --fetch > "$D/fetch.txt" 2>&1
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
 
 GP=$(grep -oP 'Sender goodput:\s+\K[0-9.]+' "$D/send.log")
-R=$(python3 -I "$ANALYZE" "$D" --pool "$S_pool" --expected "$S_events" --set \
-    tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" frames_per_event="$S_frames" \
-    rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" chunk_kib="$CHUNK" sink=kv \
+R=$(python3 -I "$ANALYZE" "$D" --frames "$S_frames" --expected "$S_events" --set \
+    tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" file_frames="$S_frames" evio_file="$S_evio" \
+    rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" chunk_kib="$CHUNK" sink=array \
     sender_goodput_gbps="${GP:-0}" rx_discards_phy="$DISC" \
     rx_out_of_buffer="$OOB" udp_rcvbuf_errors="${RCVBUF:-0}" 2> "$D/summary.txt")
 echo "$R" > "$D/result.json"

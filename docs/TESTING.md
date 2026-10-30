@@ -5,13 +5,13 @@
 | # | Scenario | DAOS | What it checks | Procedure |
 |---|---|---|---|---|
 | 1 | **Local Mac** | none; client headers and libraries only, in the Rocky 9 container | It builds and links, and the `unit` suite passes | [§1](#1-mac-without-daos) |
-| 2 | **ebpf2201 ↔ ebpf2203, node-to-node** | pool `sc26`, native `daos-devel` | `unit` and `integration` suites. End to end: `e2sar_ft` → `e2sar_daos_recv` → DAOS → `e2sar_daos_read`, with loopback on one node and across the two nodes, with no LB in the path | [§2](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel), [§4](#4-applications-end-to-end-on-ebpf2203), [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md) (MTU 9000, `/scratch`) |
+| 2 | **ebpf2201 ↔ ebpf2203, node-to-node** | pool `sc26`, native `daos-devel` | `unit` and `integration` suites. End to end: `e2sar_ft` → `e2sar_daos_recv` → DAOS → `e2sar_daos_read`, with loopback on one node and across the two nodes, with no LB in the path | [§2](#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel), [§4](#4-applications-end-to-end-on-ebpf2203) |
 | 3 | **ebpf2201 → ESnet EJFAT LB → ebpf2203** | pool `sc26`, native `daos-devel` | The same end-to-end path with `--withcp`, through a reserved LB over the WAN: the sender is added to the allowlist, and the worker registers, gets slots and deregisters. Also a throughput sweep, lossless up to 3 concurrent 2 GiB events (~25.8 Gbps) | [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md) |
 | 4 | **Slurm TB nodes** | pool `sc26` and `daos_agent`, but **may have no `daos-devel`** (and no E2SAR) | `unit` and `integration` suites and the end-to-end path, using the podman image, which brings its own DAOS headers and E2SAR | [§3](#3-slurm-tb-nodes-daos-pool-but-no-daos-devel), [containers/slurm-tb](../containers/slurm-tb/README.md) |
 | 5 | **ALCF Aurora** (planned, not run yet) | pool `e2sar-daos` (100 TB), DAOS client on the compute nodes | `unit` and `integration` suites, then the end-to-end path and the n2n bench between Aurora compute nodes over the Slingshot network. Section 5 is the plan and the checks still open | [§5](#5-alcf-aurora-planned) |
 
 Scenario 1 needs only Docker. Scenarios 2 and 3 need SSH access to the ebpf nodes, and scenario 3 also needs an LB instance URI. Scenario 4 needs a Slurm TB allocation and podman. Scenario 5 needs an ALCF project with access to pool `e2sar-daos` and a PBS allocation on Aurora.
-For throughput and latency of scenarios 2 and 3 with synthetic EVIO time frames instead of files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`scripts/e2sar_e2e_bench.sh`).
+For throughput and latency of scenarios 2 and 3 with the EVIO time frames of a file streamed as events instead of whole files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`scripts/e2sar_e2e_bench.sh`).
 Scenarios 2 and 3 share the same nodes with other users. Use your own port, container and `/scratch` directories, and clean up after every run.
 
 ## Test suites
@@ -404,7 +404,6 @@ rm -rf /tmp/$USER/e2sar_src
 `/tmp` is local to each node, so run the sender line on the node that sent.
 `daos cont destroy` removes every prefix in `e2sar-test`, so make sure no other run is using it. Don't destroy `kv-test`: the integration test uses it.
 To check, run `ls /tmp/$USER` on both nodes, and `daos cont list sc26` should not show `e2sar-test`.
-For the `/scratch`-based procedure, see [EBPF_TESTBED_NOTES.md, step 8](EBPF_TESTBED_NOTES.md#8-clean-up-after-every-run-required).
 
 ### Common failures
 
@@ -508,7 +507,7 @@ Sweep one variable at a time, in this order, and compare with [E2E_BENCHMARK.md]
 | 1 | sender rate `-r` | 10, 20, 40, 60, 80 Gbps | highest lossless rate for one receiver on one NIC |
 | 2 | dequeue threads `-D` | 4, 16, 32, 64 | at what rate the DAOS side stops keeping up. At JLab, 16 threads reached 40 Gbps |
 | 3 | object class (`--oclass` on the receiver) | container default, `SX`, `RP_2G1`, EC classes the pool's `rd_fac` allows | what redundancy costs on a large pool |
-| 4 | – | – | (dropped: the dfuse and pil4dfs sinks were removed; see [DFUSE_TESTING.md](DFUSE_TESTING.md)) |
+| 4 | – | – | (dropped: the dfuse and pil4dfs sinks were removed) |
 | 5 | NUMA and NICs | `--numa` and `--cores` matching the `hsn` NIC; one receiver per NIC | the per-node ceiling with several NICs |
 | 6 | receiver nodes | 1, 2, 4, 8 receivers, one sender each | whether the total scales with nodes, i.e. whether the pool is the limit |
 

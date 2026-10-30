@@ -21,6 +21,16 @@ run_catalog_test = executable('run_catalog_test', files('test_run_catalog.cpp'),
 
 test('RunCatalogTests', run_catalog_test, suite: ['daos', 'unit'])
 
+# Object ids, batch tables and catalog records of the run layout (header-only; no server)
+layout_test = executable('layout_test', files('test_layout.cpp'),
+                                include_directories: project_include_dir,
+                                dependencies: [boost_dep, daos_dep])
+
+test('LayoutTests', layout_test, suite: ['daos', 'unit'])
+
+# layout_check POOL CONT [--synthetic]: walk and verify a run written by e2sar_daos_recv
+executable('layout_check', files('layout_check.cpp'), dependencies: [e2sar_daos_dep])
+
 latency_histogram_test = executable('latency_histogram_test', files('test_latency_histogram.cpp'),
                                 include_directories: project_include_dir,
                                 dependencies: [boost_dep])

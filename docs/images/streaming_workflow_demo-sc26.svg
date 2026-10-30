@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="290" viewBox="0 0 980 290" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1f2328">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+  </defs>
+  <rect width="980" height="290" fill="#ffffff"/>
+
+  <!-- regions -->
+  <text x="20" y="28" font-weight="bold" fill="#57606a">Offsite</text>
+  <rect x="440" y="10" width="530" height="270" rx="10" fill="none" stroke="#8c959f" stroke-dasharray="6 4"/>
+  <text x="955" y="30" text-anchor="end" font-weight="bold" fill="#57606a">JLab</text>
+
+  <!-- senders -->
+  <rect x="20" y="95" width="210" height="80" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="125" y="123" text-anchor="middle" font-weight="bold">Senders</text>
+  <text x="125" y="143" text-anchor="middle">coda-fb, e2sar_evio_send,</text>
+  <text x="125" y="160" text-anchor="middle">e2sar_ft, e2sar_perf</text>
+
+  <!-- LB -->
+  <rect x="285" y="105" width="120" height="60" rx="8" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="345" y="131" text-anchor="middle" font-weight="bold">EJFAT LB</text>
+  <text x="345" y="149" text-anchor="middle" font-size="12">by event number</text>
+  <line x1="230" y1="135" x2="283" y2="135" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="256" y="127" text-anchor="middle" font-size="12" fill="#57606a">UDP</text>
+
+  <!-- receivers (DAOS writers), one above the other -->
+  <rect x="470" y="55" width="220" height="56" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="580" y="78" text-anchor="middle" font-weight="bold">recvA: e2sar_daos_recv</text>
+  <text x="580" y="97" text-anchor="middle" font-size="12">writer slot 0</text>
+  <rect x="470" y="159" width="220" height="56" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="580" y="182" text-anchor="middle" font-weight="bold">recvB: e2sar_daos_recv</text>
+  <text x="580" y="201" text-anchor="middle" font-size="12">writer slot 1</text>
+  <path d="M405,125 C435,125 440,83 468,83" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M405,145 C435,145 440,187 468,187" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- DAOS -->
+  <rect x="735" y="85" width="220" height="74" rx="8" fill="#fbefff" stroke="#8250df"/>
+  <text x="845" y="108" text-anchor="middle" font-weight="bold">DAOS container = one run</text>
+  <text x="845" y="127" text-anchor="middle" font-size="12">index per UTC second,</text>
+  <text x="845" y="144" text-anchor="middle" font-size="12">data arrays per second and slot</text>
+  <path d="M690,83 C712,83 712,110 733,110" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M690,187 C712,187 712,138 733,138" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="845" y="62" text-anchor="middle" font-size="12" fill="#57606a">async batches, watermarks 1/s</text>
+
+  <!-- reader -->
+  <rect x="735" y="205" width="220" height="56" rx="8" fill="#ffebe9" stroke="#cf222e"/>
+  <text x="845" y="228" text-anchor="middle" font-weight="bold">e2sar_daos_read --live</text>
+  <text x="845" y="247" text-anchor="middle" font-size="12">one file per --interval s, in order</text>
+  <line x1="845" y1="159" x2="845" y2="203" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+</svg>

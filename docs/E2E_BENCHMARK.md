@@ -1,7 +1,9 @@
-# End-to-end benchmark: synthetic EVIO frames → E2SAR → DAOS
+# End-to-end benchmark: EVIO frames → E2SAR → DAOS
 
-How fast synthetic EVIO streaming time frames go from a sender on **ebpf2201**, through E2SAR (node-to-node or through the ESnet EJFAT load balancer), to `e2sar_daos_recv` on **ebpf2203** and into DAOS, without losing any. Also where each event's time goes on the way.
+How fast EVIO streaming time frames go from a sender on **ebpf2201**, through E2SAR (node-to-node or through the ESnet EJFAT load balancer), to `e2sar_daos_recv` on **ebpf2203** and into DAOS, without losing any. Also where each event's time goes on the way.
 Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 on `ejfat-lb.es.net`. The node-to-node rate sweep from 20 to 50 Gbps ([section 7](#7-node-to-node-rate-sweep-2050-gbps-2026-10-20)) is from 2026-10-20, and the LB rate sweep ([section 9](#9-lb-rate-sweep-2045-gbps-2026-10-21)) from 2026-10-21 on LB 640. New LB runs should use ESnet's `stable4` LB (control plane `192.188.29.6:18048`, data plane `192.188.29.54`), see [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md).
+
+**The results on this page were measured with synthetic frames.** `e2sar_evio_send` then built its frames in memory ([the old synthetic frames](#the-events)). It now reads an EVIO file and sends the frames in it, so the bench sender needs `-F FILE`: add it to the commands below, and drop `-f`, to repeat a run.
 
 ## Summary
 
@@ -27,13 +29,13 @@ Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 
 ebpf2201                                                         ebpf2203
 e2sar_evio_send                                                  e2sar_daos_recv
   P Segmenters (dataId 4321+i), paced                              T receive threads (ports PORT..PORT+T-1)
-  each event = EVIO v6 record of F time frames  ──UDP──▶ [LB] ──▶  Reassembler ──▶ D dequeue threads ──▶ DAOS KV
+  each event = EVIO v6 record of F file frames  ──UDP──▶ [LB] ──▶  Reassembler ──▶ D dequeue threads ──▶ DAOS KV
                                                                                   (own event queue, I puts each)
 ```
 
 | Tool | What it does |
 |---|---|
-| [`bin/e2sar_evio_send`](../bin/e2sar_evio_send.cpp) | Builds synthetic EVIO v6 events and sends them with P E2SAR Segmenters, paced to a total rate. Writes per-event send times and the SHA-256 of every event it can send |
+| [`bin/e2sar_evio_send`](../bin/e2sar_evio_send.cpp) | Reads an EVIO v6 file and sends the frames in it, F per event, with P E2SAR Segmenters, paced to a total rate. Writes per-event send times and the SHA-256 of every event it can send |
 | [`bin/e2sar_daos_recv`](../bin/README.md#e2sar_daos_recv) | The existing receiver. It now prints its clock start so its per-event times can be matched with the sender's. `--synthetic` measures it without a sender ([section 7](#7-the-sink-without-a-sender---synthetic)) |
 | [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh) | Runs one test: starts the receiver, waits for it (and the LB) to be ready, sends, waits for every commit, reads every event back from DAOS, analyzes, cleans up |
 | [`bin/e2sar_e2e_analyze.py`](../bin/e2sar_e2e_analyze.py) | Joins the two hosts' per-event times, checks every digest, computes throughput and latency per stage. `--profile S` shows latency and loss per S-second slice of the run |
@@ -41,9 +43,17 @@ e2sar_evio_send                                                  e2sar_daos_recv
 
 You don't need a different receiver. `e2sar_daos_recv` stores any event, and the bench checks that what it stored is byte-for-byte what was sent.
 
-### Synthetic EVIO frames
+### The events
 
-Each E2SAR event is one EVIO v6 record holding F frames (`-f`, default 256), with the layout of the CODA streaming data in `frames_thread0_*.evio` and `EC5_EC6_cosmics_*.evio`:
+`e2sar_evio_send` reads an EVIO v6 file (`-F`) into memory and sends it by frames: each record of the file is one frame (e.g. a built time frame of `frames_thread0_*.evio`) and is sent as one E2SAR event, its bytes unchanged, record header included. The file header and trailer aren't sent.
+
+- The event size is the frame size in the file. CODA streaming frames are small (~426 bytes for the cosmics data), so a file of them gives many small events: mind the Reassembler's ~85k events/s.
+- Each Segmenter sends events numbered 1…N, the file's K frames in order. Event n is frame (n − 1) mod K, so a run with N > K starts over from the first frame. `--digests` writes the SHA-256 of every frame, so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
+- Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`. See the [DAOS layout examples](DAOS_LAYOUT.md#examples).
+- Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
+- `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
+
+**The old synthetic frames.** The results on this page were measured before the sender read files. It built 64 distinct events per Segmenter in memory (event n was copy n mod 64), each an EVIO v6 record of F frames (`-f`, since removed), with the layout of the CODA streaming data in `frames_thread0_*.evio` and `EC5_EC6_cosmics_*.evio`:
 
 ```
 Record header (14 words, magic 0xc0da0100, bit info 0x80004206) + index array when F > 1
@@ -54,13 +64,7 @@ Record header (14 words, magic 0xc0da0100, bit info 0x80004206) + index array wh
       └─ Payload banks       tags 1, 3, …, 15; ~74% empty, as in the real data; hit words otherwise
 ```
 
-- A frame is ~423 bytes on average (the cosmics data: 426). Frame n has timestamp n × 65,536 ns.
-- 256 frames make a ~95 KB event, and 4096 frames ~1.5 MB.
-- Each Segmenter sends events numbered 1…N. Event n is copy n mod 64 of 64 distinct events built at start, so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
-- Each Segmenter has its own dataId (4321 + i), so DAOS keys never collide: `<prefix>/<evt>/<dataId>/<chunk>`. See the [example of the keys of a bench run](DAOS_LAYOUT.md#example-events-from-e2sar_evio_send).
-- Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
-- `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
-- To stream real time frames, with a different frame count in every record, see the proposal in [STREAMING_SENDER.md](STREAMING_SENDER.md).
+A synthetic frame was ~423 bytes on average (the cosmics data: 426), so 256 frames made a ~95 KB event and 4096 frames ~1.5 MB. Those are the event sizes in the results below.
 
 ## How to run
 
@@ -71,7 +75,7 @@ The nodes can't SSH to each other, so start the two roles in two terminals, one 
 # ebpf2203 (receiver), start first
 bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh recv run1 -m lb
 # ebpf2201 (sender)
-bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh send run1 -m lb
+bash ~/daq/e2sar-daos/scripts/e2sar_e2e_bench.sh send run1 -m lb -F /path/to/frames.evio
 ```
 
 `-m lb` goes through the LB in `$EJFAT_URI` (both sides `--withcp`). `-m n2n` sends straight to ebpf2203.
@@ -93,20 +97,20 @@ The same as one JSON line goes to `$RUN/bench/results.jsonl`. The exit status is
 | Option | Side | Default | |
 |---|---|---|---|
 | `-m lb\|n2n` | both | `lb` | Through the LB, or node-to-node |
+| `-F` | send | `$EVIO_FILE` | EVIO v6 file whose frames are sent. Required |
 | `-P` | send | 16 | Segmenters, each with its own producing thread and dataId |
 | `-s` | send | 1 | Send sockets (threads) per Segmenter |
-| `-n` | send | 6250 | Events per Segmenter (100,000 in total by default) |
-| `-f` | send | 256 | EVIO frames per event (~95 KB) |
+| `-n` | send | 6250 | Events per Segmenter (100,000 in total by default). More than the file's frames starts over |
 | `-r` | send | 20 | Total rate in Gbps (−1: unlimited) |
 | `-T` | recv | 32 | Receive threads (ports). Node-to-node, use T ≥ P |
 | `-D`, `-I` | recv | 16, 128 | Dequeue threads, and in-flight puts per thread |
 | `-C` | recv | 1024 | DAOS chunk size in KiB (0: whole event in one value). KV sink only |
-| `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Removed with dfuse support. The pil4dfs and dfuse results below were taken with it. See [DFUSE_TESTING.md](DFUSE_TESTING.md) |
+| `-S kv\|dfuse\|pil4dfs` | recv | `kv` | Removed with dfuse support. The pil4dfs and dfuse results below were taken with it |
 
-Environment overrides: `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS="-b 8388608"` for an 8 MiB send socket buffer).
+Environment overrides: `EVIO_FILE` (instead of `-F`), `SEND_IP`, `RECV_IP`, `PORT` (20600), `POOL` (`sc26`), `CONT` (`e2sar-bench`), `NIC`, `RUN`, and `SEND_ARGS` for extra `e2sar_evio_send` options (`SEND_ARGS="-b 8388608"` for an 8 MiB send socket buffer).
 
 - **Check that the nodes are idle first,** as in [ESNET_LB_TESTING.md step 4](ESNET_LB_TESTING.md). The receiver refuses to start if `PORT` is in use.
-- **Clean-up is built in.** The receiver destroys the container after reading it back. There are no source files: the sender builds its events in memory. Each run leaves only its logs and CSVs in `$RUN/bench/<TAG>/`. For 100,000 events that's about 10 MB.
+- **Clean-up is built in.** The receiver destroys the container after reading it back. The sender only reads its EVIO file. Each run leaves only its logs and CSVs in `$RUN/bench/<TAG>/`. For 100,000 events that's about 10 MB.
 - **A run fails** when any event is missing or has the wrong digest. `rx_discards_phy` > 0 almost always comes with it.
 
 ## What is measured
@@ -262,7 +266,7 @@ They differ only for bigger events. Compared with 1.5 MB events (4096 frames, 16
 
 16 Segmenters × 1 socket, 95 KB events (`-f 256`), 100,000 events per run, 32 receive threads, **32 dequeue threads** (`-D 32`, since 16 cap at ~40 Gbps, [section 3](#3-dequeue-threads-the-hidden-bottleneck)), 1 MiB chunks, KV sink.
 Six runs per rate: three with the sender as it is, three with a sender that staggered its Segmenters' start (see below), taken in turn across the rates (20, 25, …, 50, then again), 13:30–14:46 on an otherwise idle testbed.
-Node-to-node only: LB 638 had another worker registered (indra-s2) that would have taken part of the events, so the LB was not rerun.
+Node-to-node only: the LB was not rerun.
 
 ```bash
 # ebpf2203                                                   # ebpf2201
@@ -270,8 +274,7 @@ $B recv TAG -m n2n -T 32 -D 32                               $B send TAG -m n2n 
 ```
 
 The sweep ran from a laptop with SSH to both nodes, with [`scripts/e2sar_e2e_sweep.sh`](../scripts/e2sar_e2e_sweep.sh): `e2sar_e2e_sweep.sh 1020a "20 25 30 35 40 45 50" 3`.
-Every run's result, with the warm-up fields of the current analyzer, is in [`data/e2e_sweep_2026-10-20.jsonl`](data/e2e_sweep_2026-10-20.jsonl) (54 runs: `"sweep"` is `kv`, `kv-staggered-start` or `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
-The tables below can be rebuilt from it with [`data/e2sar_e2e_sweep_report.py`](data/e2sar_e2e_sweep_report.py): `--merge` groups kv and kv-staggered-start, `--sweep pil4dfs` shows only pil4dfs, `--csv runs.csv` gives one row per run for plotting.
+54 runs (`kv`, `kv-staggered-start` and `pil4dfs`). The run directories are in `~/e2sar_run/bench/sw_n2n_*_1020[abp]` on the testbed.
 
 | Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
 |---|---|---|---|---|---|---|
@@ -331,7 +334,7 @@ All events of the same runs, as the bench prints them (`latency_ms`), and the ev
 
 #### Latency and loss over a run
 
-`e2sar_e2e_analyze.py RUNDIR --pool 64 --expected 100000 --profile 0.1` splits a run by when each event was queued. Three runs (lost events / total p50 / daos p99, ms):
+`e2sar_e2e_analyze.py RUNDIR --pool 64 --expected 100000 --profile 0.1` (with today's sender: `--frames K`, the `Frames:` line of `send.log`) splits a run by when each event was queued. Three runs (lost events / total p50 / daos p99, ms):
 
 | Queued at (s) | kv, 20 Gbps (`r20_1_1020a`) | kv, 50 Gbps (`r50_2_1020a`) | pil4dfs, 20 Gbps (`r20_1_1020p`) |
 |---|---|---|---|
@@ -426,7 +429,7 @@ Grouping the lost events of each run into clusters queued within 1 ms of each ot
 
 #### KV vs files through pil4dfs
 
-The same sweep with `-S pil4dfs`: one file per event through dfuse with `libpil4dfs.so` preloaded (see [DFUSE_TESTING.md](DFUSE_TESTING.md)), the same 32 dequeue threads, each a blocking writer. 3 runs per rate, 15:00–15:21.
+The same sweep with `-S pil4dfs`: one file per event through dfuse with `libpil4dfs.so` preloaded, the same 32 dequeue threads, each a blocking writer. 3 runs per rate, 15:00–15:21.
 The KV rows are the 6 runs per rate above. "Committed" is the rate at which events landed in DAOS. "daos" is the write of one event (KV: its puts; pil4dfs: open, write, close).
 
 | Rate | Sink | Lossless | Committed (Gbps) | Events/s | daos p50 / p99 (ms) | total p50 (ms) | Lost events per run | NIC discards |
@@ -445,7 +448,7 @@ The KV rows are the 6 runs per rate above. "Committed" is the rate at which even
 - **KV is the better sink for these events.** One KV write takes 0.23–0.30 ms. One pil4dfs file takes 0.9–1.7 ms, 4–6× longer, so 32 writers manage only ~18–33k files/s, against the 26k/s that 20 Gbps needs and the 66k/s of 50 Gbps.
 - **pil4dfs can't sustain 20 Gbps.** Its 20 Gbps runs pass only because the receiver holds the backlog in memory: the 100,000 events took 4.3–5.7 s to commit after 3.8 s of sending, and waited up to 1.9 s. A continuous stream at that rate would grow the queue until events are lost. At 40 and 50 Gbps it committed less than at 30 (18–20 vs 22–25 Gbps), as the larger backlog seems to slow the writers down.
 - **The lost events are again at the start** (all within 0.08 s except two runs at 30 Gbps). The 20 Gbps pil4dfs runs had no NIC discards at all, where KV had some in 5 of 6. They also wrote to DAOS at a lower rate, which fits [cause 2](#possible-causes), but the 40–50 Gbps runs wrote at about the same rate and still had discards.
-- This doesn't contradict [DFUSE_TESTING.md](DFUSE_TESTING.md), where pil4dfs matched KV: those were 1.5 MB events (16× fewer files per byte), and 95 KB events only at 10 Gbps (13,200 files/s), below what pil4dfs can take.
+- This doesn't contradict the earlier dfuse tests, where pil4dfs matched KV: those were 1.5 MB events (16× fewer files per byte), and 95 KB events only at 10 Gbps (13,200 files/s), below what pil4dfs can take.
 - Untested: more pil4dfs writers (`-D 64`; with 1.5 MB events 32 was no better than 16), and larger events per file.
 
 #### Staggered Segmenter start: no effect
@@ -490,7 +493,7 @@ What this says about the E2E results:
 - **The 4-thread cap in [section 3](#3-dequeue-threads-the-hidden-bottleneck) is the sink.** 4 dequeue threads commit 27.5 Gbps without a sender and 24.3 with one. That's about 8.8k events/s per thread, with one blocking `recvEvent`, two puts and their completions per event.
 - **The ~85k events/s ceiling is the Reassembler, not DAOS.** Without it, 32 threads commit 167k events/s.
 - **1.5 MB events reach the IB link** (183 Gbps ≈ 91% of 200 Gb/s). Their latency is queueing: 16 × 128 puts in flight at once, unpaced. At an E2E rate DAOS takes ~0.5 ms per event.
-- **Plain dfuse is the sink's own limit**, the same 3.2k files/s as in the [dfuse sweep](DFUSE_TESTING.md). pil4dfs reaches 16k files/s with 95 KB events and about the KV rate with 1.5 MB events.
+- **Plain dfuse is the sink's own limit**, the same 3.2k files/s as in the earlier dfuse sweep. pil4dfs reaches 16k files/s with 95 KB events and about the KV rate with 1.5 MB events.
 - **Paced at 20 Gbps, DAOS adds 0.33 ms p50**, the same as the "daos" stage in the node-to-node E2E runs. E2SAR traffic on the shared adapter doesn't slow the DAOS writes.
 - `--chunk 0` makes no difference at 95 KB: both layouts are one data put and one metadata put.
 
@@ -507,7 +510,7 @@ BENCH="bash -c 'source ~/e2sar-instance.env; exec bash ~/daq/e2sar-daos/scripts/
   scripts/e2sar_e2e_sweep.sh 1021a "25 30 35 40 45" 2
 ```
 `BENCH` sources the instance URI, since `~/.bashrc` doesn't set `EJFAT_URI`.
-The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10-21.jsonl) (`"sweep": "kv-lb"`). The tables and plots come from `data/e2sar_e2e_sweep_report.py data/e2e_sweep_2026-10-21.jsonl [--plot FILE | --plot-loss FILE]`.
+11 runs (`kv-lb`).
 
 | Rate | Lossless runs | Received | E2E | Lost events per run | Runs with no loss after 0.5 s | NIC discards per run |
 |---|---|---|---|---|---|---|
@@ -517,10 +520,6 @@ The 11 results are in [`data/e2e_sweep_2026-10-21.jsonl`](data/e2e_sweep_2026-10
 | 35 | 0 / 2 | 35.35–35.36 | 33.72–33.74 | 3, 16 | 2 / 2 | 15, 77 |
 | 40 | 0 / 2 | 40.40–40.48 | 38.37 | 10, 20 | 2 / 2 | 54, 139 |
 | 45 | 0 / 2 | 45.56–45.61 | 42.94 | 4, 9 | 2 / 2 | 8, 45 |
-
-![LB sweep: E2E throughput, lost events, latency after the warm-up, NIC discards](data/e2e_sweep_2026-10-21.png)
-
-![LB sweep: lossless runs, and the loss rate of the others](data/e2e_sweep_2026-10-21_loss.png)
 
 - **Highest lossless E2E through the LB: 24.3 Gbps**, in 1 of 2 runs at 25 Gbps (25.2 Gbps received). The other 25 Gbps run lost 1 event. 20 Gbps was lossless.
 - **Unlike on 2026-10-19 ([section 4](#4-highest-lossless-rate)), 30 and 35 Gbps lost events in every run.** Then 35 Gbps passed 2 of 2, with 16 dequeue threads on LB 638. With 2 runs per rate, both days fit a threshold that varies from run to run between 25 and 35 Gbps, not a sharp ceiling.
@@ -694,7 +693,7 @@ These are now the defaults of `e2sar_evio_send`, `e2sar_e2e_bench.sh` and (`--de
 | | Setting | Why |
 |---|---|---|
 | Sender | 16 Segmenters × 1 socket | Spreads events over many receive threads (node-to-node: ports PORT…PORT+15). One socket each keeps bursts short |
-| Sender | 256 frames per event (~95 KB) | Short line-rate bursts, but few enough events to stay far below the receiver's ~85k events/s |
+| Sender | 256 frames per event (~95 KB; synthetic, `-f` since removed) | Short line-rate bursts, but few enough events to stay far below the receiver's ~85k events/s |
 | Sender | `--rate 20` | The only rate with no loss in every run through the LB (3 of 3). Through the LB, up to 35 was lossless in some runs. Node-to-node, no rate tested was lossless every time |
 | Receiver | `--threads 32` | Through the LB: more ports, fewer events sharing one. Node-to-node: at least P |
 | Receiver | `--deq 16 --inflight 128` | 4 dequeue threads cap at ~24 Gbps. 16 are enough to 40 Gbps |

@@ -1,174 +1,245 @@
 # Data layout in DAOS
 
-How `e2sar_daos_recv` stores reassembled E2SAR events in DAOS, and how `e2sar_daos_read` finds them again.
-
-The layout is defined in code in two headers, which both the writer and the reader use:
-
-- [`include/e2sar_daos/run_catalog.hpp`](../include/e2sar_daos/run_catalog.hpp): objects, object ids and the run catalog
-- [`include/e2sar_daos/event_layout.hpp`](../include/e2sar_daos/event_layout.hpp): the keys and metadata of one event
-
-There are three storage modes:
-
-| Mode | Option | Where one event goes |
-|---|---|---|
-| Per-run KV object (default) | `--cont-name` | Chunk values plus one metadata value in the run's own KV object |
-| Shared KV object (old) | `--oid` | The same keys, in one object shared by all runs, without the run catalog |
-| dfuse | `--dfuse DIR` | One POSIX file, `DIR/<prefix>/<prefix>_<evtNum>_<dataId>.evio` |
-
 ## Overview
 
-Each run (`--prefix`) goes into its own KV object (`DAOS_OT_KV_HASHED`) in `<pool>/<cont>`. A catalog object in the same container lists the runs:
+One run is one container. `T` is a UTC second, `s` a writer slot (0, 1, 2, …: one per running `e2sar_daos_recv`). Example: run `e2sar_1793280000`, two receivers:
 
 ```
-pool                    --pool, e.g. sc26
-└── container           --cont-name, e.g. e2sar_1793280000 (created on first use)
-    ├── run catalog     KV object, OID 0xE25A0000.0x0
-    │   ├── run/<prefix>           oid, oclass, chunk size, creation time, receiver that created it
-    │   ├── oid/<object id>        <prefix>  (claims the id)
-    │   └── recv/<prefix>/<host>   that receiver's final statistics, written when it stops
-    └── run object      one per --prefix: OID 0xE25A0001.<FNV-1a 64-bit hash of the prefix>, class --oclass
-        └── keys        <prefix>/<evtNum>/<dataId>[/<chunk>], one KV value each
+pool sc26
+└── container e2sar_1793280000                     one run
+    ├── catalog                                    KV object, string keys
+    │     run         start=1793280000 chunk=1048576 oclass=SX index_oclass=S8 batch_threshold=0.9
+    │     writer/0    started=1793280000
+    │     writer/1    started=1793280001
+    │     wm/0        index=1793280042 data=1793280041          (updated once a second)
+    │     wm/1        index=1793280042 data=1793280042
+    │     done/0      committed=… failed=… lost=…               (when writer 0 stops)
+    ├── seconds                                    integer keys: which seconds have index entries
+    │     1793280000, 1793280001, …
+    ├── index[1793280000]                          integer keys: the batches committed in that second
+    │     (0 << 48) | 0    batch table: 5 events, in data[1793280000, 0] at chunk 0
+    │     (1 << 48) | 0    batch table: 4 events, in data[1793280000, 1] at chunk 0
+    ├── index[1793280001]  …
+    ├── data[1793280000, 0]                        byte array: writer 0's event bytes, batches opened in that second
+    ├── data[1793280000, 1]                        byte array: writer 1's
+    └── data[1793280001, 0]  …
 ```
 
-- **Container:** `e2sar_daos_recv` creates it on first use (`daos_cont_create_with_label`). `--cont-name` is used as given. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one container per run, `<CONT_LABEL>_<UTC epoch s>`.
-- **One object per run, shared by its receivers:** the object id is a hash of the prefix, so receivers on several nodes (e.g. ebpf2201 and ebpf2203 behind the LB) write the same run into the same object without talking to each other. The first one creates the catalog entry; the others find it.
-- **Same object class on every receiver of a run:** the class is part of the DAOS object id, so a receiver that joins a run with a different `--oclass` stops with an error.
-- **Hash collisions:** two prefixes with the same hash would share an object. The catalog entry `oid/<id>` claims the id for one prefix, and a receiver with another prefix and the same id stops with an error.
-- **Why:** listing the runs reads only the small catalog (`e2sar_daos_read --prefixes`), reading one run scans only that run's keys instead of every run's, and deleting a run deletes one object (`e2sar_daos_read --prefix P --delete`) instead of the container.
+- **One run per container.** The container label is the run's name. Deleting a run is destroying its container. [`e2sar_site2ebpf_recv.sh`](../scripts/e2sar_site2ebpf_recv.sh) makes one container per run, `<CONT_LABEL>_<UTC epoch s>`.
+- **Mixed object types.** The container is a plain DAOS container (layout type "unknown"). It holds a KV object, integer-key objects and byte arrays. It isn't POSIX, so dfuse can't mount it.
+- **Times are UTC seconds** from each receiver's own clock. The receivers need NTP (or PTP). The reader never compares its own clock with the receivers': it decides from the watermarks they publish.
+- **No host information.** Writers are known only by their slot.
+
+Reading is described in [DAOS_READER.md](DAOS_READER.md).
+
+## Writer–reader contract
+
+The DAOS container is the only way writers and readers communicate. There are no sockets, signals or shared files between them. The one rule outside the container is the start order: **start the writers first, then the reader.**
+
+| Writers publish (in the container) | Readers use it to |
+|---|---|
+| `run`: settings (chunk size, classes) | open the arrays and parse the tables |
+| `writer/<slot>`: a writer exists | know which watermarks to wait for |
+| `index[T]` entries, written after the data | find committed events; anything not in an index entry doesn't exist yet |
+| `wm/<slot>` once a second | know when second T is complete |
+| `done/<slot>` | know that a writer has finished |
+
+Rules that follow:
+
+- **Writers never read anything a reader writes,** and don't know whether a reader exists. A writer runs at the same speed with zero, one or several readers.
+- **Writers first, then the reader.**
+  - The first writer creates the container and the `run` record. A reader started before that exits with an error ("container not found: start the writers first"); it doesn't wait.
+  - The reader can start any time after that: before the senders, during the run, or after it. A reader started late, or restarted, catches up, since everything it needs is still in the container.
+  - A writer that joins late claims the next slot. A running reader picks the new slot up from `writer/<slot>` and waits for its watermark from then on.
+- **Readers don't change anything a writer reads.** Readers only read, except the modes that remove data from DAOS once it is in files ([DAOS_READER.md](DAOS_READER.md)). Those never touch the catalog, and destroy the container only once every writer is done.
+- **End of run** is decided from the container alone: every claimed slot has `done/<slot>`, the reader has read past every final watermark, and no new slot has appeared for `--end-wait` seconds (default 10).
+- **A reader's own state** (restart point, missing-event list) stays in its output directory, never in the container.
 
 ## Object ids
 
-DAOS leaves the low 32 bits of `oid.hi` and all of `oid.lo` to the user. It sets the high 32 bits of `oid.hi` itself (object type and class).
+DAOS sets the high 32 bits of `oid.hi` (object type and class) with `daos_obj_generate_oid`. `daos container list-objects` and `daos object query` print an object id as two decimal numbers, `hi.lo`. So everything that identifies an object goes in `oid.lo`, as decimal digits that read directly, and the user bits of `oid.hi` are 0:
 
-| Object | `oid.hi` (user bits) | `oid.lo` |
+```
+oid.lo = K SSSS TTTTTTTTTT     (decimal digits)
+         K: object kind, 1 digit       S: writer slot, 4 digits       T: UTC second, 10 digits
+       = K × 10^14 + slot × 10^10 + T
+```
+
+| Object | Kind | `oid.lo` | Example `oid.lo` | DAOS object type | Class (default) |
+|---|---|---|---|---|---|
+| catalog | 1 | `1 0000 0000000000` | `100000000000000` | `DAOS_OT_KV_HASHED` | `S1`, fixed: a reader opens it before it knows the run's classes |
+| seconds | 2 | `2 0000 0000000000` | `200000000000000` | `DAOS_OT_MULTI_UINT64` | `--index-oclass` |
+| index[T] | 3 | `3 0000 T` | `300001793280042` = index[1793280042] | `DAOS_OT_MULTI_UINT64` | `--index-oclass`, default `S8` |
+| data[T, s] | 4 | `4 ssss T` | `400011793280042` = data[1793280042, slot 1] | `DAOS_OT_ARRAY_BYTE` | `--oclass`, default `SX` |
+
+Read an id from the right: the last 10 digits are the second, the 4 before them the slot, the first digit the kind. Slots go up to 9999, and 10-digit seconds last until the year 2286.
+
+- **Placement.** DAOS picks an object's targets from a hash of the whole id, so consecutive seconds land on unrelated targets. Within an object, the hash of the top-level key (dkey) picks the group. The id bits only have to be unique; their decimal layout doesn't affect placement.
+- **Classes.** The data class sets throughput: `SX` stripes over all targets. If the container needs redundancy, use `RP_2GX` or an `EC_…GX` class, with a chunk size that is a multiple of a full EC stripe (data shards × EC cell size). The index objects are small and each is read once, so `S8` is enough; use a wider class at very high batch rates.
+- **Same classes for the whole run.** The classes are stored in the catalog's `run` record. A receiver that joins a run with different classes, or a different chunk size, stops with an error.
+
+## Catalog
+
+A KV object with string keys. Values are records of `key=value` pairs separated by spaces.
+
+| Key | Value | Written |
 |---|---|---|
-| Run object | `0xE25A0001` (`kRunOidHi`) | FNV-1a 64-bit hash of the prefix |
-| Run catalog | `0xE25A0000` (`kCatalogOidHi`) | `0` |
-| Shared object (old) | `0` | `--oid`, default `0xE25A` (`kLegacyOidLo`) |
+| `run` | `start=<UTC s> chunk=<bytes> oclass=<data class> index_oclass=<class> batch_threshold=<θ>` | By the first receiver, with a conditional insert (`putIfAbsent`). Later receivers read it and check that their settings match |
+| `writer/<slot>` | `started=<UTC s>` | When a receiver starts: it claims the first free slot 0, 1, 2, … with `putIfAbsent` |
+| `wm/<slot>` | `index=<S> data=<S'>` | Once a second by each receiver: its watermarks, below |
+| `done/<slot>` | final statistics (`committed= failed= lost= batches= …`) | When the receiver stops. Marks the slot as finished |
 
-FNV-1a is used because it gives the same value on every node and build. Keys inside every object type start with the prefix, so the event layout and the reader's scan are the same for run objects and the shared object.
+A receiver prints its slot in its own log ("writer slot 1"), so a slot can be matched to a machine when debugging.
 
-## Run catalog
+### Watermarks
 
-Catalog values are records of `key=value` pairs separated by spaces:
+- `index=S`: every index write this receiver started before second S has completed. No new entry can appear in `index[T]` for T < S, because its clock is already past T.
+- `data=S'`: every batch this receiver opened before second S' (so every batch in `data[T, s]` with T < S') is committed: its data write and its index write have both completed. Used by readers that remove data from DAOS, to know when `data[T, s]` can go.
 
-```
-run/<prefix>          oid=<16 hex> oclass=<name or -> chunk=<bytes> created=<unix s> host=<receiver that created the entry>
-oid/<16 hex>          <prefix>
-recv/<prefix>/<host>  that receiver's final statistics (committed, failed, lost, ...)
-```
+**A second T is complete** when every claimed slot has `index > T` or a `done/<slot>` entry. The reader reads `index[T]` only after that, so it never misses an entry that is still being written. If a slot's watermark hasn't changed for `--stall` seconds (default 30, measured on the reader's clock as time since it last saw the value change; receiver killed), the reader warns and continues without that slot. If the slot's watermark moves again later, the reader reads those seconds again for that slot and writes what it adds there to a separate late file ([DAOS_READER.md](DAOS_READER.md#--live-and---live-rm-one-file-per---interval-seconds)).
 
-- The first receiver of a run creates `run/<prefix>` with a conditional insert (`putIfAbsent`). The others read it and check the object class.
-- `oid/<16 hex>` claims the object id for one prefix, so two prefixes with the same hash are caught instead of sharing one object.
-- Each receiver writes `recv/<prefix>/<host>` when it stops. `e2sar_daos_read --prefixes` sums these per run.
+## Batches
 
-## One event
-
-Each reassembled event, identified by (`evtNum`, `dataId`), is stored as follows. With `e2sar_ft`, one event is one file.
+An event's bytes go into its receiver's data array, and its description into an index entry. Both are written per **batch**: a group of events written together.
 
 ```
-<prefix>/<evtNum>/<dataId>/0      bytes [0, 1 MiB)
-<prefix>/<evtNum>/<dataId>/1      bytes [1 MiB, 2 MiB)
-...
-<prefix>/<evtNum>/<dataId>/<n-1>  remaining bytes (<= 1 MiB)
-<prefix>/<evtNum>/<dataId>        "size=<bytes> chunk=<bytes> nchunks=<n>"   <- written last
+small event: size ≤ θ × chunk     (θ = --batch-threshold, default 0.9: ≤ ~943 KB with 1 MiB chunks)
+             copied into the dequeue thread's open batch buffer (1 chunk)
+large event: written on its own, without a copy, as a batch of one
 ```
 
-Chunk `i` covers bytes `[i*chunk, min((i+1)*chunk, size))`.
+A dequeue thread flushes its open batch when:
+- the next small event doesn't fit in the chunk;
+- `--flush-us` has passed since the batch's first event (default 5,000 µs), so a quiet stream can't hold events back;
+- the UTC second changes, so a batch's data stays in one data second;
+- the receiver stops.
 
-- **Not a file:** in KV mode an event is a group of KV values, not a file. `e2sar_daos_read --fetch -o DIR` joins the chunks back into one file (see [Reading a run back](#reading-a-run-back)).
-- **Write granularity:**
-    - Each event is split into chunks of `--chunk` KiB (default 1024 = 1 MiB).
-    - Each chunk is one async `daos_kv_put`, so one KV value.
-    - An event smaller than the chunk size is a single value, and the metadata records the event size as the chunk size. `--chunk 0` stores every event as a single value.
-- **Commit marker:** the metadata key is written only after all of an event's chunks have been stored successfully. An event that is listed with metadata is complete. Chunks without metadata come from a failed or interrupted write. `e2sar_daos_read` reports them as *incomplete*.
-- **Key prefix:** `e2sar_perf` and `e2sar_ft` number events from 0 on every run, so use a new `--prefix` for each run (e.g. `run42`). Otherwise new data overwrites old data under the same keys. A receiver that already wrote to a prefix warns when it starts again with it.
-- **Key parts:** `prefix` is the run, `evtNum` is the E2SAR event number, and `dataId` is the sender stream. A Segmenter sends with its own dataId, so events from different streams with the same number don't collide.
-- **Placement:** the object is hashed, so DAOS places each key on a target by its hash, according to the object class (`--oclass`, e.g. `SX` or `RP_2G1`). The chunks of one event usually land on different targets and are written in parallel. Keys have no order in DAOS: `e2sar_daos_read` lists all of the run's keys and groups them into events.
+## Data arrays: `data[T, s]`
 
-### Example: an EVIO file sent with `e2sar_ft`
-
-`e2sar_ft` sends each file as one event, numbered 0, 1, 2, … in the order it queues them.
-Say `frames_thread0_file0020.evio` (1,776,313,996 bytes) is the first file of a run, received with `--prefix run42` and sent with `--dataid 4321`.
-1,776,313,996 bytes = 1,694 chunks of 1 MiB + 26,252 bytes, so the event takes 1,695 chunk values and one metadata value:
+A DAOS byte array (`DAOS_OT_ARRAY_BYTE`, cell size 1 byte), the object type DFS uses for files. `T` is the second in which the batch was opened, `s` the writer slot. Only writer `s` writes to it.
 
 ```
-run42/0/4321/0       bytes [0, 1048576)
-run42/0/4321/1       bytes [1048576, 2097152)
-...
-run42/0/4321/1693    bytes [1775239168, 1776287744)
-run42/0/4321/1694    bytes [1776287744, 1776313996)                  26,252 bytes
-run42/0/4321         "size=1776313996 chunk=1048576 nchunks=1695"    written last
+byte offset o  →  chunk c = o / chunk  →  dkey c  →  hashed to a target group (SX: any target)
 ```
 
-The next file of the run is `run42/1/4321/...`, and so on.
-`e2sar_daos_read --prefix run42 --fetch -o DIR` joins the chunks back into `DIR/run42_0_4321.evio`, byte for byte the original file.
+- **Chunk size.** `--chunk` KiB (default 1024 = 1 MiB) is the array chunk size and the batch size. It's stored in the catalog, and the reader opens the array with it (`daos_array_open_with_attr`), since a byte array stores no metadata.
+- **Every batch starts on a chunk boundary.** A batch of small events is at most one chunk, so its write goes to one target in one request. A large event covers `ceil(size / chunk)` chunks, which DAOS writes to different targets in parallel.
+- **Offsets.** Each receiver keeps one atomic chunk counter, shared by its dequeue threads, that never resets. A batch takes `n = ceil(bytes / chunk)` chunks with one `fetch_add(n)` and is written at `offset = first chunk × chunk`. The arrays are sparse: the unused end of a chunk and the chunks used in other seconds are holes, which take no space and read as zeros.
+- **Very large events** are written as several array writes of at most `--max-write` (default 64 MiB), so one event can't launch thousands of chunk writes at once. Its index entry is written after the last one completes.
 
-### Example: events from `e2sar_evio_send`
-
-Here one event is one EVIO v6 record holding `-f` built time frames, not a file.
-Segmenter i sends with dataId 4321 + i and numbers its events 1…N, so every Segmenter has an event 1, and the dataId tells them apart.
-[`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh) passes its TAG as `--prefix`. With the bench defaults (16 Segmenters, 256 frames ≈ 95 KB per event), every event fits in one chunk. For a run tagged `tput20`:
+Example: one receiver's array for one second:
 
 ```
-tput20/1/4321/0      event 1 of Segmenter 0: the whole EVIO record (S ≈ 95 KB)
-tput20/1/4321        "size=S chunk=S nchunks=1"
-tput20/1/4322/0      event 1 of Segmenter 1
-tput20/1/4322
-...
-tput20/1/4336/0      event 1 of Segmenter 15
-tput20/1/4336
-tput20/2/4321/0      event 2 of Segmenter 0
-tput20/2/4321
-...
+data[T, slot 1]
+ chunk 4810 | batch: ev 812/4321  ev 812/4322  ev 813/4321 … ev 822/4330 | hole |
+ chunk 4811 | batch: ev 823/4321 …                                  | hole |
+ chunk 4812 | ev 900/4321, a 1.7 GB file: chunks 4812 … 6506, spread over all targets …
+ chunk 6507 | batch: ev 901/4321 …
 ```
 
-S differs a little from event to event, with the hits in the frames.
-With `-f 4096` (~1.5 MB events), each event has 2 chunks: `/0` with 1 MiB and `/1` with the remaining ~0.5 MB.
+## Index: `index[T]` and `seconds`
 
-| | `e2sar_ft` | `e2sar_evio_send` |
+`index[T]` lists the batches whose data was fully written and whose index write was started in second T (the **commit second**). An event becomes visible to readers when its batch's index entry exists: that entry is the commit marker. The data array uses the second the batch was opened, so a slow write (a 1.7 GB file taking several seconds) shows up in a later index second without holding back the events committed meanwhile.
+
+```
+index[T]   dkey = (slot << 48) | batch_seq      batch_seq: per slot, 0, 1, 2, … for the run
+                                                e.g. slot 1, batch 391 = 0x0001_0000_0000_0187
+           akey = 0
+           value = batch table (binary, little endian)
+
+batch table:
+  header  char[4] "E2SB"          check value: the ASCII bytes 45 32 53 42 ("E2SAR batch")
+          u32 n                  number of events
+          u16 slot   u16 reserved   u32 reserved
+          u64 T_data             second of the data array, data[T_data, slot]
+          u64 offset             byte offset of the batch in that array
+          u64 length             bytes from offset to the end of the last event
+  n ×     u64 evtNum   u64 offset (from the batch start)   u64 size   u16 dataId   u16 flags   u32 reserved
+```
+
+The header is 40 bytes and each entry 32 bytes. A reader checks a table before using it: it starts with `E2SB`, its size is exactly 40 + 32 × n bytes, and its slot matches the dkey. In a hexdump of an index value, `E2SB` shows up as text at the start. A batch of 50 × 20 KB events has a 1.6 KB table.
+
+`seconds` marks the seconds that have index entries, so a reader skips empty seconds without opening them:
+
+```
+seconds    dkey = T, akey = 0, value = 1 byte
+```
+
+A receiver writes `seconds[T]` the first time it puts an index entry into `index[T]`. Two receivers writing it for the same second write the same value.
+
+## Writer (`e2sar_daos_recv`)
+
+1. **Start.** Open or create the container. Create `run` with `putIfAbsent`, or read it and check the settings. Claim a writer slot. Print the slot.
+2. **Each event,** on a dequeue thread (`--deq`), from the Reassembler:
+   - small: copy into the open batch, flushing it first if it's full;
+   - large: start a batch of one that points at the Reassembler's buffer.
+3. **Flush a batch,** asynchronously on the thread's DAOS event queue (`--inflight` operations at once):
+   1. take chunks from the counter and `daos_array_write` the batch into `data[T_open, slot]`;
+   2. when it completes, `daos_obj_update` the batch table into `index[now]` (and `seconds` if it's this receiver's first entry in that second);
+   3. when that completes, count the events as committed and return the buffer to the thread's pool (`--batch-buffers` of one chunk each), or free the Reassembler's buffer.
+   The index write is started by the thread after it polls its event queue, not from inside the completion callback.
+4. **Back-pressure.** If every in-flight slot or every batch buffer is busy, the thread polls its event queue until one frees up. The Reassembler's queue absorbs short delays ("Lost in enqueue" counts what it can't).
+5. **Failures.** If a data write fails, no index entry is written: the batch's events count as failed and are never visible. A failed write is retried once before that.
+6. **Once a second,** the stats thread writes `wm/<slot>` from the dequeue threads' oldest pending index write (`index`) and oldest batch not yet committed (`data`).
+7. **Stop.** Flush and drain every thread, write the final watermark and `done/<slot>`.
+
+The same event number is never written by two receivers: the LB picks the receiver from the event number alone, so all `dataId`s and segments of event N go to one receiver. A sender that reuses event numbers (for example after a restart) produces duplicates, which the readers report.
+
+**Log lines** start with the UTC time in seconds since the epoch, with milliseconds after the point, not a date and time:
+
+```
+1793280042.123 1.02 Gbps, 6012 evt/s | committed 6011 evts, 120.3 MiB, 98 batches | reassembly loss 0, enqueue loss 0
+```
+
+Lines from several receivers can then be merged and sorted as numbers, and matched to the seconds in DAOS: the part before the point is `T`.
+
+### Receiver options
+
+| Option | Default | Meaning |
 |---|---|---|
-| One event | One whole file (often GBs) | One EVIO record of `-f` frames (~95 KB by default) |
-| `evtNum` | 0, 1, 2, … per run | 1…N per Segmenter |
-| `dataId` | `--dataid`, one stream | 4321 + i, one per Segmenter |
-| Chunks per event | Many (1,695 for the 1.7 GB file above) | Usually 1 |
-| Restored by `e2sar_daos_read -o` | The original `.evio` file | One standalone EVIO v6 record |
+| `--pool`, `--cont-name` | required | pool, and the run's container (created if missing) |
+| `--chunk` | 1024 KiB | array chunk size = batch size |
+| `--oclass` | `SX` | data array class |
+| `--index-oclass` | `S8` | seconds and index class |
+| `--batch-threshold` | 0.9 | events ≤ θ × chunk are batched |
+| `--flush-us` | 5000 | flush a partly filled batch after this long |
+| `--batch-buffers` | 8 | batch buffers per dequeue thread |
+| `--max-write` | 64 MiB | largest single array write; larger events are split |
+| `--deq`, `--inflight` | 8, 128 (to be tuned) | dequeue threads; DAOS operations in flight per thread |
 
-## Reading a run back
+## Examples
 
-```bash
-e2sar_daos_read --pool <pool> --cont <label> --prefixes                                  # list runs in the catalog
-e2sar_daos_read --pool <pool> --cont <label> --prefix run42                              # list committed events
-e2sar_daos_read --pool <pool> --cont <label> --prefix run42 --fetch                      # verify, print SHA-256
-e2sar_daos_read --pool <pool> --cont <label> --prefix run42 --fetch -o ~/restored        # write run42_<evt>_<dataId>.evio
-e2sar_daos_read --pool <pool> --cont <label> --prefix run42 --fetch -o ~/restored --event 7 --dataid 4321
-e2sar_daos_read --pool <pool> --cont <label> --prefix run42 --fetch -o ~/restored --bundle 100000  # 100,000 events per file
-e2sar_daos_read --pool <pool> --cont <label> --prefix run42 --delete                     # delete the run's object and catalog entries
-```
+### A 1.7 GB EVIO file sent with `e2sar_ft`
 
-To restore one event, the reader looks up `run/<prefix>` in the catalog, opens the run object, reads the metadata key, then fetches chunks `0..nchunks-1` in order and writes them to `DIR/<prefix>_<evtNum>_<dataId>.evio` (`-e` sets the extension, `-e ''` for none).
-Events are read in event-number order, and by data id within one event number.
-For many small events, such as one streaming frame per event, `--bundle N` writes N events per file (`<prefix>_000000.evio`, …) with an index per file (`evtNum dataId offset size`) and `<prefix>_missing.txt` listing the missing event numbers per data id. See [bin/README.md](../bin/README.md#e2sar_daos_read).
-`--pool` is required. It opens the pool and container read-only, except with `--delete`. All options are in [bin/README.md](../bin/README.md#e2sar_daos_read).
-
-## Shared object (before per-run objects)
-
-Before per-run objects, everything went into one shared object, `--oid` (default `0xE25A`), with the same keys and no catalog.
-
-- `e2sar_daos_recv --oid N` still writes that way.
-- `e2sar_daos_read` reads a prefix that isn't in the catalog from that object, with a note on stderr, so older containers still read. `--oid` and `--oclass` select a different shared object.
-- [E2E_BENCHMARK.md](E2E_BENCHMARK.md) runs used this layout.
-
-## dfuse mode
-
-With `e2sar_daos_recv --dfuse DIR` (the bench's `-S dfuse`), there is no KV object and no run catalog. Each event is one file in a POSIX container mounted with dfuse:
+`frames_thread0_file0020.evio` (1,776,313,996 bytes) is event 0, `dataId` 4321. It's larger than 0.9 MiB, so it's a batch of one:
 
 ```
-DIR/<prefix>/<prefix>_<evtNum>_<dataId>.evio
+data[T, 0]   chunks c … c+1694, written as 27 array writes of ≤ 64 MiB, spread over all targets
+index[T']    dkey (0 << 48) | 17: header {T_data = T, offset = c × 1 MiB, length = 1776313996, n = 1}
+                                   entry  {evtNum 0, offset 0, size 1776313996, dataId 4321}
 ```
 
-- Each `--deq` thread writes with a blocking `open` / `write` / `close`. No chunking: `--chunk` does not apply.
-- An event counts as committed once `close()` returns. With `--fsync`, also after `fsync()`.
-- The file name is the same as `e2sar_daos_read -o` produces in KV mode, so both can be checked the same way (e.g. `sha256sum`).
+`T'` is the second the last write completed, a few seconds after T. `e2sar_daos_read --offline` restores it byte for byte ([DAOS_READER.md](DAOS_READER.md#--offline-one-file-per-event)). If any packet of the file was lost, E2SAR dropped the whole event and nothing is written to DAOS.
 
-See [DFUSE_TESTING.md](DFUSE_TESTING.md) for setup and results.
+### coda-fb frames, ~20 KB at 2.5 Gbps
+
+One sender, one `dataId`, ~15,600 frames per second, split by the LB over two receivers (~7,800 per second each). With 8 dequeue threads per receiver, each thread gets ~1,000 frames per second, so a 5 ms flush catches ~5 frames (~100 KB) per batch:
+
+```
+data[T, 1]   chunk 2000: frames 1043, 1047, 1048, 1052, 1053 (~100 KB) | hole |
+index[T]     dkey (1 << 48) | 391: header {T_data T, offset 2000 × 1 MiB, length ~100 KB, n 5}, 5 entries
+```
+
+With the default `--interval 5`, `e2sar_daos_read --live` writes one ~1.6 GB file per 5 seconds with ~78,000 frames in frame order. Fewer dequeue threads or a longer flush fill the batches more: see the tuning plan in [STREAMING_WORKFLOW.md](STREAMING_WORKFLOW.md#tuning).
+
+## Cost per event
+
+| Event size | DAOS operations |
+|---|---|
+| 1.7 GB | 27 array writes (1,695 chunk writes inside DAOS) + 1 index write |
+| 0.9 MiB – 2 MiB | 1 array write + 1 index write |
+| 95 KB | ~0.2 (10 events per batch) |
+| 20 KB | ~0.04 with full batches |
+| Finding events to read | one index listing per second |
+
+The receive side (E2SAR and the NIC, ~25 Gbps lossless in [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md)) remains the limit. The few DAOS operations show up as few dequeue threads and little CPU for the rate, and a reader whose cost doesn't grow with the run.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/PERLMUTTER_GUIDE.md
+# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/LCF2JLAB_GUIDE.md
 # (remote sender ──▶ ESnet LB ──▶ e2sar_daos_recv on ebpf2201 and ebpf2203 ──▶ DAOS; the sender is
 # on Perlmutter by default, or on Lux with SITE=lux, see below).
 #
@@ -152,7 +152,7 @@ cmd_start() {
     trap '' INT
     echo "Starting e2sar_daos_recv; Ctrl-C to stop it after the send"
     ( trap - INT; exec "$BIN/e2sar_daos_recv" -v --withcp --ip "$ip" \
-        --port "$PORT" --threads "$THREADS" --pool "$POOL" --cont-name "$cont" --prefix "$runid" \
+        --port "$PORT" --threads "$THREADS" --pool "$POOL" --cont-name "$cont" \
         --timeout "$TIMEOUT" -b "$BUF" --deq "$DEQ" --inflight "$INFLIGHT" \
         --timing-csv "$d/$ME.csv" $RECV_ARGS ) 2>&1 | tee "$d/$ME.recv.log"
 
@@ -183,7 +183,7 @@ cmd_verify() {
     cont=$(run_cont "$d") || exit 1
     echo "Verifying $runid: $n events of $l bytes in $POOL/$cont"
     local fail=0
-    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$cont" --prefix "$runid" > "$d/events.list" || die "e2sar_daos_read failed"
+    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$cont" --list > "$d/events.list" || die "e2sar_daos_read failed"
     tail -1 "$d/events.list"
 
     # Loss is reported, not failed: events lost on the way never reach DAOS.
@@ -193,7 +193,7 @@ cmd_verify() {
     got=$(wc -l < "$d/events.nums")
     bad_num=$(awk -v n="$n" '$1 >= n' "$d/events.nums" | wc -l)
     dup=$(uniq -d "$d/events.nums" | wc -l)
-    [ "$got" -gt 0 ] || { echo "FAIL no events in DAOS under '$runid/'"; exit 1; }
+    [ "$got" -gt 0 ] || { echo "FAIL no events in DAOS ($cont)"; exit 1; }
     [ "$bad_num" -eq 0 ] || { echo "FAIL $bad_num event numbers >= $n: wrong N, or two sends under one RUNID"; fail=1; }
     [ "$dup" -eq 0 ] || { echo "FAIL $dup event numbers listed twice"; fail=1; }
     comm -23 <(seq 0 $((n - 1)) | sort) <(sort -u "$d/events.nums") | sort -n > "$d/missing.txt"
@@ -211,17 +211,17 @@ cmd_verify() {
     local bad
     bad=$(awk -F'\t' -v L="$l" 'NF==5 && $1 ~ /^[0-9]+$/ && $3!=L' "$d/events.list" | wc -l)
     [ "$bad" -eq 0 ] && echo "OK   every event $l bytes" || { echo "FAIL $bad events not $l bytes"; fail=1; }
-    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$cont" --prefix "$runid" --fetch > "$d/events.sha" || fail=1
+    "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$cont" --fetch > "$d/events.sha" || fail=1
     tail -1 "$d/events.sha"
     local digests
     digests=$(grep -E '^[0-9a-f]{64} ' "$d/events.sha" | cut -d' ' -f1 | sort -u | wc -l)
     [ "$digests" -eq 1 ] && echo "OK   one digest over all events" || { echo "FAIL $digests different digests"; fail=1; }
-    # The receivers' commit counts: from the run catalog ("Receiver <host>: committed N events"
+    # The receivers' commit counts: from the run catalog ("Writer <slot>: committed N events"
     # in the listing), else from the receivers' logs.
     local sum
-    if grep -q '^Receiver .*: committed ' "$d/events.list"; then
-        grep '^Receiver ' "$d/events.list"
-        sum=$(sed -n 's/^Receiver .*: committed \([0-9]*\) events.*/\1/p' "$d/events.list" | awk '{s += $1} END {print s + 0}')
+    if grep -q '^Writer .*: committed ' "$d/events.list"; then
+        grep '^Writer ' "$d/events.list"
+        sum=$(sed -n 's/^Writer .*: committed \([0-9]*\) events.*/\1/p' "$d/events.list" | awk '{s += $1} END {print s + 0}')
     else
         grep -H 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null
         sum=$(grep -h 'Events committed' "$d"/ebpf220[13].recv.log 2>/dev/null | awk '{s += $NF} END {print s + 0}')
@@ -246,7 +246,7 @@ cmd_runs() {
     [ -n "$conts" ] || { echo "no ${CONT_LABEL}_<epoch s> containers in $POOL"; return; }
     for c in $conts; do
         echo "=== $POOL/$c (created $(date -u -d "@${c##*_}" '+%Y-%m-%d %H:%M:%S UTC'))"
-        "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$c" --prefixes | column -t -s $'\t'
+        "$BIN/e2sar_daos_read" --pool "$POOL" --cont "$c" --list | grep -E '^(Run|Writer|Seconds|[0-9]+ committed)'
     done
 }
 
