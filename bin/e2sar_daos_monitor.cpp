@@ -332,11 +332,12 @@ public:
 
         const auto listed = reader_->listSeconds();
         const std::set<uint64_t> present(listed.begin(), listed.end());
-        uint64_t outEvents = 0, outBytes = 0;
+        uint64_t outEvents = 0, outBytes = 0, outSeconds = 0;
         for (auto& [t, sec] : seconds_)
             if (!sec.gone && !present.count(t)) {
                 sec.gone = true;
                 gone_.insert(t);
+                outSeconds++;
                 outEvents += sec.events;
                 outBytes += sec.bytes;
             }
@@ -405,7 +406,7 @@ public:
         j << ",\"in\":{\"events\":" << inEvents_ << ",\"bytes\":" << inBytes_ << ",\"d_events\":" << evs.size()
           << ",\"d_bytes\":" << inBytes << "}";
         j << ",\"out\":{\"events\":" << outEvents_ << ",\"bytes\":" << outBytes_ << ",\"d_events\":" << outEvents
-          << ",\"d_bytes\":" << outBytes << "}";
+          << ",\"d_bytes\":" << outBytes << ",\"d_seconds\":" << outSeconds << "}";
         j << ",\"daos\":{\"events\":" << inEvents_ - outEvents_ << ",\"bytes\":" << inBytes_ - outBytes_
           << ",\"seconds\":" << listed.size();
         if (!listed.empty())

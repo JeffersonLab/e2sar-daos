@@ -136,10 +136,11 @@ def demo(path, every, backfill=0.0, n_streams=18, rate=15259, bins=600, rm_after
                 for _ in range((rng.random() < 0.002) + (rng.randint(1, 4) if i == ids[7] and rng.random() < 0.02 else 0)):
                     lost[i].append((rng.randint(new_lo, ev), now))
             # the reader: complete windows rm_after intervals behind are removed
-            d_out = d_out_b = 0
+            d_out = d_out_b = d_secs = 0
             for s in sorted(seconds):
                 if s not in gone and s < now - (rm_after + 1) * interval - 2:
                     gone.add(s)
+                    d_secs += 1
                     d_out += seconds[s][0]
                     d_out_b += seconds[s][1]
             total_out += d_out
@@ -184,7 +185,7 @@ def demo(path, every, backfill=0.0, n_streams=18, rate=15259, bins=600, rm_after
                              "lag": round(now - sec + (s == 1 and int(now) % 60 < 6) * 3, 3),
                              "events": total_in // 2, "bytes": bytes_in // 2} for s in (0, 1)],
                 "in": {"events": total_in, "bytes": bytes_in, "d_events": n * n_streams, "d_bytes": n * n_streams * size},
-                "out": {"events": total_out, "bytes": bytes_out, "d_events": d_out, "d_bytes": d_out_b},
+                "out": {"events": total_out, "bytes": bytes_out, "d_events": d_out, "d_bytes": d_out_b, "d_seconds": d_secs},
                 "daos": {"events": total_in - total_out, "bytes": bytes_in - bytes_out, "seconds": len(in_daos_secs),
                          "first": min(in_daos_secs, default=sec), "last": max(in_daos_secs, default=sec)},
                 "strip": {"span": span, "bins": bins, "width": width},

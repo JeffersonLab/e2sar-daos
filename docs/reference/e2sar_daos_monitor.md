@@ -79,7 +79,7 @@ One JSON object per line. `type` is `tick`, or `end` once.
 | `tick`, `t`, `dt` | Line number, UTC time (s), seconds since the previous line |
 | `run`, `start` | Container label, run start (UTC s) from the run record |
 | `writers[]` | `slot`, `done`, `wm_index`, `wm_data`, `lag` (now − `wm_index`, s), `events`, `bytes` committed by that slot |
-| `in`, `out` | `events`, `bytes` (run totals), `d_events`, `d_bytes` (since the previous line) |
+| `in`, `out` | `events`, `bytes` (run totals), `d_events`, `d_bytes` (since the previous line); `out.d_seconds`: index seconds removed since the previous line |
 | `daos` | `events`, `bytes` in DAOS, `seconds` present, `first`, `last` second |
 | `missing` | `total` (cumulative), `events` (still open), `pending`, `late`, `dups`, summed over the `dataId`s |
 | `strip` | `span` event numbers shown per `dataId`, `bins`, `width` = event numbers per bin |
@@ -105,7 +105,7 @@ Standard library only (Python ≥ 3.8). It reads the JSON lines file as it grows
 |---|---|
 | Tiles | Incoming and outgoing Events/s and Gbps, data in DAOS, missing so far (with still open, arrived late, pending, duplicates) |
 | Event numbers per `dataId` | One row per `dataId`, the newest number at the right: in DAOS (blue), left DAOS (aqua), missing (red, full height, marked ▲), pending (yellow), not seen (gray). Each row ends with that `dataId`'s missing count so far and Events/s; hover for the event range of a bin |
-| Events/s | Incoming and outgoing over the last 3 updates (~6 s), the last 5 minutes before the frame shown. One update alone would flicker: the reader removes one `--interval` window at a time, at times that jitter against the monitor's 2 s looks, so a look can catch 0 or 2 windows. A red ▲ on the time axis marks an update in which event numbers went missing; hover for how many and the total so far. Missing counts share no axis with Events/s, so they are marks, not a line |
+| Events/s | The last 5 minutes before the frame shown. Incoming: over the last 3 updates (~6 s). Outgoing: events per second of data removed, over the last 5 updates. A plain per-update rate would flicker: the reader removes one `--interval` window at a time, at times that jitter against the monitor's 2 s looks, so a look can catch 0 or 2 windows (seen in the first real run, between 0 and 125k Events/s). A red ▲ on the time axis marks an update in which event numbers went missing; hover for how many and the total so far. Missing counts share no axis with Events/s, so they are marks, not a line |
 | Data in DAOS | GiB committed and not yet removed, mean of the last 3 updates, the last 5 minutes |
 | Writers | Each slot's watermark and lag: *behind* if more than 5 s |
 

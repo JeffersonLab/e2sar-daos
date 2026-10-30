@@ -164,7 +164,13 @@ function setMode(cls, text) { $('mode').className = 'pill ' + cls; $('mode').tex
 // Rates over the last SMOOTH updates (~6 s): the reader removes one --interval window at a time,
 // at times that jitter against the monitor's 2 s looks, so one look can catch 0 or 2 windows.
 const SMOOTH = 3;
-function rateAt(j, key, field = 'events') { const k = Math.max(0, j - SMOOTH), a = F[k], b = F[j];
+function rateAt(j, key, field = 'events') {
+  // outgoing: events per second of data removed, over the last 5 looks. Steady whatever the phase of the
+  // reader's removals, and equal to the wall-clock rate over time. Needs out.d_seconds (monitor ≥ 2026-10-30).
+  if (key === 'out' && F[j].out.d_seconds !== undefined) { let n = 0, s = 0;
+    for (let k = Math.max(0, j - 4); k <= j; k++) { n += F[k].out['d_' + field]; s += F[k].out.d_seconds; }
+    return s ? n / s : 0; }
+  const k = Math.max(0, j - SMOOTH), a = F[k], b = F[j];
   return k === j ? b[key]['d_' + field] / (b.dt || 2) : (b[key][field] - a[key][field]) / (b.t - a.t); }
 function daosAt(j) { let s = 0, n = 0; for (let k = Math.max(0, j - SMOOTH + 1); k <= j; k++, n++) s += F[k].daos.bytes; return s / n; }
 
