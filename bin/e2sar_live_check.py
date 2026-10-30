@@ -7,11 +7,13 @@ frames of the EVIO file that e2sar_evio_send sent.
 
   DIR        the reader's -o directory
   RUN        the run (container label): files are DIR/<RUN>_<W>.evio, .idx, _manifest.txt
-  --digests  e2sar_evio_send --digests output: '<frame> <sha256>' per frame of the file
+  --digests  e2sar_evio_send --digests output: '<i> <sha256>' per distinct event i (with -f 1:
+             per frame of the file)
   --expected events the sender sent (its "Sent:" line); default: don't check the count
 
 Checks every file in the manifest (its SHA-256 and size), then every event in its .idx:
-event number n of any dataId must be frame (n - 1) % frames of the file, byte for byte.
+event number n of any dataId must be distinct event (n - 1) % E of the file, byte for byte,
+where E is the number of digest lines.
 Also reports duplicates, the events per dataId and the reader's _missing.txt.
 Exit status 0 if everything matches.
 """

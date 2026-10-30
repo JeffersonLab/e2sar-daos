@@ -5,7 +5,7 @@ Inputs (all in the run directory):
   send.csv     e2sar_evio_send --timing-csv: evt_num,data_id,bytes,queue_ns,sent_ns (epoch ns)
   timing.csv   e2sar_daos_recv --timing-csv: evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms
                (seconds since the receiver's clock start, printed as "Clock start" in recv.log)
-  digests      e2sar_evio_send --digests: <frame> <sha256> (event n is frame (n - 1) % frames)
+  digests      e2sar_evio_send --digests: <i> <sha256> (event n is distinct event (n - 1) % --frames)
   fetch.txt    e2sar_daos_read --fetch output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
 
 Latency stages per event, matched on (evt_num, data_id):
@@ -44,7 +44,7 @@ def pct(v, p):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dir")
-    ap.add_argument("--frames", type=int, required=True, help="frames (records) in e2sar_evio_send's file")
+    ap.add_argument("--frames", type=int, required=True, help="distinct events in e2sar_evio_send's file (its 'Distinct events:'; the frames when -f 1)")
     ap.add_argument("--expected", type=int, required=True, help="events sent")
     ap.add_argument("--warmup", type=float, default=0.5, help="seconds excluded from latency_steady_ms (default 0.5)")
     ap.add_argument("--profile", type=float, metavar="S", help="print latency and loss per S-second slice of the run")

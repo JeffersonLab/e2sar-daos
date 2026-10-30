@@ -3,6 +3,7 @@
 Dated measurements. `daos_layout` in each header says which DAOS layout the numbers are for (`v1`: the KV layout before #31; `v2`: the current one; `none`: no DAOS).
 
 * [End-to-end results: summary](e2e-summary.md) - The highest lossless rates node-to-node and through the LB, what loses events, what limits the rate, and latency, across the E2E runs of 2026-10-19 to 2026-10-28. (layout v1)
+* [20 KB EVIO events at 2.5 Gbps, with a --live-rm reader (2026-10-30)](2026-10-30-evio-20kb-2p5gbps.md) - e2sar_evio_send -f 50 (50 frames, ~20 KB per event), 4 streams at 2.5 Gbps node to node into e2sar_daos_recv, read live with --live-rm: lossless and byte-exact, but the reader writes a 2 s bundle in ~2.1 s and falls slowly behind. (layout v2)
 * [Receiver tuning for layout v2 (2026-10-29)](2026-10-29-receiver-tuning.md) - The e2sar_daos_recv sweep of --threads, --deq, --inflight and --flush-us for small events, e2sar_ft files and 1 MiB events up to 80 Gbps, and the recommended settings. (layout v2)
 * [e2sar_perf without DAOS: node-to-node vs LB, 10–90 Gbps (2026-10-26 and 2026-10-28)](2026-10-26-e2sar-perf-n2n-vs-lb.md) - E2SAR's own e2sar_perf at both ends, no DAOS: loss per rate, node-to-node and through LB 86, with and without recvmmsg. (layout none)
 * [E2E LB rate sweep, 20–45 Gbps (2026-10-21)](2026-10-21-e2e-lb-sweep.md) - 11 runs through LB 640 at 20–45 Gbps: 24.3 Gbps highest lossless E2E, every loss in the first 0.5 s, latency set by the WAN round trip. (layout v1)

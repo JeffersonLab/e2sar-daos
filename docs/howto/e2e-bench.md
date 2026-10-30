@@ -33,10 +33,11 @@ You don't need a different receiver. `e2sar_daos_recv` stores any event, and the
 
 ### The events
 
-`e2sar_evio_send` reads an EVIO v6 file (`-F`) into memory and sends it by frames: each record of the file is one frame (e.g. a built time frame of `frames_thread0_*.evio`) and is sent as one E2SAR event, its bytes unchanged, record header included. The file header and trailer aren't sent.
+`e2sar_evio_send` reads an EVIO v6 file (`-F`) into memory and sends it by frames: each record of the file is one frame (e.g. a built time frame of `frames_thread0_*.evio`). Each E2SAR event is `-f F` consecutive frames (`--frames-per-event`, default 1), their bytes unchanged and back to back, record headers included. The file header and trailer aren't sent.
 
-- The event size is the frame size in the file. CODA streaming frames are small (~426 bytes for the cosmics data), so a file of them gives many small events: mind the Reassembler's ~85k events/s.
-- Each Segmenter sends events numbered 1…N, the file's K frames in order. Event n is frame (n − 1) mod K, so a run with N > K starts over from the first frame. `--digests` writes the SHA-256 of every frame, so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
+- The event size is F times the frame size in the file. CODA streaming frames are small (~407–426 bytes), so with `-f 1` a file of them gives many small events: mind the Reassembler's ~85k events/s. `-f 50` gives ~20 KB events, the size coda-fb is expected to send, so 2.5 Gbps is ~15k events/s.
+- The file's K frames make E = ⌈K / F⌉ distinct events; the last one has fewer frames when F doesn't divide K. The sender prints E as `Distinct events:`.
+- Each Segmenter sends events numbered 1…N, the file's E distinct events in order. Event n is distinct event (n − 1) mod E, so a run with N > E starts over from the start of the file. `--digests` writes the SHA-256 of every distinct event (with `-f 1`: of every frame), so every event's digest is known in advance. The bench reads **every** event back from DAOS and checks its digest.
 - Each Segmenter has its own dataId (4321 + i), so every event is a distinct `(evtNum, dataId)` in DAOS. See the [DAOS layout examples](../concepts/daos-layout.md#examples).
 - Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
 - `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
@@ -108,7 +109,7 @@ These are the defaults of `e2sar_evio_send` and `e2sar_e2e_bench.sh`. `e2sar_dao
 | | Setting | Why |
 |---|---|---|
 | Sender | 16 Segmenters × 1 socket | Spreads events over many receive threads (node-to-node: ports PORT…PORT+15). One socket each keeps bursts short |
-| Sender | 256 frames per event (~95 KB; synthetic, `-f` since removed) | Short line-rate bursts, but few enough events to stay far below the receiver's ~85k events/s |
+| Sender | 256 frames per event (~95 KB; synthetic, the old `-f`. With a file: `SEND_ARGS="-f 256"`) | Short line-rate bursts, but few enough events to stay far below the receiver's ~85k events/s |
 | Sender | `--rate 20` | The only rate with no loss in every run through the LB (3 of 3). Through the LB, up to 35 was lossless in some runs. Node-to-node, no rate tested was lossless every time |
 | Receiver | `--threads 32` | Through the LB: more ports, fewer events sharing one. Node-to-node: at least P |
 | Receiver | `--deq 16 --inflight 128` | 4 dequeue threads cap at ~24 Gbps. 16 are enough to 40 Gbps |

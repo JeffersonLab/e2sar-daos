@@ -68,7 +68,7 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 | Sender | Events | Event number | Status |
 |---|---|---|---|
 | coda-fb | One EVIO-6 record per built time frame (or per group of frames), ~20 KB expected | Frame number, one `dataId` |  |
-| `e2sar_evio_send` | The frames of an EVIO file (`-F`): each record is one frame, sent as one event | 1…N per Segmenter, `dataId` 4321 + i | Works |
+| `e2sar_evio_send` | The frames of an EVIO file (`-F`): each record is one frame; `-f F` consecutive frames per event (default 1, `-f 50` ≈ 20 KB) | 1…N per Segmenter, `dataId` 4321 + i | Works |
 | `e2sar_ft` | One whole file per event (often GBs) | 0, 1, 2, … | Works |
 | `e2sar_perf` | Synthetic events of `-l` bytes (1 MiB in the Perlmutter runs) | from 0 | Works |
 
