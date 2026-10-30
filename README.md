@@ -3,10 +3,10 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
 
 - `libe2sar-daos` ([include/e2sar_daos/](./include/e2sar_daos/)) provides RAII handles for the DAOS runtime, pool, container (created if missing) and KV object, the run catalog (`RunCatalog`: one object per run, ids derived from the run's prefix), plus `AsyncKVWriter`, which issues non-blocking `daos_kv_put`s on a DAOS event queue with a bounded number in flight.
 - [Applications](./bin/README.md):
-    - `e2sar_daos_recv` receives events from `e2sar_ft` on another node and writes them to DAOS.
-    - `e2sar_daos_read` lists the runs and their stored events, verifies them, reads them back and deletes runs.
-    - Each run (`--prefix`) is stored in its own DAOS KV object as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key per event, and listed in a run catalog object in the same container. See [docs/DAOS_LAYOUT.md](./docs/DAOS_LAYOUT.md), with examples for an EVIO file and for coda-fb frames.
-- [Scripts](./scripts/README.md) that drive the applications on the JLab test nodes: the end-to-end bench, its rate sweep, and the Perlmutter receiver.
+    - `e2sar_daos_recv` receives events from an E2SAR sender and writes them to DAOS: small events batched into 1 MiB chunks, large ones written directly, asynchronously.
+    - `e2sar_daos_read` reads a run back while it is written (`--live`, `--live-rm`) or one file per event (`--offline`), and lists, verifies and deletes runs.
+    - One run is one container: byte arrays per UTC second and writer, an index per second, and a catalog. See [docs/DAOS_LAYOUT.md](./docs/DAOS_LAYOUT.md) and [docs/DAOS_READER.md](./docs/DAOS_READER.md).
+- [Scripts](./scripts/README.md) that drive the applications on the JLab test nodes: the end-to-end bench, its rate sweep, and the LCF receiver.
 
 - Refer to [containers](./containers/rocky-dev/) for the Rocky 9 + DAOS 2.6 development environment. It runs on JLab testbeds and on Macs.
 - Unit testing is turned on by default in [meson_options.txt](./meson_options.txt).

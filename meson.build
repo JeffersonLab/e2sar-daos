@@ -45,6 +45,7 @@ project_sources = files(
     'src/daos_objects.cpp',
     'src/async_ops.cpp',
     'src/catalog.cpp',
+    'src/run_reader.cpp',
 )
 
 e2sar_daos = library('e2sar-daos',
@@ -64,6 +65,7 @@ install_headers(
     'include/e2sar_daos/daos_objects.hpp',
     'include/e2sar_daos/async_ops.hpp',
     'include/e2sar_daos/catalog.hpp',
+    'include/e2sar_daos/run_reader.hpp',
     subdir: 'e2sar_daos'
 )
 

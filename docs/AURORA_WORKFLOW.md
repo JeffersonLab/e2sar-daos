@@ -131,12 +131,12 @@ SEND_NODE=${NODES[0]} RECV_NODE=${NODES[1]}
 RECV_IP=$(ssh $RECV_NODE "ip -4 -br addr show hsn0 | awk '{print \$3}' | cut -d/ -f1")   # (check) hsn0 has an IPv4 address
 SEND_IP=$(ip -4 -br addr show hsn0 | awk '{print $3}' | cut -d/ -f1)
 export EJFAT_URI="ejfat://useless@127.0.0.1:18347/lb/1?data=$RECV_IP&sync=$RECV_IP:19020"
-export PREFIX=test_$(date +%s)
+export RUN=test_$(date +%s)          # one run = one container
 
 # receiver on the second node
 ssh $RECV_NODE "source ~/.bashrc; cd ~/daq/e2sar-daos; EJFAT_URI='$EJFAT_URI' \
-    ./build/bin/e2sar_daos_recv --ip $RECV_IP --port 19522 --pool e2sar-daos --cont-name e2sar-test --prefix $PREFIX" \
-    &> ~/daq/recv_$PREFIX.log &
+    ./build/bin/e2sar_daos_recv --ip $RECV_IP --port 19522 --pool e2sar-daos --cont-name $RUN" \
+    &> ~/daq/recv_$RUN.log &
 
 # sender on this node
 $E2SAR_BIN/e2sar_ft -s --ip $SEND_IP --rate 5 /tmp/$USER/e2sar_src/*

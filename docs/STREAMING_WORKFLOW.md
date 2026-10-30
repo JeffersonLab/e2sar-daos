@@ -37,7 +37,7 @@ At the end: stop the senders, then the receivers (Ctrl-C). Each writes its final
 | Complete windows | A bundle is written only after every receiver has committed everything for each second of its window |
 | Order | Strict within a bundle. Across bundles close to event-number order; events that come out late are counted |
 | Restart | The manifest's last bundle is the restart point. A bundle's content depends only on DAOS, so a rerun writes identical files |
-| File transfers (`e2sar_ft`) | With `--offline` (after the transfer): one file per `(evtNum, dataId)`, byte for byte the sent file, with its SHA-256 printed; then the run is deleted from DAOS (unless `--keep`, or a writer isn't done). A file with any lost packet is dropped by E2SAR and only appears in `<run>_missing.txt` |
+| File transfers (`e2sar_ft`) | With `--offline` (after the transfer): one file per `(evtNum, dataId)`, byte for byte the sent file, with its SHA-256 printed; the run stays in DAOS until `--delete`. A file with any lost packet is dropped by E2SAR and only appears in `<run>_missing.txt` |
 | Lost events | Gaps per `dataId` go to `<run>_missing.txt`. A receiver that dies is reported, and the reader continues without it after a timeout |
 
 ## Senders

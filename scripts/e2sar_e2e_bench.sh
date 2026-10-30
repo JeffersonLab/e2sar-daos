@@ -19,8 +19,8 @@
 #   n2n  node-to-node, no LB. Segmenter i sends to port PORT+i (--port-per-segmenter), so use
 #        -T >= -P on the receiver.
 #
-# The receiver stores events in a DAOS KV object with async puts, in -C KiB chunks
-# (default 1024; 0 = one value per event).
+# The receiver stores events in DAOS (docs/DAOS_LAYOUT.md): small events batched into -C KiB
+# chunks (default 1024), written asynchronously.
 #
 # The nodes can't SSH to each other, so the roles meet through files in $RUN/bench/TAG/
 # (an NFS $HOME shared by both nodes): recv writes "ready" once it listens (with the LB:
@@ -108,7 +108,7 @@ daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
 SINKARGS=(--pool "$POOL" --cont-name "$CONT" --deq "$DEQ" --inflight "$INFLIGHT" --chunk "$CHUNK")
 nic_counters > "$D/nic0"; nstat -n
 "$BIN/e2sar_daos_recv" -u "$URI" $CP --ip "$RECV_IP" --port "$PORT" \
-    --threads "$THREADS" --prefix "$TAG" --timeout 10000 -b 1073741824 "${SINKARGS[@]}" \
+    --threads "$THREADS" --timeout 10000 -b 1073741824 "${SINKARGS[@]}" \
     --timing-csv "$D/timing.csv" > "$D/recv.log" 2>&1 < /dev/null &
 PID=$!
 trap 'kill -INT $PID 2>/dev/null; wait $PID' EXIT
@@ -144,13 +144,13 @@ DISC=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_discards_phy" {print $4 
 OOB=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_out_of_buffer" {print $4 - $2}')
 RCVBUF=$(nstat -z UdpRcvbufErrors | awk '/UdpRcvbufErrors/{print $2}')
 
-"$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --prefix "$TAG" --fetch > "$D/fetch.txt" 2>&1
+"$BIN/e2sar_daos_read" --pool "$POOL" --cont "$CONT" --fetch > "$D/fetch.txt" 2>&1
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
 
 GP=$(grep -oP 'Sender goodput:\s+\K[0-9.]+' "$D/send.log")
 R=$(python3 -I "$ANALYZE" "$D" --frames "$S_frames" --expected "$S_events" --set \
     tag="$TAG" mode="$MODE" segmenters="$S_segmenters" sockets="$S_sockets" file_frames="$S_frames" evio_file="$S_evio" \
-    rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" chunk_kib="$CHUNK" sink=kv \
+    rate="$S_rate" recv_threads="$THREADS" deq="$DEQ" inflight="$INFLIGHT" chunk_kib="$CHUNK" sink=array \
     sender_goodput_gbps="${GP:-0}" rx_discards_phy="$DISC" \
     rx_out_of_buffer="$OOB" udp_rcvbuf_errors="${RCVBUF:-0}" 2> "$D/summary.txt")
 echo "$R" > "$D/result.json"

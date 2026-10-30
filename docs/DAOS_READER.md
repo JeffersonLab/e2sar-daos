@@ -10,17 +10,17 @@ One binary with three reading modes, each writing events to `-o DIR`. **A mode i
 |---|---|---|---|
 | `--live` | Streams: `e2sar_evio_send`, coda-fb, `e2sar_perf` | One file per `--interval` seconds, the events glued back to back. DAOS is left as it is | Yes: checks the container every second until the end of the run |
 | `--live-rm` | Same, for long runs where DAOS space matters | Same files; objects are removed from DAOS `--rm-after` intervals after their events are in files, and the container is destroyed at the end | Yes, as `--live` |
-| `--offline` | File transfers: `e2sar_ft` | One file per `(evtNum, dataId)`, byte for byte the sent event; SHA-256 per file; then the run is deleted from DAOS | No: reads what is committed when it runs, then exits |
+| `--offline` | File transfers: `e2sar_ft` | One file per `(evtNum, dataId)`, byte for byte the sent event; SHA-256 per file. DAOS is left as it is | No: reads what is committed when it runs, then exits |
 
-The mode is chosen by the user, never guessed from the event bytes. `--offline` excludes `--live` and `--live-rm`, and those two exclude each other; giving none or more than one is an error. Likewise `--interval` is only valid with `--live` and `--live-rm`, `--rm-after` only with `--live-rm`, and `--keep` only with `--offline`.
+The mode is chosen by the user, never guessed from the event bytes. `--offline` excludes `--live` and `--live-rm`, and those two exclude each other; giving none or more than one is an error. Likewise `--interval` is only valid with `--live` and `--live-rm`, and `--rm-after` only with `--live-rm`.
 
 ```bash
 e2sar_daos_read --pool <pool> --cont <run> -o DIR --live              # one file per 5 s, DAOS untouched
 e2sar_daos_read --pool <pool> --cont <run> -o DIR --live --interval 1 # one file per second
 e2sar_daos_read --pool <pool> --cont <run> -o DIR --live-rm           # one file per 5 s; remove from DAOS 10 intervals behind
 e2sar_daos_read --pool <pool> --cont <run> -o DIR --live-rm --rm-after 2   # smaller margin, for high rates
-e2sar_daos_read --pool <pool> --cont <run> -o DIR --offline           # e2sar_ft: one file per event, SHA-256s, then delete the run
-e2sar_daos_read --pool <pool> --cont <run> -o DIR --offline --keep    # same, but keep the run in DAOS
+e2sar_daos_read --pool <pool> --cont <run> -o DIR --offline           # e2sar_ft: one file per event, SHA-256s
+e2sar_daos_read --pool <pool> --cont <run> --delete                   # then, after checking the files: delete the run
 e2sar_daos_read --pool <pool> --cont <run> -o DIR --offline --event 7 --dataid 4321
 ```
 
@@ -33,9 +33,9 @@ every second:
   read the catalog: writer slots, watermarks, done entries
   for each window [W, W+I) whose seconds are all complete (watermarks), oldest first:
     for each second T in the window: list index[T], read the batch tables
-    read each batch's bytes: one daos_array_read per (T_data, slot), all ranges in one call
-    sort the window's events by (evtNum, dataId)
-    write the bundle for window W (below)
+    sort the window's events by (evtNum, dataId): their offsets in the file follow
+    read each batch's bytes (async, pieces of at most --read-size) and write each event to its offset
+    flush, SHA-256 of the file, rename: the bundle for window W (below)
     [--live-rm] remove what is now N intervals behind (below)
     W += I
 until every claimed slot is done, W is past their final watermarks,
@@ -53,13 +53,14 @@ For each non-empty window it writes:
 DIR/<run>_<W>.evio        the window's events glued back to back, sorted by (evtNum, dataId); W = first second
 DIR/<run>_<W>.idx         one line per event: evtNum dataId offset size
 DIR/<run>_manifest.txt    one line per bundle: <sha256>  <name>  W I events bytes first_evt last_evt
-DIR/<run>_missing.txt     event number gaps per dataId, updated as bundles complete
+DIR/<run>_missing.txt     event number gaps per dataId still open: dataId first last count
 ```
 
 - **Glued, no headers.** A bundle is the events' bytes back to back, unchanged: no file header, no trailer, no wrapping. For EVIO-record events (`e2sar_evio_send`, coda-fb) that is the frames in order.
+- **Bounded memory.** The file is laid out from the index tables before any data is read, so each piece is written straight to its place; a window is never held in memory whole.
 - The last line of the manifest is the restart point: the reader continues with the next window. Restart with the same `--interval`.
 - A bundle's content depends only on what is in DAOS, so a reader started during the run and one started after it write the same files with the same checksums.
-- Order is strict within a bundle. Across bundles it is close to event number order: an event that committed in a later window than higher-numbered events lands in that later bundle. The manifest's `first_evt last_evt` show each bundle's range, and the reader counts events that are lower than the previous bundle's last as late.
+- Order is strict within a bundle. Across bundles it is close to event number order: an event that committed in a later window than higher-numbered events lands in that later bundle. The manifest's `first_evt last_evt` show each bundle's range. An event lower than one already written is counted as late, and takes its number off `<run>_missing.txt`, which is rewritten after each bundle.
 - `--follow` keeps waiting for new writers after the end of the run, instead of exiting after `--end-wait` seconds.
 
 ### What `--live-rm` removes
@@ -75,6 +76,7 @@ Let D be the first second of the last window written to a file, flushed, renamed
 | The container (catalog included) | The run has ended: every slot done, every window written, no new slot for `--end-wait` seconds |
 
 - A second the reader passed because a slot stalled (`--stall`), not because its watermark passed, is never removed before the run ends: a late index write from that slot can still land there. It goes when the container is destroyed.
+- `data[T, s]` goes only once the reader has also read every index second up to slot s's `index` watermark at the time its `data` watermark passed T, so every batch in the array is in a file.
 - The data kept in DAOS is about rate × N × I: ~16 GB at 2.5 Gbps and ~500 GB at 80 Gbps with the defaults. Lower `--rm-after` at high rates if the pool is small.
 - DAOS frees removed space in the background, shortly after the removal.
 - This assumes one reader per run. A second reader of the same run, or `--list` / `--fetch`, only sees what is not yet removed.
@@ -86,12 +88,10 @@ open the container and read its run record (exit if either is missing)
 list seconds, then for each non-empty second T in order:
   list index[T], read the batch tables
   for each event, in (evtNum, dataId) order, not already in the manifest:
-    read its bytes (split into reads of at most --max-write for large events)
-    write DIR/<run>_<evtNum>_<dataId>.evio, computing its SHA-256 while writing
+    read its bytes (async, pieces of at most --read-size)
+    write DIR/<run>_<evtNum>_<dataId>.evio, computing its SHA-256 in order as the pieces arrive
     print "<sha256>  <file>" and add it to the manifest
-if every writer is done, every committed event was written, and neither --event nor --keep was given:
-  destroy the container
-exit
+exit (DAOS is left as it is)
 ```
 
 ```
@@ -103,11 +103,9 @@ DIR/<run>_missing.txt              event number gaps per dataId
 
 - **Files are all or nothing.** E2SAR drops an event when any of its packets is lost, so a file with a lost packet never reaches DAOS: it shows up as a gap in `<run>_missing.txt`, and no partial file is written. A file with no loss is restored whole, and its SHA-256 matches the sender's.
 - **SHA-256 per file.** Each file's SHA-256 is printed as it is written, in `sha256sum` format, and kept in `DIR/<run>.sha256`. Comparing with the sender's digests needs no second pass over the files.
-- **Then the run is deleted from DAOS.** After the last file is written, flushed and renamed, the reader destroys the run's container, so the data lives only in `DIR`. It deletes only when all of these hold; otherwise it keeps the container and says why:
-  - every claimed writer slot has `done/<slot>` (no writer can still add events);
-  - every committed event was written to `DIR` without error;
-  - neither `--event` nor `--keep` was given.
-- It reads only what is committed when it runs, so run it after the transfer. If the run isn't finished, it restores what is there and keeps the container; a rerun skips the files already in the manifest.
+- **The run stays in DAOS.** Delete it with `--delete` once the files are checked.
+- It reads only what is committed when it runs, so run it after the transfer. If a writer isn't done yet, it says so; a rerun skips the files already in the manifest.
+- An event number stored twice (a sender that restarted its numbering) is restored once; the second copy is reported and skipped.
 - `--event N` (with `--dataid D`) restores one event. Finding it reads the index tables of every second: there is no lookup by event number.
 
 ## All modes
@@ -125,7 +123,9 @@ e2sar_daos_read --pool <pool> --cont <run> --fetch               # verify, print
 e2sar_daos_read --pool <pool> --cont <run> --delete              # destroy the run's container
 ```
 
-They see what is committed when they run: they list `seconds` to find the non-empty seconds, then read `index[T]` for each. The reader opens the pool and container read-only, except with `--delete`, `--live-rm`, and `--offline` when it deletes the run at the end.
+They see what is committed when they run: they list `seconds` to find the non-empty seconds, then read `index[T]` for each. The reader opens the pool and container read-only, except with `--delete` and `--live-rm`.
+
+`--fetch` prints one line per event, `<sha256>  <run>_<evtNum>_<dataId>.evio  <bytes> bytes`, sorted by `(evtNum, dataId)`, then a summary. `--list` prints the run record, one `Writer <slot>: …` line per writer, the seconds, then one tab-separated line per event (`evtNum dataId bytes second slot`) and `N committed events, B bytes`.
 
 ## Options
 
@@ -136,10 +136,11 @@ They see what is committed when they run: they list `seconds` to find the non-em
 | `--live`, `--live-rm`, `--offline` | required, exactly one | reading mode |
 | `--interval` | 5 | seconds per output file (`--live`, `--live-rm`) |
 | `--rm-after` | 10 | intervals kept in DAOS behind the last file written (`--live-rm`) |
-| `--keep` | off | don't delete the run after reading (`--offline`) |
 | `--from` | run start | first second to read (`--live`, `--live-rm`) |
 | `--stall` | 30 | seconds without watermark progress before a writer is skipped |
 | `--end-wait` | 10 | seconds with every writer done and no new writer before the end of the run |
 | `--follow` | off | never end; keep waiting for new writers |
-| `--event`, `--dataid` | all | restore one event (`--offline`) |
+| `--event`, `--dataid` | all | only this event number / dataId (`--offline`, `--list`, `--fetch`) |
+| `--inflight` | 32 | DAOS reads in flight |
+| `--read-size` | 16M | largest single read (whole chunks) |
 | `--list`, `--fetch`, `--delete` | | inspect, verify, delete (no files written) |
