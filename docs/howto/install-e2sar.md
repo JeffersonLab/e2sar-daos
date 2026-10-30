@@ -146,7 +146,7 @@ export PATH=$HOME/.local/bin:$PATH            # meson, ninja
 cd ~/daq/e2sar-daos
 meson setup --wipe build                      # --wipe after an E2SAR upgrade
 meson compile -C build
-meson test -C build --suite unit              # Ok: 5, Fail: 0
+meson test -C build --suite unit              # Ok: 3, Fail: 0
 ```
 The project version printed by `meson setup` includes the E2SAR version, for example `0.1.0-e2sar_0.4.0rc1`.
 For link errors such as `grpc::experimental::...` undefined references, see [README.md, Build](build.md#point-pkg-config-and-meson-to-e2sar).

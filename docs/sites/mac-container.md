@@ -31,7 +31,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work e2sar-daos:dev \
 Check that:
 - `meson setup` does **not** print `libcrypto (openssl-devel) not found, skipping DAOSKVTest`, so the KV test is at least compiled.
 - `meson compile` links both `daos_test` and `daos_kv_test`.
-- `--suite unit` reports `Ok: 5`.
+- `--suite unit` reports `Ok: 3`.
 
 If `meson setup` fails with `Could not generate cargs for e2sar` or `Package 're2' ... not found`, the image was built from an older Dockerfile. Rebuild it.
 

@@ -66,7 +66,7 @@ Note the answers in this section. They decide the next phases.
 ```bash
 daos cont create e2sar-daos kv-test            # once
 meson configure build -Ddaos_pool=e2sar-daos -Ddaos_cont=kv-test
-meson test -C build --suite unit -v            # Ok: 5
+meson test -C build --suite unit -v            # Ok: 3
 meson test -C build --suite integration -v     # Ok: 1, 5 matching put/get SHA-256 pairs
 ```
 

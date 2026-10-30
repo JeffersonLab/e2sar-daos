@@ -7,20 +7,6 @@ daos_test = executable('daos_test', test_sources,
 
 test('DAOSNativeTests', daos_test, suite: ['daos', 'unit'])
 
-# Event -> KV key/chunk layout used by e2sar_daos_recv / e2sar_daos_read (no DAOS server needed)
-event_layout_test = executable('event_layout_test', files('test_event_layout.cpp'),
-                                include_directories: project_include_dir,
-                                dependencies: [boost_dep])
-
-test('EventLayoutTests', event_layout_test, suite: ['daos', 'unit'])
-
-# Per-run object ids and run catalog records (header-only parts; DAOS headers, no server)
-run_catalog_test = executable('run_catalog_test', files('test_run_catalog.cpp'),
-                                include_directories: project_include_dir,
-                                dependencies: [boost_dep, daos_dep])
-
-test('RunCatalogTests', run_catalog_test, suite: ['daos', 'unit'])
-
 # Object ids, batch tables and catalog records of the run layout (header-only; no server)
 layout_test = executable('layout_test', files('test_layout.cpp'),
                                 include_directories: project_include_dir,

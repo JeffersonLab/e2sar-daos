@@ -13,12 +13,48 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "e2sar_daos/run_catalog.hpp"  // Record, formatRecord, parseRecord
+namespace e2sar_daos {
+
+/** A catalog value: "key=value" pairs separated by spaces. */
+using Record = std::map<std::string, std::string>;
+
+/** Empty values become "-" and spaces '_', so the record always parses back. */
+inline std::string formatRecord(const Record& r) {
+    std::string s;
+    for (const auto& [k, v] : r) {
+        if (!s.empty())
+            s += ' ';
+        std::string val = v.empty() ? "-" : v;
+        for (auto& c : val)
+            if (c == ' ')
+                c = '_';
+        s += k + "=" + val;
+    }
+    return s;
+}
+
+/** Words without '=' are skipped. */
+inline Record parseRecord(const std::string& s) {
+    Record r;
+    size_t pos = 0;
+    while (pos < s.size()) {
+        const size_t end = std::min(s.find(' ', pos), s.size());
+        const std::string word = s.substr(pos, end - pos);
+        const size_t eq = word.find('=');
+        if (eq != std::string::npos && eq > 0)
+            r[word.substr(0, eq)] = word.substr(eq + 1);
+        pos = end + 1;
+    }
+    return r;
+}
+
+}  // namespace e2sar_daos
 
 namespace e2sar_daos::layout {
 
