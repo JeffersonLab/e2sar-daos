@@ -78,6 +78,24 @@ BOOST_AUTO_TEST_CASE(BatchTableRejectsBadInput) {
     BOOST_CHECK(decodeTable(buf.data(), buf.size()));  // n = 0 is valid
 }
 
+BOOST_AUTO_TEST_CASE(RecordRoundTrip) {
+    const Record r{{"committed", "81500"}, {"host", "ebpf2201"}, {"oclass", "SX"}};
+    const std::string s = formatRecord(r);
+    BOOST_CHECK_EQUAL(s, "committed=81500 host=ebpf2201 oclass=SX");
+    BOOST_CHECK(parseRecord(s) == r);
+}
+
+BOOST_AUTO_TEST_CASE(RecordEdgeCases) {
+    // Empty values become "-", spaces become '_', so the record always parses back.
+    BOOST_CHECK_EQUAL(formatRecord({{"a", ""}, {"b", "x y"}}), "a=- b=x_y");
+    // Words without '=' and empty keys are skipped; a value may contain '='.
+    const Record r = parseRecord("junk k=v =x eq=a=b  ");
+    BOOST_CHECK_EQUAL(r.size(), 2u);
+    BOOST_CHECK_EQUAL(r.at("k"), "v");
+    BOOST_CHECK_EQUAL(r.at("eq"), "a=b");
+    BOOST_CHECK(parseRecord("").empty());
+}
+
 BOOST_AUTO_TEST_CASE(CatalogRecords) {
     BOOST_CHECK_EQUAL(writerKey(3), "writer/3");
     BOOST_CHECK_EQUAL(wmKey(3), "wm/3");

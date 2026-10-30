@@ -88,7 +88,7 @@ Interactive, the first time:
 qstat -Bf | grep valid_filesystems                # check the name daos_user
 qsub -I -A $PROJECT -q debug -l select=1 -l walltime=00:30:00 -l filesystems=home:flare:daos_user
 cd ~/daq/e2sar-daos
-meson test -C build --suite unit -v               # Ok: 5
+meson test -C build --suite unit -v               # Ok: 3
 meson test -C build --suite integration -v        # Ok: 1
 ```
 
@@ -109,7 +109,7 @@ meson test -C build --suite unit -v && meson test -C build --suite integration -
 qsub ~/daq/jobs/suites.pbs; qstat -u $USER
 ```
 
-**Pass:** `Ok: 5` and `Ok: 1`, with 5 matching `put`/`get` SHA-256 pairs in the log.
+**Pass:** `Ok: 3` and `Ok: 1`, with 5 matching `put`/`get` SHA-256 pairs in the log.
 
 ---
 
