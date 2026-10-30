@@ -80,8 +80,8 @@ table.t th { color: var(--fg2); font-weight: 500; } table.t td:first-child, tabl
   <div class="tiles" id="tiles"></div>
 
   <div class="grid2">
-    <section class="panel"><h2>Events/s</h2><p>Committed to DAOS (incoming) and removed from DAOS (outgoing), all dataIds. <span style="color:var(--miss)">▲</span> marks an update in which event numbers went missing; hover for how many.</p><svg id="cRate"></svg></section>
-    <section class="panel"><h2>Data in DAOS</h2><p>GiB committed and not yet removed</p><svg id="cDaos"></svg></section>
+    <section class="panel"><h2>Events/s</h2><p>Committed to DAOS (incoming) and removed from DAOS (outgoing), all dataIds, over the last 3 updates (~6 s). <span style="color:var(--miss)">▲</span> marks an update in which event numbers went missing; hover for how many.</p><svg id="cRate"></svg></section>
+    <section class="panel"><h2>Data in DAOS</h2><p>GiB committed and not yet removed, mean of the last 3 updates</p><svg id="cDaos"></svg></section>
   </div>
 
   <section class="panel"><h2>Writers (e2sar_daos_recv)</h2><div id="writers"></div></section>
@@ -161,6 +161,13 @@ addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.
 
 function setMode(cls, text) { $('mode').className = 'pill ' + cls; $('mode').textContent = text; }
 
+// Rates over the last SMOOTH updates (~6 s): the reader removes one --interval window at a time,
+// at times that jitter against the monitor's 2 s looks, so one look can catch 0 or 2 windows.
+const SMOOTH = 3;
+function rateAt(j, key, field = 'events') { const k = Math.max(0, j - SMOOTH), a = F[k], b = F[j];
+  return k === j ? b[key]['d_' + field] / (b.dt || 2) : (b[key][field] - a[key][field]) / (b.t - a.t); }
+function daosAt(j) { let s = 0, n = 0; for (let k = Math.max(0, j - SMOOTH + 1); k <= j; k++, n++) s += F[k].daos.bytes; return s / n; }
+
 // ---------------------------------------------------------------- one frame
 function show(i) {
   if (i < 0 || i >= F.length) return;
@@ -171,16 +178,16 @@ function show(i) {
   $('runInfo').textContent = `${f.run} · ${f.writers.length} writer${f.writers.length === 1 ? '' : 's'} · ${f.streams.length} dataIds`;
   $('clock').textContent = `${clock(f.t)} · ${fmtDur(f.t - f.start)} into the run`;
   $('frameInfo').textContent = `frame ${i + 1} of ${F.length}`;
-  tiles(f); strip(f); charts(i); writers(f);
+  tiles(f, i); strip(f); charts(i); writers(f);
 }
 const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return (h ? h + ' h ' : '') + (h || m ? m + ' min ' : '') + (s % 60) + ' s'; };
 
-function tiles(f) {
-  const dt = f.dt || 2, mi = f.missing;
+function tiles(f, i) {
+  const mi = f.missing;
   const T = [
-    ['var(--in)', 'Incoming', si(f.in.d_events / dt) + ' Events/s', `${gbps(f.in.d_bytes, dt)} · ${si(f.in.events)} events total`],
-    ['var(--out)', 'Outgoing (left DAOS)', si(f.out.d_events / dt) + ' Events/s', `${gbps(f.out.d_bytes, dt)} · ${si(f.out.events)} events total`],
-    [null, 'In DAOS now', gib(f.daos.bytes), `${si(f.daos.events)} events · ${f.daos.seconds} index seconds`],
+    ['var(--in)', 'Incoming', si(rateAt(i, 'in')) + ' Events/s', `${gbps(rateAt(i, 'in', 'bytes'), 1)} · ${si(f.in.events)} events total`],
+    ['var(--out)', 'Outgoing (left DAOS)', si(rateAt(i, 'out')) + ' Events/s', `${gbps(rateAt(i, 'out', 'bytes'), 1)} · ${si(f.out.events)} events total`],
+    [null, 'In DAOS now', gib(daosAt(i)), `${si(f.daos.events)} events · ${f.daos.seconds} index seconds`],
     ['var(--miss)', 'Missing so far', fmt(mi.total ?? mi.events), `${fmt(mi.events)} still open · ${fmt(mi.late)} arrived late · ${fmt(mi.pending)} pending · ${fmt(mi.dups)} dup`],
   ];
   $('tiles').innerHTML = T.map(([c, k, v, s]) => `<div class="tile"><div class="k">${c ? `<i class="sw" style="background:${c}"></i>` : ''}${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('');
@@ -263,14 +270,14 @@ const WINDOW_S = 300;   // charts show the last 5 minutes before the shown frame
 function charts(i) {
   const t1 = F[i].t; let a = i; while (a > 0 && F[a - 1].t >= t1 - WINDOW_S) a--;
   const W = F.slice(a, i + 1), xs = W.map(f => f.t);
-  const inR = W.map(f => f.in.d_events / (f.dt || 2)), outR = W.map(f => f.out.d_events / (f.dt || 2));
+  const inR = W.map((f, k) => rateAt(a + k, 'in')), outR = W.map((f, k) => rateAt(a + k, 'out'));
   const lastIn = inR[inR.length - 1], lastOut = outR[outR.length - 1];
   const tot = f => f.missing.total ?? f.missing.events, marks = [];
   W.forEach((f, k) => { const prev = a + k > 0 ? tot(F[a + k - 1]) : 0, d = tot(f) - prev;
     if (d > 0) marks.push({ i: k, html: `<span style="color:var(--miss)">▲</span> +${fmt(d)} missing (${fmt(tot(f))} so far)` }); });
   lineChart($('cRate'), xs, [{ name: 'incoming', y: inR, color: 'var(--in)', dy: lastIn >= lastOut ? 6 : -6 },
                              { name: 'outgoing', y: outR, color: 'var(--out)', dy: lastIn >= lastOut ? -6 : 6 }], v => si(v), marks);
-  lineChart($('cDaos'), xs, [{ name: 'in DAOS', y: W.map(f => f.daos.bytes / 2 ** 30), color: 'var(--in)' }], v => v.toFixed(v < 10 ? 2 : 0));
+  lineChart($('cDaos'), xs, [{ name: 'in DAOS', y: W.map((f, k) => daosAt(a + k) / 2 ** 30), color: 'var(--in)' }], v => v.toFixed(v < 10 ? 2 : 0));
 }
 
 function writers(f) {

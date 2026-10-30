@@ -105,8 +105,8 @@ Standard library only (Python ≥ 3.8). It reads the JSON lines file as it grows
 |---|---|
 | Tiles | Incoming and outgoing Events/s and Gbps, data in DAOS, missing so far (with still open, arrived late, pending, duplicates) |
 | Event numbers per `dataId` | One row per `dataId`, the newest number at the right: in DAOS (blue), left DAOS (aqua), missing (red, full height, marked ▲), pending (yellow), not seen (gray). Each row ends with that `dataId`'s missing count so far and Events/s; hover for the event range of a bin |
-| Events/s | Incoming and outgoing, the last 5 minutes before the frame shown. A red ▲ on the time axis marks an update in which event numbers went missing; hover for how many and the total so far. Missing counts share no axis with Events/s, so they are marks, not a line |
-| Data in DAOS | GiB committed and not yet removed, the last 5 minutes |
+| Events/s | Incoming and outgoing over the last 3 updates (~6 s), the last 5 minutes before the frame shown. One update alone would flicker: the reader removes one `--interval` window at a time, at times that jitter against the monitor's 2 s looks, so a look can catch 0 or 2 windows. A red ▲ on the time axis marks an update in which event numbers went missing; hover for how many and the total so far. Missing counts share no axis with Events/s, so they are marks, not a line |
+| Data in DAOS | GiB committed and not yet removed, mean of the last 3 updates, the last 5 minutes |
 | Writers | Each slot's watermark and lag: *behind* if more than 5 s |
 
 **Live** shows the newest line. **Replay** plays the file from its start: Play/Pause (space), speed 1–32×, a slider, and ←/→ for one frame.
