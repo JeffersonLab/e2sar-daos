@@ -4,6 +4,7 @@
 |---|---|
 | `e2sar_daos_recv` | Receives events from an E2SAR sender (e.g. `e2sar_perf -s` or `e2sar_ft -s`) and writes them to DAOS: small events batched into 1 MiB chunks, large ones written directly, all asynchronously. One run per container |
 | `e2sar_daos_read` | Reads a run back: following it while it is written (`--live`, `--live-rm`), or one file per event (`--offline`); also lists, verifies and deletes runs |
+| `e2sar_daos_monitor` | Watches one run's container, read-only, and writes incoming, outgoing and missing events every 2 s as JSON lines, for the dashboard in [`viz/daos_monitor/`](../viz/daos_monitor/serve.py). See [e2sar_daos_monitor](../docs/reference/e2sar_daos_monitor.md) |
 | `e2sar_evio_send` | Test sender: reads an EVIO v6 file (`-F`) and sends it by frames (each record is one frame, sent as one event) through several E2SAR Segmenters, paced, with per-event timing and digests. See [e2e-bench](../docs/howto/e2e-bench.md#the-events) |
 | `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
 | `e2sar_live_check.py` | Checks the files of `e2sar_daos_read --live`/`--live-rm` against the frames `e2sar_evio_send --digests` sent. See [the walkthrough](../docs/howto/streaming-walkthrough.md#walkthrough---live-rm-streaming-of-an-evio-file) |
@@ -24,6 +25,8 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 | [docs/concepts/daos-layout.md](../docs/concepts/daos-layout.md) | What a run looks like in DAOS, and the writer–reader contract |
 | [docs/howto/e2e-no-control-plane.md](../docs/howto/e2e-no-control-plane.md) | A first end-to-end run without a control plane, and viewing restored EVIO files |
 | [docs/howto/e2e-bench.md](../docs/howto/e2e-bench.md) | `e2sar_evio_send` and the end-to-end bench |
+| [docs/reference/e2sar_daos_monitor.md](../docs/reference/e2sar_daos_monitor.md) | `e2sar_daos_monitor` and its live/replay dashboard |
+| [docs/howto/live-monitoring.md](../docs/howto/live-monitoring.md) | The DAOS monitor and the EVIO live viewer on a laptop, through SSH |
 
 ## `e2sar_daos_read`
 

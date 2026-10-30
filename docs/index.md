@@ -10,7 +10,7 @@ The docs for [e2sar-daos](../README.md), as an [Open Knowledge Format (OKF) v0.2
 * [Concepts](concepts/index.md) - The DAOS layout, the streaming workflow, the throughput and latency metrics, the lossless ceiling
 * [How-to guides](howto/index.md) - Build, install E2SAR, run the tests, the end-to-end checks, the LB test, the bench
 * [Site guides](sites/index.md) - Mac, the ebpf testbed, the Slurm TB, Perlmutter, Aurora
-* [Reference](reference/index.md) - `e2sar_daos_recv`, `e2sar_daos_read`, `lbadm`, the scripts, the Meson options
+* [Reference](reference/index.md) - `e2sar_daos_recv`, `e2sar_daos_read`, `e2sar_daos_monitor`, `lbadm`, the scripts, the Meson options
 * [Results](results/index.md) - Dated measurements, newest first
 
 # Start here

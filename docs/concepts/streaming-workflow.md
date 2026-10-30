@@ -2,23 +2,24 @@
 type: Concept
 title: "Streaming workflow: senders → LB → DAOS → live reader"
 description: "How senders, the EJFAT LB, the receivers (DAOS writers) and a live reader work together, what the reader guarantees, and what streaming senders change."
-tags: [workflow, streaming, lb, e2sar_daos_read]
+tags: [workflow, streaming, lb, e2sar_daos_read, monitoring]
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/STREAMING_WORKFLOW.md", title: "STREAMING_WORKFLOW.md at 0d85d00" }
 ---
 
 # Streaming workflow: senders → LB → DAOS → live reader
 
-Implemented (2026-10-29): `e2sar_daos_recv` writes the layout of [daos-layout](daos-layout.md) and `e2sar_daos_read` reads it as in [e2sar_daos_read](../reference/e2sar_daos_read.md). This page covers the whole workflow, a [walkthrough](../howto/streaming-walkthrough.md#walkthrough---live-rm-streaming-of-an-evio-file) on the ebpf testbed, the senders, and how the receiver settings will be tuned.
+Implemented (2026-10-29): `e2sar_daos_recv` writes the layout of [daos-layout](daos-layout.md) and `e2sar_daos_read` reads it as in [e2sar_daos_read](../reference/e2sar_daos_read.md). This page covers the whole workflow, a [walkthrough](../howto/streaming-walkthrough.md#walkthrough---live-rm-streaming-of-an-evio-file) on the ebpf testbed, the two live monitors, the senders, and how the receiver settings will be tuned.
 ## The workflow
 
-![Streaming workflow: senders, EJFAT LB, two receivers writing one DAOS container, one live reader](../images/streaming_workflow_demo-sc26.svg)
+![Streaming workflow: senders, EJFAT LB, two receivers writing one DAOS container, one live reader, and the two monitors viewed from the booth laptop through SSH tunnels](../images/streaming_workflow_demo-sc26.svg)
 
 The receivers (DAOS writers) and the reader communicate only through the DAOS container: no sockets or shared files. The one rule outside the container is the order: receivers first, then the reader ([writer–reader contract](daos-layout.md#writerreader-contract)). The sequence:
 
 1. **Receivers.** Start `e2sar_daos_recv` on recvA and recvB with the same `--cont-name`. The first creates the container and the run record; each claims a writer slot. With `--withcp` they register with the LB. Receivers must be up before the senders start, or the LB has nowhere to send.
 2. **Reader.** Start `e2sar_daos_read --pool <pool> --cont <same name> -o DIR --live` (or `--live-rm` to remove data from DAOS as it reads; a mode is required, see [e2sar_daos_read](../reference/e2sar_daos_read.md)) on the reader node, after the receivers have started (the first one creates the container; a reader started before that exits with an error). It can start before the senders, during the run, or after it (it catches up).
 3. **Senders.** Start sending. The LB sends every event number to one receiver.
+4. **Monitors (optional).** `e2sar_daos_monitor` and the EVIO viewer in live mode, any time after step 1 (see [Monitoring](#monitoring)). They don't change what the receivers or the reader do.
 
 While the run goes on:
 
@@ -37,6 +38,30 @@ At the end: stop the senders, then the receivers (Ctrl-C). Each writes its final
 | Restart | The manifest's last bundle is the restart point. A bundle's content depends only on DAOS, so a rerun writes identical files |
 | File transfers (`e2sar_ft`) | With `--offline` (after the transfer): one file per `(evtNum, dataId)`, byte for byte the sent file, with its SHA-256 printed; the run stays in DAOS until `--delete`. A file with any lost packet is dropped by E2SAR and only appears in `<run>_missing.txt` |
 | Lost events | Gaps per `dataId` go to `<run>_missing.txt`. A receiver that dies is reported, and the reader continues without it after a timeout |
+
+## Monitoring
+
+Two independent tools show a run live, each in a web page. Neither writes to DAOS or to the reader's folder, and either can run without the other.
+
+| | DAOS monitor | EVIO live viewer |
+|---|---|---|
+| Shows | The container: events coming in, events leaving DAOS, event numbers missing per `dataId` | The data: the newest bundle the reader wrote, decoded (hits per channel × time in frame, per-crate maps, rates) |
+| Reads | The catalog and the index of the container, read-only | `-o DIR` of `e2sar_daos_read --live`/`--live-rm`: the newest `<run>_<W>.evio` and its `.idx` |
+| Programs | [`e2sar_daos_monitor`](../reference/e2sar_daos_monitor.md) (C++) writes a JSON line per 2 s; [`viz/daos_monitor/serve.py`](../../viz/daos_monitor/serve.py) serves the page | `serve.py --live DIR` of [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (branch `sc26-live-viz`) |
+| Runs on | A DAOS client with access to the pool. The reader node is the natural place; not a receiver node, whose cores go to reassembly | The reader node, where the bundles are (or any node that mounts `-o DIR`) |
+| Port | 8766 | 8765 |
+| Load on the run | One read of each 32-byte index entry, one `seconds` listing per 2 s (estimated, not yet measured on DAOS) | None on DAOS. Reads at most the sample (default 32 MiB) of each bundle from the page cache |
+| Load on the page | ~4 KB per update; the page draws one canvas and three small charts | The browser decodes the sample: ~4,300 frames of 18 crates per 32 MiB, under 1 s |
+
+![DAOS monitor, demo data](../images/sc26_daos_monitor.png)
+
+![EVIO live viewer, Live tab, demo data: 18 crates × 16 boards × 16 channels](../images/sc26_evio_live_viewer.png)
+
+**What the DAOS monitor counts.** *Incoming*: events newly committed (index entries). *Outgoing*: events whose index second was removed from DAOS, by `--live-rm`; 0 with `--live`. *Missing*: event numbers absent for more than 5 s while a higher number of that `dataId` is committed, counted cumulatively (a late arrival doesn't lower it) and marked ▲ on the Events/s chart. The strip shows each `dataId`'s newest ~32 s of event numbers, moving left as new ones come in. **Replay** plays back the whole run from the JSON lines file.
+
+**Bundle size for the viewer.** For the SC26 source (18 VTP crates, 12 or 16 fADC boards of 16 channels: 3,456–4,608 channels) at `--interval 2`, a bundle stays under 1 GiB while the total rate is under ~4 Gbps. That is about 25 kHz per channel with 16 boards per crate (35 kHz with 12), after ~60 MB/s of record and bank headers (15,259 frames/s × 18 crates × ~220 bytes). The viewer never decodes a whole bundle: it takes the newest events up to the sample size, cut at an event-number boundary, so its update time doesn't depend on the bundle size. Each event is one crate's time slice (`evtNum` = frame, `dataId` = crate) or one built frame (0xFF60); the viewer reads both.
+
+**Viewing from a laptop.** Both pages listen on `127.0.0.1` only. Forward both ports through one SSH connection and open the two pages on the laptop: steps in [live-monitoring](../howto/live-monitoring.md).
 
 ## Senders
 
