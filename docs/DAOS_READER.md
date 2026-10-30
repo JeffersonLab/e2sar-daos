@@ -63,6 +63,8 @@ DIR/<run>_missing.txt     event number gaps per dataId still open: dataId first 
 - Order is strict within a bundle. Across bundles it is close to event number order: an event that committed in a later window than higher-numbered events lands in that later bundle. The manifest's `first_evt last_evt` show each bundle's range. An event lower than one already written is counted as late, and takes its number off `<run>_missing.txt`, which is rewritten after each bundle.
 - `--follow` keeps waiting for new writers after the end of the run, instead of exiting after `--end-wait` seconds.
 
+**A writer that stalls.** If a writer's watermark doesn't move for `--stall` seconds (30), the reader goes on without it, but never past the newest watermark any writer has published, so it doesn't run ahead into seconds still to come. When the stalled writer moves again and passes those seconds, the reader reads them again for that writer and writes any entries it hadn't seen to `DIR/<run>_<T>_late<k>.evio`, listed in `<run>_late_manifest.txt`. A writer still stalled after `--dead-after` seconds (300) counts as gone, and the run can end without it. `--live-rm` then keeps the container (the writer may be alive with writes in flight): read the rest with `--offline` or `--fetch`, then `--delete`.
+
 ### What `--live-rm` removes
 
 Data stays in DAOS for `--rm-after N` intervals (default 10, so 50 s with the default `--interval 5`) after the reader has written it to a file. If an output file is lost or the reader crashes mid-file, the recent data can still be read again. The margin is measured from the reader's progress, not the clock, so a reader that falls behind never removes data it hasn't written yet.
@@ -76,6 +78,7 @@ Let D be the first second of the last window written to a file, flushed, renamed
 | The container (catalog included) | The run has ended: every slot done, every window written, no new slot for `--end-wait` seconds |
 
 - A second the reader passed because a slot stalled (`--stall`), not because its watermark passed, is never removed before the run ends: a late index write from that slot can still land there. It goes when the container is destroyed.
+- A `data[T, s]` array goes only after the reader has read the second of slot s's index watermark as well, since a batch can be committed during that second (for a done slot: its final watermark).
 - `data[T, s]` goes only once the reader has also read every index second up to slot s's `index` watermark at the time its `data` watermark passed T, so every batch in the array is in a file.
 - The data kept in DAOS is about rate × N × I: ~16 GB at 2.5 Gbps and ~500 GB at 80 Gbps with the defaults. Lower `--rm-after` at high rates if the pool is small.
 - DAOS frees removed space in the background, shortly after the removal.
@@ -139,6 +142,8 @@ They see what is committed when they run: they list `seconds` to find the non-em
 | `--from` | run start | first second to read (`--live`, `--live-rm`) |
 | `--stall` | 30 | seconds without watermark progress before a writer is skipped |
 | `--end-wait` | 10 | seconds with every writer done and no new writer before the end of the run |
+| `--dead-after` | 300 | seconds without watermark progress before a stalled writer counts as gone, so the run can end without it |
+| `--verbose` | off | log the data arrays each window reads and each removal (`--live`, `--live-rm`) |
 | `--follow` | off | never end; keep waiting for new writers |
 | `--event`, `--dataid` | all | only this event number / dataId (`--offline`, `--list`, `--fetch`) |
 | `--inflight` | 32 | DAOS reads in flight |

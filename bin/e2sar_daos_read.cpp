@@ -343,8 +343,8 @@ struct Options {
     std::string pool, cont, dir;
     bool live = false, liveRm = false, offline = false, list = false, fetch = false, del = false;
     uint64_t interval = 5, rmAfter = 10, from = 0;
-    double stall = 30, endWait = 10;
-    bool follow = false;
+    double stall = 30, endWait = 10, deadAfter = 300;
+    bool follow = false, verbose = false;
     std::optional<uint64_t> event;
     std::optional<uint16_t> dataId;
     size_t inflight = 32, readSize = 16 << 20;
@@ -396,7 +396,9 @@ struct SlotState {
 
 // The writers' state from the catalog. done/<slot> is read before wm/<slot>: a writer writes
 // its final watermark before its done entry, so a done slot's watermark is its final one.
-void refreshSlots(Catalog& cat, std::map<uint32_t, SlotState>& slots, double stall) {
+// Returns the slots that stalled and now move again.
+std::vector<uint32_t> refreshSlots(Catalog& cat, std::map<uint32_t, SlotState>& slots, double stall) {
+    std::vector<uint32_t> resumed;
     const double now = steadySec();
     for (uint32_t s : cat.slots()) {
         auto [it, isNew] = slots.try_emplace(s);
@@ -415,7 +417,8 @@ void refreshSlots(Catalog& cat, std::map<uint32_t, SlotState>& slots, double sta
             st.lastChange = now;
             if (st.stalled) {
                 st.stalled = false;
-                logErr("writer slot " + std::to_string(s) + " moves again; its entries in seconds already read are not re-read");
+                resumed.push_back(s);
+                logErr("writer slot " + std::to_string(s) + " moves again");
             }
         }
         if (!st.done && !st.stalled && now - st.lastChange > stall) {
@@ -424,6 +427,7 @@ void refreshSlots(Catalog& cat, std::map<uint32_t, SlotState>& slots, double sta
                    " s; continuing without it");
         }
     }
+    return resumed;
 }
 
 // ------------------------------------------------------------------ --live, --live-rm
@@ -431,22 +435,20 @@ void refreshSlots(Catalog& cat, std::map<uint32_t, SlotState>& slots, double sta
 struct LiveWindow {
     uint64_t events = 0, bytes = 0;
     bool written = false;
-    std::set<std::pair<uint64_t, uint32_t>> arrays;  // (tData, slot) read in this window
+    std::set<std::pair<uint64_t, uint32_t>> arrays;   // (tData, slot) read in this window
+    std::set<std::pair<uint64_t, uint64_t>> entries;  // (second, dkey) of the batches read
 };
 
-LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps) {
-    std::vector<uint64_t> secs;
-    for (uint64_t t = W; t < W + o.interval; t++)
-        secs.push_back(t);
-    const auto batches = run.reader->readIndex(secs);
+// Write the events of these batches to <base>.evio (glued in (evtNum, dataId) order) and
+// <base>.idx, and append its line to `manifest`. Returns the events written.
+std::vector<Event> writeBundle(Run& run, const Options& o, const std::vector<IndexedBatch>& batches,
+                               const std::string& base, uint64_t W, const std::string& manifest, uint64_t* bytes) {
     const auto evs = eventsOf(batches);
-    LiveWindow res;
-    for (const auto& b : batches)
-        res.arrays.insert({b.table.tData, b.table.slot});
+    *bytes = 0;
     if (evs.empty())
-        return res;
+        return evs;
 
-    // Lay out the file: event k at offset fileOff[k]; entry (batch, i) -> event k.
+    // Lay out the file first: entry (batch, i) -> its offset in the file.
     std::vector<std::vector<uint64_t>> target(batches.size());
     for (size_t b = 0; b < batches.size(); b++)
         target[b].resize(batches[b].table.entries.size());
@@ -458,7 +460,6 @@ LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps)
         off += e.size;
     }
 
-    const std::string base = o.dir + "/" + o.cont + "_" + std::to_string(W);
     const std::string tmp = base + ".evio.tmp";
     const int fd = openTmp(tmp);
     if (::ftruncate(fd, static_cast<off_t>(off)) != 0)
@@ -470,7 +471,7 @@ LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps)
     });
     if (!failed.empty()) {
         ::close(fd);
-        throw Failure(std::to_string(failed.size()) + " batches of window " + std::to_string(W) + " could not be read");
+        throw Failure(std::to_string(failed.size()) + " batches for " + base + " could not be read");
     }
     if (::fsync(fd) != 0)
         throw Failure("fsync " + tmp + ": " + std::strerror(errno));
@@ -481,12 +482,28 @@ LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps)
     std::ostringstream m;
     m << sha << "  " << fs::path(base + ".evio").filename().string() << "  " << W << ' ' << o.interval << ' '
       << evs.size() << ' ' << off << ' ' << evs.front().evtNum << ' ' << evs.back().evtNum;
-    appendLine(o.dir + "/" + o.cont + "_manifest.txt", m.str());
+    appendLine(manifest, m.str());
+    *bytes = off;
+    return evs;
+}
+
+LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps) {
+    std::vector<uint64_t> secs;
+    for (uint64_t t = W; t < W + o.interval; t++)
+        secs.push_back(t);
+    const auto batches = run.reader->readIndex(secs);
+    LiveWindow res;
+    for (const auto& b : batches) {
+        res.arrays.insert({b.table.tData, b.table.slot});
+        res.entries.insert({b.second, b.dkey});
+    }
+    const auto evs = writeBundle(run, o, batches, o.dir + "/" + o.cont + "_" + std::to_string(W), W,
+                                 o.dir + "/" + o.cont + "_manifest.txt", &res.bytes);
+    if (evs.empty())
+        return res;
     gaps.add(evs);
     writeTextFile(o.dir + "/" + o.cont + "_missing.txt", gaps.text());
-
     res.events = evs.size();
-    res.bytes = off;
     res.written = true;
     return res;
 }
@@ -506,14 +523,19 @@ public:
             const auto it = slots.find(key.second);
             if (it == slots.end())
                 continue;
+            // Every batch of data[T, s] is committed into an index second no later than the
+            // slot's index watermark (a done slot's is its final second), so the reader may
+            // remove the array once it has read that second too.
             if (it->second.done)
-                need = 0;
+                need = it->second.wm ? it->second.wm->index + 1 : 0;
             else if (it->second.wm && it->second.wm->data > key.first)
-                need = it->second.wm->index;
+                need = it->second.wm->index + 1;
         }
     }
 
     // nextW: the first second not yet read; cutoff: remove what is older.
+    bool verbose = false;
+
     void remove(RunReader& r, uint64_t nextW, uint64_t cutoff, const std::set<uint64_t>& keep) {
         for (; removedTo_ < cutoff; removedTo_++)
             if (!keep.count(removedTo_)) {
@@ -527,6 +549,10 @@ public:
             const auto [t, slot] = it->first;
             if (t < cutoff && it->second != kUnset && it->second <= nextW && !keep.count(t)) {
                 try {
+                    if (verbose)
+                        logOut("removing data[" + std::to_string(t) + ", " + std::to_string(slot) + "]: need " +
+                               std::to_string(it->second) + ", next window " + std::to_string(nextW) + ", cutoff " +
+                               std::to_string(cutoff));
                     r.removeData(t, slot);
                 } catch (const DaosError& e) {
                     logErr("removing data[" + std::to_string(t) + ", " + std::to_string(slot) + "]: " + e.what());
@@ -575,15 +601,64 @@ int runLive(const Options& o) {
            (o.liveRm ? "; removing from DAOS " + std::to_string(o.rmAfter) + " intervals behind" : ""));
 
     std::map<uint32_t, SlotState> slots;
-    std::set<uint64_t> stalledSeconds;  // read without a stalled slot: never removed before the end
     GapTracker gaps;
     Remover remover;
+    std::set<uint64_t> stalledSeconds;  // read without a stalled slot: never removed before the end
+    std::map<uint64_t, std::set<uint64_t>> readThen;  // stalled second -> index dkeys already read
+    std::set<uint32_t> owing;  // slots that stalled: their late entries are read once they pass the stalled seconds
+    uint64_t lateFiles = 0, lateEvents = 0;
+    // Re-read the stalled seconds for slot s: entries it committed after the reader passed.
+    auto readLate = [&](uint32_t s) {
+        std::vector<uint64_t> secs(stalledSeconds.begin(), stalledSeconds.end());
+        std::vector<IndexedBatch> late;
+        for (auto& b : run.reader->readIndex(secs))
+            if (b.table.slot == s && !readThen[b.second].count(b.dkey))
+                late.push_back(std::move(b));
+        if (late.empty())
+            return;
+        for (const auto& b : late) {
+            readThen[b.second].insert(b.dkey);
+            remover.saw(b.table.tData, b.table.slot);
+        }
+        const uint64_t first = late.front().second;
+        const std::string base =
+            o.dir + "/" + o.cont + "_" + std::to_string(first) + "_late" + std::to_string(lateFiles + 1);
+        uint64_t nbytes = 0;
+        const auto evs = writeBundle(run, o, late, base, first, o.dir + "/" + o.cont + "_late_manifest.txt", &nbytes);
+        gaps.add(evs);
+        writeTextFile(o.dir + "/" + o.cont + "_missing.txt", gaps.text());
+        lateFiles++;
+        lateEvents += evs.size();
+        logErr("writer slot " + std::to_string(s) + ": " + std::to_string(evs.size()) +
+               " events committed after the reader passed their seconds, written to " +
+               fs::path(base + ".evio").filename().string());
+    };
     remover.startAt(W);
+    remover.verbose = o.verbose;
+    // A stalled writer is skipped at once (--stall), but counts as gone, for the end of the
+    // run, only after --dead-after seconds without progress: it may be paused, not dead.
+    auto gone = [&](const SlotState& st) { return st.stalled && steadySec() - st.lastChange > o.deadAfter; };
     uint64_t files = 0, events = 0, bytes = 0;
     double endSince = -1;
 
     while (running) {
         refreshSlots(*run.catalog, slots, o.stall);
+        for (const auto& [s, st] : slots)
+            if (st.stalled)
+                owing.insert(s);
+        // a slot that stalled is past the stalled seconds (or done): read what it added there
+        for (auto it = owing.begin(); it != owing.end();) {
+            const SlotState& st = slots[*it];
+            const bool past = !stalledSeconds.empty() &&
+                              (st.done || (!st.stalled && st.wm && st.wm->index > *stalledSeconds.rbegin()));
+            if (past || (stalledSeconds.empty() && !st.stalled)) {
+                if (past)
+                    readLate(*it);
+                it = owing.erase(it);
+            } else {
+                ++it;
+            }
+        }
         remover.update(slots);
         bool progressed = false;
 
@@ -591,28 +666,46 @@ int runLive(const Options& o) {
         while (running && !slots.empty()) {
             const uint64_t last = W + I - 1;
             bool complete = true, anyStalled = false;
-            uint64_t finalEnd = 0;  // with every slot done or stalled: no data at or after this second
+            uint64_t finalEnd = 0;  // with every slot done or gone: no data at or after this second
+            uint64_t newest = 0;    // the newest watermark any writer has published
             bool allEnded = true;
             for (const auto& [s, st] : slots) {
                 if (st.stalled)
                     anyStalled = true;
                 if (!st.done && !st.stalled && !(st.wm && st.wm->index > last))
                     complete = false;
-                if (st.done || st.stalled)
+                if (st.wm)  // a done writer has also finished the second of its final watermark
+                    newest = std::max(newest, st.wm->index + (st.done ? 1 : 0));
+                if (st.done || gone(st))
                     finalEnd = std::max(finalEnd, st.wm ? st.wm->index + 1 : 0);
                 else
                     allEnded = false;
             }
+            // Never past the newest watermark any writer published: with every live writer
+            // stalled, the reader would otherwise run ahead into seconds still to come.
+            if (!allEnded && last >= newest)
+                complete = false;
             if (!complete || (allEnded && W >= finalEnd))
                 break;
             const double t0 = steadySec();
             const LiveWindow w = writeWindow(run, o, W, gaps);
+            if (o.verbose && !w.arrays.empty()) {
+                std::string a;
+                for (const auto& [t, s] : w.arrays)
+                    a += " data[" + std::to_string(t) + "," + std::to_string(s) + "]";
+                logOut("window " + std::to_string(W) + " read" + a);
+            }
             for (const auto& [t, s] : w.arrays)
                 remover.saw(t, s);
             remover.update(slots);
             if (anyStalled)
-                for (uint64_t t = W; t <= last; t++)
+                for (uint64_t t = W; t <= last; t++) {
                     stalledSeconds.insert(t);
+                    readThen[t];  // present even if empty
+                }
+            if (anyStalled)
+                for (const auto& [t, dk] : w.entries)
+                    readThen[t].insert(dk);
             if (w.written) {
                 files++;
                 events += w.events;
@@ -637,7 +730,7 @@ int runLive(const Options& o) {
         bool allEnded = !slots.empty();
         uint64_t finalEnd = 0;
         for (const auto& [s, st] : slots) {
-            if (!st.done && !st.stalled)
+            if (!st.done && !gone(st))
                 allEnded = false;
             finalEnd = std::max(finalEnd, st.wm ? st.wm->index + 1 : 0);
         }
@@ -664,10 +757,19 @@ int runLive(const Options& o) {
     m << std::fixed << std::setprecision(2) << (running ? "end of run: " : "stopped: ") << files << " files, "
       << events << " events, " << bytes / 1048576.0 << " MiB; " << gaps.missing() << " missing, " << gaps.late()
       << " late, " << gaps.duplicates() << " duplicate event numbers";
+    if (lateFiles)
+        m << "; " << lateFiles << " late files with " << lateEvents << " events (" << o.cont << "_late_manifest.txt)";
     logOut(m.str());
     if (o.liveRm && running) {
-        run.destroy(o.cont);
-        logOut("container " + o.cont + " destroyed");
+        if (!owing.empty()) {
+            // a writer that stalled and never got past the seconds read without it may still
+            // be alive with writes in flight: keep its data
+            logErr("the container is kept: writer slot " + std::to_string(*owing.begin()) +
+                   " stalled and did not finish; read the rest with --offline or --fetch, then --delete");
+        } else {
+            run.destroy(o.cont);
+            logOut("container " + o.cont + " destroyed");
+        }
     }
     return 0;
 }
@@ -940,7 +1042,9 @@ int main(int argc, char** argv) {
     opts("from", po::value<uint64_t>(&o.from)->default_value(0), "first UTC second to read (--live, --live-rm; default: the run start)");
     opts("stall", po::value<double>(&o.stall)->default_value(30), "seconds without watermark progress before a writer is skipped");
     opts("end-wait", po::value<double>(&o.endWait)->default_value(10), "seconds with every writer done and no new one before the run ends");
+    opts("dead-after", po::value<double>(&o.deadAfter)->default_value(300), "seconds without watermark progress before a stalled writer counts as gone for the end of the run");
     opts("follow", po::bool_switch(&o.follow), "never end; keep waiting for new writers (--live)");
+    opts("verbose", po::bool_switch(&o.verbose), "log the data arrays each window reads and each removal (--live, --live-rm)");
     opts("event", po::value<uint64_t>(&eventNum), "only this event number (--offline, --fetch, --list)");
     opts("dataid", po::value<unsigned>(&dataIdOpt), "only this dataId (--offline, --fetch, --list)");
     opts("inflight", po::value<size_t>(&o.inflight)->default_value(32), "DAOS reads in flight");

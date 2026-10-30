@@ -6,6 +6,8 @@
 | `e2sar_daos_read` | Reads a run back: following it while it is written (`--live`, `--live-rm`), or one file per event (`--offline`); also lists, verifies and deletes runs |
 | `e2sar_evio_send` | Test sender: reads an EVIO v6 file (`-F`) and sends it by frames (each record is one frame, sent as one event) through several E2SAR Segmenters, paced, with per-event timing and digests. See [E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md#the-events) |
 | `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
+| `e2sar_live_check.py` | Checks the files of `e2sar_daos_read --live`/`--live-rm` against the frames `e2sar_evio_send --digests` sent. See [the walkthrough](../docs/STREAMING_WORKFLOW.md#walkthrough---live-rm-streaming-of-an-evio-file) |
+| `evio_concat.py` | Joins EVIO v6 files into one valid EVIO v6 file (one file header, all records, the last-record bit only on the last). `--fix-last-bit FILE` fixes that bit in place |
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
 

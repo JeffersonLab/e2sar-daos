@@ -62,7 +62,7 @@ The sender needs no DAOS: the LCF node only runs `e2sar_perf`.
 
 ## 1. E2SAR on the LCF (once)
 
-**Use the same E2SAR version as the receivers, 0.4.0rc1.** The packet headers differ between E2SAR versions, and a 0.4.0rc1 receiver discards events from a sender with another header version (`Bad RE Header Discards`, see [ESNET_LB_TESTING.md step 4](ESNET_LB_TESTING.md#4-pre-flight-checks-before-each-run)).
+**Use an E2SAR version with the receivers' packet headers.** The receivers run 0.4.0rc1. E2SAR 0.3.x has the same headers (`e2sarHeaders.hpp` is identical in 0.3.2 and 0.4.0rc1: RE header version 1, LB header version 2 or 3), so a 0.3.x sender works; 0.4.0rc1 is what was tested. A sender with another RE header version is discarded by the receivers (`Bad RE Header Discards`, see [ESNET_LB_TESTING.md step 4](ESNET_LB_TESTING.md#4-pre-flight-checks-before-each-run)).
 
 On Perlmutter, E2SAR 0.4.0rc1 is installed without root in `$HOME/daq/e2sar-install`: the Rocky 9 `e2sar` RPM, unpacked there (as in [E2SAR_INSTALL.md section B](E2SAR_INSTALL.md)). It runs directly on the SLES 15 SP6 host, without a container *(check with the commands below)*.
 `$HOME` is shared by the login and compute nodes, so install once and use it on any compute node. The login shell is bash, so put this in `~/.bashrc` on the LCF:

@@ -266,7 +266,7 @@ They differ only for bigger events. Compared with 1.5 MB events (4096 frames, 16
 
 16 Segmenters × 1 socket, 95 KB events (`-f 256`), 100,000 events per run, 32 receive threads, **32 dequeue threads** (`-D 32`, since 16 cap at ~40 Gbps, [section 3](#3-dequeue-threads-the-hidden-bottleneck)), 1 MiB chunks, KV sink.
 Six runs per rate: three with the sender as it is, three with a sender that staggered its Segmenters' start (see below), taken in turn across the rates (20, 25, …, 50, then again), 13:30–14:46 on an otherwise idle testbed.
-Node-to-node only: LB 638 had another worker registered (indra-s2) that would have taken part of the events, so the LB was not rerun.
+Node-to-node only: the LB was not rerun.
 
 ```bash
 # ebpf2203                                                   # ebpf2201
