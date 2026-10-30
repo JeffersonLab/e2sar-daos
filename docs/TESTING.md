@@ -11,7 +11,7 @@
 | 5 | **ALCF Aurora** (planned, not run yet) | pool `e2sar-daos` (100 TB), DAOS client on the compute nodes | `unit` and `integration` suites, then the end-to-end path and the n2n bench between Aurora compute nodes over the Slingshot network. Section 5 is the plan and the checks still open | [§5](#5-alcf-aurora-planned) |
 
 Scenario 1 needs only Docker. Scenarios 2 and 3 need SSH access to the ebpf nodes, and scenario 3 also needs an LB instance URI. Scenario 4 needs a Slurm TB allocation and podman. Scenario 5 needs an ALCF project with access to pool `e2sar-daos` and a PBS allocation on Aurora.
-For throughput and latency of scenarios 2 and 3 with synthetic EVIO time frames instead of files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`scripts/e2sar_e2e_bench.sh`).
+For throughput and latency of scenarios 2 and 3 with the EVIO time frames of a file streamed as events instead of whole files, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md) (`scripts/e2sar_e2e_bench.sh`).
 Scenarios 2 and 3 share the same nodes with other users. Use your own port, container and `/scratch` directories, and clean up after every run.
 
 ## Test suites

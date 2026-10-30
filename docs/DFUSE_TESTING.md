@@ -8,7 +8,7 @@ This compares two ways of storing E2SAR events in DAOS on the ebpf testbed:
 - **dfuse**: `e2sar_daos_recv --dfuse <mount>` writes each event as one file into a POSIX container mounted with `dfuse`.
 - **pil4dfs**: the same as dfuse, with `libpil4dfs.so` preloaded, which turns the file calls into in-process libdfs calls and bypasses FUSE.
 
-All three use the node-to-node (n2n) bench, `scripts/e2sar_e2e_bench.sh -m n2n`: `e2sar_evio_send` on ebpf2201 sends synthetic EVIO events straight to the receiver on ebpf2203, with no load balancer.
+All three use the node-to-node (n2n) bench, `scripts/e2sar_e2e_bench.sh -m n2n`: `e2sar_evio_send` on ebpf2201 sent synthetic EVIO events straight to the receiver on ebpf2203, with no load balancer. (The sender now reads an EVIO file instead: to repeat these runs, add `-F FILE` to the `send` commands and drop `-f`.)
 Setup, MTU and NIC notes are in [EBPF_TESTBED_NOTES.md](EBPF_TESTBED_NOTES.md).
 
 ```

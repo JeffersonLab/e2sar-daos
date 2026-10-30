@@ -4,7 +4,7 @@
 |---|---|
 | `e2sar_daos_recv` | Receives events from an E2SAR sender (e.g. `e2sar_perf -s` or `e2sar_ft -s`) and writes them to DAOS with asynchronous puts: one KV object per run, listed in a run catalog |
 | `e2sar_daos_read` | Lists the runs in a container and what `e2sar_daos_recv` wrote, verifies it (sizes, SHA-256, EVIO header), and restores events as `.evio` files |
-| `e2sar_evio_send` | Test sender: synthetic EVIO v6 streaming time frames through several E2SAR Segmenters, paced, with per-event timing and digests |
+| `e2sar_evio_send` | Test sender: reads an EVIO v6 file (`-F`) and sends it by frames (each record is one frame, sent as one event) through several E2SAR Segmenters, paced, with per-event timing and digests. See [E2E_BENCHMARK.md](../docs/E2E_BENCHMARK.md#the-events) |
 | `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
 
 `e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
@@ -23,7 +23,7 @@ The C++ apps are built by `meson compile -C build` and placed in `build/bin/`. `
 
 Each run (`--prefix`) goes into its own KV object, listed in a run catalog object in the same container. Each event is stored as `<prefix>/<evtNum>/<dataId>/<chunk>` values plus a metadata key written last.
 
-See [docs/DAOS_LAYOUT.md](../docs/DAOS_LAYOUT.md) for the full layout: object ids, the run catalog, keys and chunking, examples for `e2sar_ft` and `e2sar_evio_send` and the old shared object.
+See [docs/DAOS_LAYOUT.md](../docs/DAOS_LAYOUT.md) for the full layout: object ids, the run catalog, keys and chunking, examples for `e2sar_ft` and coda-fb frames.
 
 ## How writing works
 

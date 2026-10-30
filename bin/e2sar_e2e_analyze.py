@@ -5,7 +5,7 @@ Inputs (all in the run directory):
   send.csv     e2sar_evio_send --timing-csv: evt_num,data_id,bytes,queue_ns,sent_ns (epoch ns)
   timing.csv   e2sar_daos_recv --timing-csv: evt_num,data_id,bytes,chunks,thread,recv_s,commit_s,latency_ms
                (seconds since the receiver's clock start, printed as "Clock start" in recv.log)
-  digests      e2sar_evio_send --digests: <dataId> <slot> <sha256>
+  digests      e2sar_evio_send --digests: <frame> <sha256> (event n is frame (n - 1) % frames)
   fetch.txt    e2sar_daos_read --fetch output: <sha256>  <prefix>_<evt>_<dataId>.evio  (...)
 
 Latency stages per event, matched on (evt_num, data_id):
@@ -44,7 +44,7 @@ def pct(v, p):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dir")
-    ap.add_argument("--pool", type=int, required=True, help="e2sar_evio_send --pool")
+    ap.add_argument("--frames", type=int, required=True, help="frames (records) in e2sar_evio_send's file")
     ap.add_argument("--expected", type=int, required=True, help="events sent")
     ap.add_argument("--warmup", type=float, default=0.5, help="seconds excluded from latency_steady_ms (default 0.5)")
     ap.add_argument("--profile", type=float, metavar="S", help="print latency and loss per S-second slice of the run")
@@ -69,18 +69,18 @@ def main():
             recv[(int(r["evt_num"]), int(r["data_id"]))] = (
                 int(r["bytes"]), r0 + float(r["recv_s"]), r0 + float(r["commit_s"]))
 
-    # digests: every committed event must match its pool slot
+    # digests: every committed event must match its frame of the file
     want = {}
     for line in open(f"{d}/digests"):
-        did, slot, h = line.split()
-        want[(int(did), int(slot))] = h
+        rec, h = line.split()
+        want[int(rec)] = h
     ok = bad = 0
     for line in open(f"{d}/fetch.txt"):
         m = re.match(r"([0-9a-f]{64})\s+\S+_(\d+)_(\d+)\.evio", line)
         if not m:
             continue
-        evt, did = int(m.group(2)), int(m.group(3))
-        if want.get((did, evt % a.pool)) == m.group(1):
+        evt = int(m.group(2))
+        if want.get((evt - 1) % a.frames) == m.group(1):
             ok += 1
         else:
             bad += 1
@@ -169,7 +169,7 @@ def summary(a):
     """Human-readable summary on stderr."""
     g = a.get
     lines = [f"{g('tag', '')} {a['result']}  mode={g('mode')} P={g('segmenters')} s={g('sockets')} "
-             f"f={g('frames_per_event')} rate={g('rate')} T={g('recv_threads')} "
+             f"file={g('evio_file')} rate={g('rate')} T={g('recv_threads')} "
              f"D={g('deq')}{'x' + str(g('inflight')) if g('inflight') not in (None, '') else ''} "
              f"{'C=' + str(g('chunk_kib')) + ' ' if g('chunk_kib') not in (None, '') else ''}sink={g('sink', 'kv')}  "
              f"committed {a['committed']}/{a['expected']}, verified {a['verified']}"]

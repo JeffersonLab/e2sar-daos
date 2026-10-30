@@ -6,7 +6,7 @@ Every run uses **MTU 9000**. The sender reads from local `/scratch/<user>`, and 
 Last run on 2026-10-19 against PR #11 (`feature/daos-kv-recv-apps`). Settings that differ from [TESTING.md §4](TESTING.md#4-applications-end-to-end-on-ebpf2203) are marked **⚠**.
 For throughput limits, see [BOTTLENECK_ANALYSIS.md](BOTTLENECK_ANALYSIS.md). To send through the ESnet EJFAT load balancer instead, see [ESNET_LB_TESTING.md](ESNET_LB_TESTING.md).
 Writing events as files through dfuse was tested and then removed; the results are in [DFUSE_TESTING.md](DFUSE_TESTING.md).
-For throughput and latency with synthetic EVIO frames, with or without the LB, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md).
+For throughput and latency with EVIO frames (`e2sar_evio_send` sends the frames of an EVIO file), with or without the LB, see [E2E_BENCHMARK.md](E2E_BENCHMARK.md).
 
 ```
 ebpf2201                                         ebpf2203

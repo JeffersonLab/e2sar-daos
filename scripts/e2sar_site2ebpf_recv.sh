@@ -1,5 +1,5 @@
 #!/bin/bash
-# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/PERLMUTTER_GUIDE.md
+# e2sar_site2ebpf_recv.sh: run one of the two ebpf nodes as a receiver for docs/LCF2JLAB_GUIDE.md
 # (remote sender ──▶ ESnet LB ──▶ e2sar_daos_recv on ebpf2201 and ebpf2203 ──▶ DAOS; the sender is
 # on Perlmutter by default, or on Lux with SITE=lux, see below).
 #
