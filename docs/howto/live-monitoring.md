@@ -74,6 +74,8 @@ The monitor exits once a `--live-rm` run's container is destroyed (otherwise Ctr
 python3 viz/daos_monitor/serve.py /scratch/$USER/${RUNC}_monitor.jsonl
 ```
 
+To replay the EVIO viewer too, from the reader's files or one EVIO file: [replay-run](replay-run.md).
+
 ## Rehearse without DAOS
 
 On any machine, including a laptop:
