@@ -1,5 +1,8 @@
 # Directory Update Log
 
+## 2026-11-04
+* **Creation**: [2026-11-04-nersc-lb675-evio](results/2026-11-04-nersc-lb675-evio.md): a NERSC sender through LB 675 (beta) to two receivers, 46.9M EVIO frames in 51 min with `--live`, 1,690 missing in 3 bursts; NIC counters before and after are needed on both receivers next time. Also: LB 653 got no sender data, `predictedeventnum` moves only while a worker is registered, and how to join `--live` files (no file header) into one EVIO file.
+
 ## 2026-10-30
 * **Update**: Removed the unused layout v1 code (`AsyncKVWriter`, `RunCatalog`, `event_layout.hpp`) and its tests `EventLayoutTests` and `RunCatalogTests`; the `key=value` record helpers moved to `layout.hpp`, tested in `LayoutTests`. The unit suite is now `Ok: 3`: [run-tests](howto/run-tests.md), [install-e2sar](howto/install-e2sar.md), [mac-container](sites/mac-container.md), [aurora-plan](sites/aurora-plan.md), [aurora-workflow](sites/aurora-workflow.md).
 * **Update**: Brought comments and READMEs up to layout v2: [e2e-bench](howto/e2e-bench.md) `-C` is the array chunk (= batch) size; the top-level README links to [daos-layout](concepts/daos-layout.md) instead of listing v1 classes, and shows the DAOS monitor.
