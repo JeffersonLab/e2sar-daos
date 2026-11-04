@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-04
+* **Update**: [scripts](reference/scripts.md): new `scripts/utc.py`, which turns UTC epoch times (seconds, ms/µs/ns, run and bundle names, DAOS object ids, log lines on stdin) into dates.
 * **Creation**: [replay-run](howto/replay-run.md): replay a finished run in the DAOS monitor (its JSON lines file) and the EVIO live viewer (the reader's `--live` files copied at the run's pace, or one EVIO file with `live_replay.py`), without DAOS. Linked from [live-monitoring](howto/live-monitoring.md#5-after-the-run).
 * **Creation**: [2026-11-04-nersc-lb675-evio](results/2026-11-04-nersc-lb675-evio.md): a NERSC sender through LB 675 (beta) to two receivers, 46.9M EVIO frames in 51 min with `--live`, 1,690 missing in 3 bursts; NIC counters before and after are needed on both receivers next time. Also: LB 653 got no sender data, `predictedeventnum` moves only while a worker is registered, and how to join `--live` files (no file header) into one EVIO file.
 
