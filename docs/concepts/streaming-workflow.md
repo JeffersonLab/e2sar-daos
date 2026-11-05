@@ -16,6 +16,7 @@ Implemented (2026-10-29): `e2sar_daos_recv` writes the layout of [daos-layout](d
 
 The receivers (DAOS writers) and the reader communicate only through the DAOS container: no sockets or shared files. The one rule outside the container is the order: receivers first, then the reader ([writer–reader contract](daos-layout.md#writerreader-contract)). The sequence:
 
+0. **NIC monitor, on every receiver node.** `scripts/e2sar_nicmon.sh start DIR` before the receivers, every time: it samples the NIC, IP and UDP drop counters once a second, so a burst of missing events can later be placed on the wire, in the NIC, in the kernel or in a socket ([scripts](../reference/scripts.md)). The run directory is a good DIR.
 1. **Receivers.** Start `e2sar_daos_recv` on recvA and recvB with the same `--cont-name`. The first creates the container and the run record; each claims a writer slot. With `--withcp` they register with the LB. Receivers must be up before the senders start, or the LB has nowhere to send.
 2. **Reader.** Start `e2sar_daos_read --pool <pool> --cont <same name> -o DIR --live` (or `--live-rm` to remove data from DAOS as it reads; a mode is required, see [e2sar_daos_read](../reference/e2sar_daos_read.md)) on the reader node, after the receivers have started (the first one creates the container; a reader started before that exits with an error). It can start before the senders, during the run, or after it (it catches up).
 3. **Senders.** Start sending. The LB sends every event number to one receiver.
@@ -27,7 +28,7 @@ While the run goes on:
 - Each receiver writes a watermark once a second. Second T is complete when every receiver's watermark is past T.
 - The reader checks the container every second and writes one file `DIR/<run>_<W>.evio` per `--interval` window (default 5 s), its events glued back to back in `(evtNum, dataId)` order, about 1–3 s after the window ends. With `--live-rm` it removes objects from DAOS once they are `--rm-after` intervals (default 10) behind the last file written.
 
-At the end: stop the senders, then the receivers (Ctrl-C). Each writes its final statistics (`done/<slot>`). The reader sees that in the container, writes the last bundles and exits once every receiver is done and no new one has appeared for `--end-wait` seconds.
+At the end: stop the senders, then the receivers (Ctrl-C), then the NIC monitors (`e2sar_nicmon.sh stop DIR`, then `report DIR` for the drops and the seconds in which packets didn't reach UDP). Each receiver writes its final statistics (`done/<slot>`). The reader sees that in the container, writes the last bundles and exits once every receiver is done and no new one has appeared for `--end-wait` seconds.
 
 ### What the reader guarantees
 

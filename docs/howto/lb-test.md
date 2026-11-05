@@ -155,6 +155,7 @@ The container name also names the run's logs in `$RUN`.
 export CONT=e2sar-lb_$(date -u +%s)              # this run's container
 nstat -n                                          # reset the UDP counter baseline for this run
 ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$CONT.nic0
+~/daq/e2sar-daos/scripts/e2sar_nicmon.sh start $RUN/$CONT   # 1 s NIC/IP/UDP samples, every run
 cd ~/daq/e2sar-daos
 ./build/bin/e2sar_daos_recv --withcp --ip 129.57.178.86 --port $PORT \
     --pool sc26 --cont-name $CONT \
@@ -224,6 +225,8 @@ $E2SAR_BIN/lbadm --status | tail -2               # "Registered workers:" with n
 nstat -z UdpRcvbufErrors                          # kernel socket drops since step 6: 0
 ethtool -S enp1s0f1np1 | grep -E ' (rx_packets_phy|rx_out_of_buffer|rx_discards_phy):' > $RUN/$CONT.nic1
 paste $RUN/$CONT.nic0 $RUN/$CONT.nic1 | awk '{print $1, "+" $4-$2}'   # rx_out_of_buffer and rx_discards_phy: +0
+~/daq/e2sar-daos/scripts/e2sar_nicmon.sh stop $RUN/$CONT
+~/daq/e2sar-daos/scripts/e2sar_nicmon.sh report $RUN/$CONT # which seconds dropped, if any
 ```
 For what the throughput numbers mean, and their caveats, see [Throughput metrics](../concepts/throughput-metrics.md#throughput-metrics).
 

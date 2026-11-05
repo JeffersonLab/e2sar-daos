@@ -46,6 +46,7 @@ source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset v
 set -u
 : "${E2SAR_BIN:?E2SAR_BIN not set (see docs/howto/install-e2sar.md, the E2SAR environment)}"
 BIN=$E2SAR_DAOS_BUILD/bin
+NICMON=$(cd "$(dirname "$0")" && pwd)/e2sar_nicmon.sh   # 1 s NIC/IP/UDP samples on the receiver
 ANALYZE=$(cd "$(dirname "$0")/../bin" && pwd)/e2sar_e2e_analyze.py   # stays in bin/ next to the apps
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
@@ -108,11 +109,12 @@ ss -uan | grep -q ":$PORT\b" && die "UDP port $PORT is in use (ss -uanp); someon
 daos cont destroy "$POOL" "$CONT" >/dev/null 2>&1
 SINKARGS=(--pool "$POOL" --cont-name "$CONT" --deq "$DEQ" --inflight "$INFLIGHT" --chunk "$CHUNK")
 nic_counters > "$D/nic0"; nstat -n
+NIC="$NIC" bash "$NICMON" start "$D"
 "$BIN/e2sar_daos_recv" -u "$URI" $CP --ip "$RECV_IP" --port "$PORT" \
     --threads "$THREADS" --timeout 10000 -b 1073741824 "${SINKARGS[@]}" \
     --timing-csv "$D/timing.csv" > "$D/recv.log" 2>&1 < /dev/null &
 PID=$!
-trap 'kill -INT $PID 2>/dev/null; wait $PID' EXIT
+trap 'kill -INT $PID 2>/dev/null; wait $PID; NIC="$NIC" bash "$NICMON" stop "$D"' EXIT
 
 for ((i = 0; i < 60; i++)); do
     sleep 1
@@ -139,6 +141,8 @@ while :; do
 done
 sleep 2   # one more progress tick
 kill -INT $PID; wait $PID; trap - EXIT
+NIC="$NIC" bash "$NICMON" stop "$D" >/dev/null
+NIC="$NIC" bash "$NICMON" report "$D" > "$D/nic_report.txt"
 
 nic_counters > "$D/nic1"
 DISC=$(paste -d' ' "$D/nic0" "$D/nic1" | awk '$1 == "rx_discards_phy" {print $4 - $2}')

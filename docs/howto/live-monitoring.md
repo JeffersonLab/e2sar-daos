@@ -25,10 +25,11 @@ cd ~/daq && git clone -b sc26-live-viz git@code.jlab.org:xmei/evio-interactive-v
 
 ## 1. Start the run as usual
 
-Receivers, then the reader, as in [streaming-workflow](../concepts/streaming-workflow.md#the-workflow). For the booth, one bundle per 2 s and data removed from DAOS soon after:
+The NIC monitor on each receiver node, then the receivers, then the reader, as in [streaming-workflow](../concepts/streaming-workflow.md#the-workflow). Start the NIC monitor every time: without it, a burst of missing events can't be placed afterwards. For the booth, one bundle per 2 s and data removed from DAOS soon after:
 
 ```bash
 RUNC=sc26_1793500000                  # the run = the container; the same in every terminal
+~/daq/e2sar-daos/scripts/e2sar_nicmon.sh start ~/e2sar_run/$RUNC     # on each receiver node, before its receiver
 OUT=/scratch/$USER/live_$RUNC
 ./build/bin/e2sar_daos_read --pool sc26 --cont $RUNC -o $OUT --live-rm --interval 2 --rm-after 2
 ```
@@ -67,6 +68,13 @@ Then open:
 The viewer pulls one sample per bundle through the tunnel: 32 MiB per 2 s (~130 Mbit/s) by default. Pick 16 MiB in the page if the booth link is slow, or 128 MiB on a fast one.
 
 ## 5. After the run
+
+On each receiver node, after its receiver has stopped:
+
+```bash
+~/daq/e2sar-daos/scripts/e2sar_nicmon.sh stop ~/e2sar_run/$RUNC
+~/daq/e2sar-daos/scripts/e2sar_nicmon.sh report ~/e2sar_run/$RUNC    # drops, and seconds in which packets didn't reach UDP
+```
 
 The monitor exits once a `--live-rm` run's container is destroyed (otherwise Ctrl-C). The JSON lines file stays, and `serve.py` replays it at any time, without DAOS:
 
