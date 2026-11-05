@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-05
+* **Update**: Tagged the data type of the NERSC runs: [2026-11-04-nersc-lb675-evio](results/2026-11-04-nersc-lb675-evio.md) `cosmics`; [LB 677 run 1](results/2026-11-05-194730UTC-lb677-run1-evio.md) and [run 2](results/2026-11-05-201815UTC-lb677-run2-evio.md) `physics`.
 * **Creation**: [hit-compression](concepts/hit-compression.md) (draft, prototyping ideas): how far LB 677 run 1 frames (97% hit words) compress: lz4 1.00x, zstd 1.17-1.30x, Parquet 1.22-1.65x, a hit-aware encoding 2.32x at ~480 MB/s per core. New `scripts/evio_hit_compression.py` ([scripts](reference/scripts.md)). Linked from [run 1](results/2026-11-05-194730UTC-lb677-run1-evio.md#hit-words-vs-all-words).
 * **Creation**: `scripts/e2sar_nicmon.sh` ([scripts](reference/scripts.md)): samples the NIC, IP, UDP and TCP counters (by name) and softnet drops once a second on a receiver node, with `start`, `stop` and `report`. `e2sar_e2e_bench.sh` and `e2sar_site2ebpf_recv.sh` run it around the receiver; [streaming-workflow](concepts/streaming-workflow.md#the-workflow), [live-monitoring](howto/live-monitoring.md) and [lb-test](howto/lb-test.md) start it with every run.
 * **Update**: [2026-11-05-201815UTC-lb677-run2-evio](results/2026-11-05-201815UTC-lb677-run2-evio.md): the 20:41:30 burst isn't placed. The data port also carries NFS (`$HOME`) and SSH, so the 10,761 packets that didn't reach UDP may be other traffic while the events never arrived.
