@@ -34,7 +34,7 @@ Reassembler ──recvEvent──▶ dequeue thread 0 ──▶ batch ──▶ 
 - Events up to `--batch-threshold` × `--chunk` (0.9 MiB by default) are copied into the thread's open batch, which is written when the next event doesn't fit, after `--flush-us`, when the UTC second changes, or at stop. Larger events are written without a copy, in pieces of at most `--max-write`.
 - A batch is committed when its table is written into `index[T]` after its bytes: only then can readers see its events.
 - When every operation slot or batch buffer is busy, the thread waits on its event queue. That is the back-pressure: if DAOS can't keep up, the Reassembler queue fills, and the loss shows up as *enqueue loss* in the progress line.
-- Once a second the receiver writes its watermarks to the catalog. On Ctrl-C the threads stop receiving, flush and drain everything in flight; then the worker is deregistered and the final statistics are printed and written to the catalog as `done/<slot>`.
+- Once a second the receiver writes its watermarks to the catalog. On Ctrl-C it first deregisters from the LB and keeps storing events until none has arrived for `--drain-quiet` ms ([Stopping](#stopping)); then the threads flush and finish everything in flight, and the final statistics are printed and written to the catalog as `done/<slot>`.
 
 ## `e2sar_daos_recv`
 
@@ -75,6 +75,8 @@ DAOS options (the layout options must be the same on every receiver of a run; a 
 | `--log-idle` | off | Print a progress line every interval even when nothing changed |
 | `--verbose` | off | Print every committed batch |
 | `--timing-csv FILE` | — | Write one row of timing per committed event (see [Timing and throughput](#timing-and-throughput)) |
+| `--drain-quiet` | 2000 | At Ctrl-C, store events until none has arrived for this many ms, after deregistering from the LB with `-c` (0 = stop at once and deregister last, the old behaviour; see [Stopping](#stopping)) |
+| `--drain-max` | 10 | At Ctrl-C, stop draining after this many seconds even if events still arrive |
 
 Synthetic mode (no sender, no network):
 
@@ -86,6 +88,18 @@ Synthetic mode (no sender, no network):
 | `--dryrun` | off | Receive and reassemble events, then discard them. No DAOS at all. Can't be combined with `--synthetic` |
 
 Exit status: 0 if every received event was committed, 2 if any event failed, 1 on a setup error.
+
+### Stopping
+
+Ctrl-C (or SIGTERM) stops a receiver without dropping the events still on their way to it:
+
+1. With `-c`, it deregisters from the LB first. The LB keeps sending this worker's share of the events until it has moved the worker's slots to the other workers (about 1 s on LB 677).
+2. It keeps receiving and storing, including what is already queued in E2SAR, until no event has arrived for `--drain-quiet` ms (2 s), or for at most `--drain-max` s (10 s) if events keep coming. It logs `Drained: N events received after Ctrl-C` (or `Still receiving after 10 s, stopping: ...`).
+3. The dequeue threads flush their open batches and finish everything in flight. Then it prints the final statistics and writes `done/<slot>`.
+
+A second Ctrl-C ends step 2 at once. Without `-c` there is no LB to leave, so step 2 only empties E2SAR's queue once the sender has stopped; with a sender still sending node to node, it ends after `--drain-max`.
+
+`--drain-quiet 0` keeps the old order: the dequeue threads stop at once, then the worker deregisters. Events reassembled in that gap are dropped in E2SAR's queue (`Events reassembled` > `Events received` in the final statistics), and the LB keeps sending until the slots move. Stopping one of two receivers this way in the middle of LB 677 run 2 lost 7,600 events: 2,036 in the queue, the rest sent to it before the LB moved its slots (2026-11-05).
 
 ### Synthetic mode: the storage ceiling without a sender
 

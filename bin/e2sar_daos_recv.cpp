@@ -16,6 +16,11 @@
     its batch table goes into index[T_commit] (the commit marker). Once a second the
     receiver writes its watermarks to the catalog; at stop, its final statistics.
 
+    Ctrl-C (or SIGTERM) stops without dropping what is still coming: the receiver first
+    deregisters from the load balancer, keeps storing events until none has arrived for
+    --drain-quiet ms (at most --drain-max s), then finishes what is in flight. A second
+    Ctrl-C skips the wait.
+
     Log lines start with the UTC time in seconds, e.g. "1793280042.123 ".
 
     Synthetic mode (--synthetic N): no network and no Reassembler; N in-memory events of
@@ -59,7 +64,9 @@ namespace L = e2sar_daos::layout;
 
 namespace {
 
-std::atomic<bool> running{true};
+std::atomic<bool> running{true};      // the dequeue, report and watermark threads run while this is true
+std::atomic<int> stopRequests{0};     // Ctrl-C / SIGTERM: the first starts the drain, a second stops at once
+std::atomic<size_t> workersDone{0};   // dequeue threads that have returned
 bool dryRun = false;  // --dryrun: receive and discard, no storage
 
 // ------------------------------------------------------------------ time
@@ -134,7 +141,7 @@ void updateMax(std::atomic<int64_t>& a, int64_t v) {
     while (v > cur && !a.compare_exchange_weak(cur, v)) {}
 }
 
-void onSignal(int) { running = false; }
+void onSignal(int) { stopRequests++; }
 
 // ------------------------------------------------------------------ event sources
 
@@ -693,6 +700,7 @@ void dequeueLoop(EventSource* src, const WriterConfig* cfg, Shared* shared, Pend
         src->ready();  // don't keep main waiting for this thread
         running = false;
     }
+    workersDone++;
 }
 
 // --dryrun: receive -> count -> discard. No storage.
@@ -727,6 +735,56 @@ void dryrunLoop(EventSource* src, bool verbose, int tid) {
             logOut("[t" + std::to_string(tid) + "] received " + std::to_string(evtNum) + "/" +
                    std::to_string(dataId) + " (" + std::to_string(size) + " bytes, discarded)");
     }
+    workersDone++;
+}
+
+// ------------------------------------------------------------------ stop
+
+// After the first Ctrl-C, before the dequeue threads stop. With the control plane on,
+// leave the load balancer first: it keeps sending this worker's share of the events until
+// it has moved the worker's slots to the others (~1 s on LB 677). Then keep storing what
+// still arrives, and what is already queued in E2SAR, until nothing new has come for
+// quietMs. A second Ctrl-C, or maxSec, ends it early. Returns whether the worker is
+// deregistered.
+bool drain(Reassembler& reas, bool withCP, int quietMs, int maxSec) {
+    bool deregistered = false;
+    if (withCP) {
+        auto dereg = reas.deregisterWorker();
+        if (dereg.has_error())
+            logErr("Unable to deregister worker: " + dereg.error().message());
+        else
+            deregistered = true;
+    }
+    logOut(std::string(deregistered ? "Deregistered from the load balancer; s" : "S") +
+           "toring what still arrives until nothing new for " + std::to_string(quietMs) + " ms (at most " +
+           std::to_string(maxSec) + " s; Ctrl-C again to stop now)");
+
+    const auto t0 = Clock::now();
+    auto lastChange = t0;
+    const uint64_t first = stats.eventsReceived;
+    uint64_t last = first;
+    while (running && stopRequests < 2) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const auto now = Clock::now();
+        const uint64_t cur = stats.eventsReceived;
+        if (cur != last) {
+            last = cur;
+            lastChange = now;
+        }
+        const std::string after = std::to_string(cur - first) + " events received after Ctrl-C";
+        if (now - lastChange >= std::chrono::milliseconds(quietMs)) {
+            logOut("Drained: " + after);
+            return deregistered;
+        }
+        if (now - t0 >= std::chrono::seconds(maxSec)) {
+            logOut("Still receiving after " + std::to_string(maxSec) + " s, stopping: " + after);
+            return deregistered;
+        }
+    }
+    if (stopRequests >= 2)
+        logOut("Second Ctrl-C: stopping now, " + std::to_string(stats.eventsReceived - first) +
+               " events received after the first");
+    return deregistered;
 }
 
 // Once a second: wm/<slot> = the oldest second each thread still has pending (or now).
@@ -959,7 +1017,7 @@ int main(int argc, char** argv) {
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB, batchBuffers;
     std::vector<int> coreList;
-    int sockBufSize, eventTimeoutMS, numaNode;
+    int sockBufSize, eventTimeoutMS, numaNode, drainQuietMs, drainMaxSec;
     uint64_t synthEvents;
     int64_t flushUs;
     unsigned reportSec;
@@ -1002,6 +1060,9 @@ int main(int argc, char** argv) {
     opts("log-idle", po::bool_switch()->default_value(false), "print a progress line every interval, even with no new events");
     opts("verbose", po::bool_switch()->default_value(false), "print every committed batch");
     opts("timing-csv", po::value<std::string>(&timingCsv), "write one CSV row of timing per committed event to this file");
+    // stop
+    opts("drain-quiet", po::value<int>(&drainQuietMs)->default_value(2000), "at Ctrl-C: deregister from the LB first (with -c), then keep storing events until none has arrived for this many ms (0 = stop at once, deregister last)");
+    opts("drain-max", po::value<int>(&drainMaxSec)->default_value(10), "at Ctrl-C: stop draining after this many seconds, even if events still arrive");
 
     po::variables_map vm;
     try {
@@ -1048,6 +1109,10 @@ int main(int argc, char** argv) {
     }
     if (vm.count("ipv4") && vm.count("ipv6")) {
         std::cerr << "--ipv4 and --ipv6 are mutually exclusive" << std::endl;
+        return 1;
+    }
+    if (drainQuietMs < 0 || drainMaxSec <= 0) {
+        std::cerr << "--drain-quiet must be >= 0 and --drain-max > 0" << std::endl;
         return 1;
     }
     if (deqThreads == 0 || inflight == 0 || batchBuffers == 0) {
@@ -1227,9 +1292,16 @@ int main(int argc, char** argv) {
         if (catalog)
             wmThread = std::thread(watermarkLoop, catalog.get(), cfg.slot, &pending);
 
-        for (auto& t : workers)
-            t.join();  // after Ctrl-C (or the last synthetic event), once everything in flight is done
+        // Run until Ctrl-C, or until the dequeue threads end on their own (the last
+        // synthetic event, or a fatal error).
+        while (running && stopRequests == 0 && workersDone < deqThreads)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        bool deregistered = false;
+        if (reas && running && stopRequests > 0 && drainQuietMs > 0)
+            deregistered = drain(*reas, withCP, drainQuietMs, drainMaxSec);
         running = false;
+        for (auto& t : workers)
+            t.join();  // once everything in flight is done
         if (reporter.joinable())
             reporter.join();
         if (wmThread.joinable())
@@ -1237,9 +1309,11 @@ int main(int argc, char** argv) {
 
         if (reas) {
             logOut("Stopping reassembler");
-            auto dereg = reas->deregisterWorker();
-            if (dereg.has_error())
-                logErr("Unable to deregister worker: " + dereg.error().message());
+            if (!deregistered) {
+                auto dereg = reas->deregisterWorker();
+                if (dereg.has_error())
+                    logErr("Unable to deregister worker: " + dereg.error().message());
+            }
             reas->stopThreads();
         }
         printFinalStats(reas.get());
