@@ -94,7 +94,9 @@ case "${1:-}" in
                 if (n++) {
                     moved = ""
                     for (k in v) if ((k in p) && k ~ /discards|out_of_buffer|steer_missed|Errors|InDiscards|dropped/ && v[k] != p[k]) {
-                        tot[k] += v[k] - p[k]; moved = moved " " k "+" (v[k] - p[k])
+                        tot[k] += v[k] - p[k]
+                        # steer-missed is mostly background multicast (~1/s): list a second only for a burst
+                        if (k != "rx_steer_missed_packets" || v[k] - p[k] > 100) moved = moved " " k "+" (v[k] - p[k])
                     }
                     if (moved != "") print strftime("%T", t, 1), "drops:" moved
                     if (("rx_packets_phy" in p) && ("Udp.InDatagrams" in p)) {
