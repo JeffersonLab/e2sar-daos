@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-05
+* **Update**: [e2sar_daos_recv](reference/e2sar_daos_recv.md#stopping): Ctrl-C now deregisters from the LB first and keeps storing events until none has arrived for `--drain-quiet` ms (2000; at most `--drain-max` s, 10), so stopping one receiver mid-run no longer drops its queued events. A second Ctrl-C stops at once; `--drain-quiet 0` keeps the old order.
 * **Update**: Removed the DAOS layout version field from every result's header, and its tags and explanations from [results/index.md](results/index.md), [index.md](index.md) and `AGENTS.md`.
 * **Creation**: [2026-11-05-201815UTC-lb677-run2-evio](results/2026-11-05-201815UTC-lb677-run2-evio.md): run 2 on LB 677, 34.05M frames in 37 min, 9,583 missing in three bursts: the half-hourly one on ebpf2201's path, 7,600 from stopping a receiver mid-run (the shutdown order of `e2sar_daos_recv`), and 1,399 lost inside ebpf2203 between the NIC and UDP with no drop counter moving (likely `rx_steer_missed_packets`, now sampled).
 * **Update**: [daos-layout](concepts/daos-layout.md): a diagram of the layout, `images/daos_layout.svg` (catalog, seconds, index[T] with its batch table, sparse data[T, s] arrays, and the object id digits).
