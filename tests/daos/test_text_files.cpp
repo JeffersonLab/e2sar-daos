@@ -91,7 +91,7 @@ BOOST_AUTO_TEST_CASE(trim_cut_off_last_line) {
     TmpDir t;
     const auto f = t.file("m.txt");
     spit(f, "sha1  a.evio  100 5\nsha2  b.evio  10");
-    BOOST_CHECK_EQUAL(tf::trimPartialLine(f), 15);
+    BOOST_CHECK_EQUAL(tf::trimPartialLine(f), 16);  // "sha2  b.evio  10"
     BOOST_CHECK_EQUAL(slurp(f), "sha1  a.evio  100 5\n");
     BOOST_CHECK_EQUAL(tf::trimPartialLine(f), 0);  // whole lines are left alone
     BOOST_CHECK_EQUAL(slurp(f), "sha1  a.evio  100 5\n");
