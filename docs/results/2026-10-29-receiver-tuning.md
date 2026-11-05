@@ -1,9 +1,8 @@
 ---
 type: Result
-title: "Receiver tuning for layout v2 (2026-10-29)"
+title: "Receiver tuning (2026-10-29)"
 description: "The e2sar_daos_recv sweep of --threads, --deq, --inflight and --flush-us for small events, e2sar_ft files and 1 MiB events up to 80 Gbps, and the recommended settings."
 tags: [tuning, e2sar_daos_recv, ebpf-testbed]
-daos_layout: v2
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/STREAMING_WORKFLOW.md", title: "STREAMING_WORKFLOW.md at 0d85d00" }
 ---

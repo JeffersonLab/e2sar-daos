@@ -3,7 +3,7 @@ okf_version: 0.2
 ---
 # e2sar-daos documentation
 
-The docs for [e2sar-daos](../README.md), as an [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. Each file covers one topic and starts with a YAML header: `type`, `title`, `description`, and where it applies `status` (`draft`: not run yet), `stale_after` (check the file before use once this date has passed) and `daos_layout` (results: which DAOS layout the numbers are for). Changes to the bundle are in [log.md](log.md).
+The docs for [e2sar-daos](../README.md), as an [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. Each file covers one topic and starts with a YAML header: `type`, `title`, `description`, and where it applies `status` (`draft`: not run yet) and `stale_after` (check the file before use once this date has passed). Changes to the bundle are in [log.md](log.md).
 
 # Folders
 

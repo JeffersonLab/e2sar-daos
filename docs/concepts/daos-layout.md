@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: "Data layout in DAOS"
-description: "Layout v2: one container per run, with a catalog, a seconds object, an index per UTC second and byte arrays per second and writer; the writer–reader contract."
+description: "One container per run, with a catalog, a seconds object, an index per UTC second and byte arrays per second and writer; the writer–reader contract."
 tags: [daos, layout, e2sar_daos_recv, e2sar_daos_read]
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/DAOS_LAYOUT.md", title: "DAOS_LAYOUT.md at 0d85d00" }

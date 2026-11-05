@@ -3,7 +3,6 @@ type: Result
 title: "e2sar_perf without DAOS: node-to-node vs LB, 10–90 Gbps (2026-10-26 and 2026-10-28)"
 description: "E2SAR's own e2sar_perf at both ends, no DAOS: loss per rate, node-to-node and through LB 86, with and without recvmmsg."
 tags: [e2sar_perf, lb, node-to-node, ebpf-testbed]
-daos_layout: none
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/E2E_BENCHMARK.md", title: "E2E_BENCHMARK.md at 0d85d00" }
   - { id: runs, resource: "ebpf testbed: ~/e2sar_perf_tune (logs/F_T32_*, logs/L_T32_*)", title: "Scripts and logs of the sweep" }

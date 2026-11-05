@@ -3,14 +3,13 @@ type: Result
 title: "End-to-end results: summary"
 description: "The highest lossless rates node-to-node and through the LB, what loses events, what limits the rate, and latency, across the E2E runs of 2026-10-19 to 2026-10-28."
 tags: [e2e, summary, ebpf-testbed]
-daos_layout: v1
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/E2E_BENCHMARK.md", title: "E2E_BENCHMARK.md at 0d85d00" }
 ---
 
 # End-to-end results: summary
 
-> Measured on the old KV layout (v1), before layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)). The network findings still apply; the DAOS numbers are for v1.
+> Measured on the old KV layout, before the current one ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)). The network findings still apply; the DAOS numbers are for the KV layout.
 
 How fast EVIO streaming time frames go from a sender on **ebpf2201**, through E2SAR (node-to-node or through the ESnet EJFAT load balancer), to `e2sar_daos_recv` on **ebpf2203** and into DAOS, without losing any. Also where each event's time goes on the way.
 Measured on 2026-10-19 with E2SAR 0.4.0rc1, DAOS 2.6.5 (pool `sc26`) and LB 638 on `ejfat-lb.es.net`. The node-to-node rate sweep from 20 to 50 Gbps ([section 7](2026-10-20-e2e-n2n-sweep.md#7-node-to-node-rate-sweep-2050-gbps-2026-10-20)) is from 2026-10-20, and the LB rate sweep ([section 9](2026-10-21-e2e-lb-sweep.md#9-lb-rate-sweep-2045-gbps-2026-10-21)) from 2026-10-21 on LB 640. New LB runs should use ESnet's `stable4` LB (control plane `192.188.29.6:18048`, data plane `192.188.29.54`), see [lb-test](../howto/lb-test.md).

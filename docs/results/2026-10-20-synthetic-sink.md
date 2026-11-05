@@ -3,14 +3,13 @@ type: Result
 title: "The sink without a sender (--synthetic), 2026-10-20"
 description: "What e2sar_daos_recv --synthetic commits with no network: 92–103 Gbps of 95 KB events at the defaults, 183 Gbps of 1.5 MB events; dfuse and pil4dfs for comparison."
 tags: [synthetic, daos, ebpf-testbed]
-daos_layout: v1
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/E2E_BENCHMARK.md", title: "E2E_BENCHMARK.md at 0d85d00" }
 ---
 
 # 8. The sink without a sender (`--synthetic`)
 
-> Measured on the old KV layout (v1), before layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)). The network findings still apply; the DAOS numbers are for v1.
+> Measured on the old KV layout, before the current one ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)). The network findings still apply; the DAOS numbers are for the KV layout.
 
 `e2sar_daos_recv --synthetic N` stores N events generated in memory, with no network and no Reassembler. Everything from the dequeue threads on is the same receiver code ([bin/README.md](../reference/e2sar_daos_recv.md#synthetic-mode-the-storage-ceiling-without-a-sender)). Unpaced, it shows the most the sink can commit with the given settings, which no end-to-end run with those settings can beat. It needs a sink (`--cont-name`, or `--dfuse`) and can't be combined with `--dryrun`.
 `fio --ioengine=dfs` isn't a substitute: it writes byte ranges of a few large files, while the receiver does one KV put (or one file) per event, so per-operation costs that limit the receiver don't show up in fio's Gbps.

@@ -3,14 +3,13 @@ type: Result
 title: "Bottleneck analysis: e2sar_ft → e2sar_daos_recv → DAOS"
 description: "Where the e2sar_ft path is limited on the ebpf testbed (2026-10-19): one thread per event on the sender, one port per thread and NIC port discards on the receiver; DAOS keeps up."
 tags: [e2sar_ft, bottleneck, ebpf-testbed]
-daos_layout: v1
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/BOTTLENECK_ANALYSIS.md", title: "BOTTLENECK_ANALYSIS.md at 0d85d00" }
 ---
 
 # Bottleneck analysis: e2sar_ft → e2sar_daos_recv → DAOS
 
-> Measured on the old KV layout (v1), before layout v2 ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)). The network findings still apply; the DAOS numbers are for v1.
+> Measured on the old KV layout, before the current one ([#31](https://github.com/JeffersonLab/e2sar-daos/pull/31)). The network findings still apply; the DAOS numbers are for the KV layout.
 
 Where the e2sar_ft → e2sar_daos_recv → DAOS path is limited on the ebpf testbed, measured on 2026-10-19 with PR #11 (`feature/daos-kv-recv-apps`), E2SAR 0.4.0rc1 and DAOS 2.6.5 (pool `sc26`).
 Table 9 (2026-10-26 and 2026-10-28) is different: it uses E2SAR's `e2sar_perf` at both ends, without DAOS.
