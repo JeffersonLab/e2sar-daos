@@ -53,6 +53,7 @@ python3 viz/daos_monitor/serve.py /scratch/$USER/<run>_monitor.jsonl          # 
 - Start it before or after the writers. If the container doesn't exist yet, it waits (`waiting for container …`).
 - It ends on Ctrl-C, or when the container is destroyed: at the end of a `--live-rm` run it writes `{"type":"end","why":"container destroyed"}` and exits.
 - `-o` is appended to, not overwritten. Use one file per run so a replay shows one run.
+- Each line is written whole or not at all. While the disk is full the monitor skips lines (logged once, and again when it writes) and keeps running; the page shows a gap. On start it drops a cut-off last line left by a crash.
 - Each line also prints to stdout in short form:
 
 ```

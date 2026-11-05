@@ -61,6 +61,7 @@ install_headers(
     'include/e2sar_daos/async_ops.hpp',
     'include/e2sar_daos/catalog.hpp',
     'include/e2sar_daos/run_reader.hpp',
+    'include/e2sar_daos/text_files.hpp',
     subdir: 'e2sar_daos'
 )
 

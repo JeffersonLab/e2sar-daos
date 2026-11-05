@@ -23,6 +23,13 @@ latency_histogram_test = executable('latency_histogram_test', files('test_latenc
 
 test('LatencyHistogramTests', latency_histogram_test, suite: ['daos', 'unit'])
 
+# Whole-line appends and cut-off line trimming of text_files.hpp (header-only; no server)
+text_files_test = executable('text_files_test', files('test_text_files.cpp'),
+                                include_directories: project_include_dir,
+                                dependencies: [boost_dep])
+
+test('TextFilesTests', text_files_test, suite: ['daos', 'unit'])
+
 # Toy KV round-trip (5 x 0.5 MiB, SHA-256 verified) against a live DAOS system.
 # Not part of 'unit': it needs a DAOS server.
 # Pool/container come from -Ddaos_pool / -Ddaos_cont, exported as DAOS_POOL / DAOS_CONT.

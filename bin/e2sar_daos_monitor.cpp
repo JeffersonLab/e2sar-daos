@@ -23,11 +23,15 @@
     destroyed (end of a --live-rm run) or on Ctrl-C.
 */
 
+#include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -46,6 +50,7 @@
 #include "e2sar_daos/daos_handles.hpp"
 #include "e2sar_daos/layout.hpp"
 #include "e2sar_daos/run_reader.hpp"
+#include "e2sar_daos/text_files.hpp"
 
 namespace po = boost::program_options;
 using namespace e2sar_daos;
@@ -532,11 +537,30 @@ int main(int argc, char** argv) {
     }
     if (o.out.empty())
         o.out = o.cont + "_monitor.jsonl";
-    std::ofstream out(o.out, std::ios::app);
-    if (!out) {
-        std::cerr << "cannot open " << o.out << std::endl;
+    // A half line left by a crash or a full disk would glue onto the next one: drop it.
+    const long long cut = textfile::trimPartialLine(o.out);
+    const int fd = cut < 0 ? -1 : ::open(o.out.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+    if (fd < 0) {
+        std::cerr << "cannot write " << o.out << ": " << std::strerror(errno) << std::endl;
         return 1;
     }
+    ::close(fd);
+    if (cut > 0)
+        logErr(o.out + ": dropped a cut-off last line (" + std::to_string(cut) + " bytes)");
+    // One line per tick, whole or not at all. While the disk is full the lines are skipped
+    // (logged once), and the monitor goes on: the dashboard shows a gap, not a broken file.
+    uint64_t skipped = 0;
+    auto put = [&](const std::string& line) {
+        if (textfile::appendLine(o.out, line, false)) {
+            if (skipped) {
+                logOut("writing " + o.out + " again after skipping " + std::to_string(skipped) + " lines");
+                skipped = 0;
+            }
+            return;
+        }
+        if (skipped++ == 0)
+            logErr("cannot write " + o.out + ": " + std::strerror(errno) + "; skipping lines until it works");
+    };
 
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
@@ -552,7 +576,7 @@ int main(int argc, char** argv) {
                 const std::string line = m.tick();
                 if (line.empty())
                     break;  // stopped in the middle of a tick: no partial line
-                out << line << std::endl;
+                put(line);
                 errors = 0;
             } catch (const DaosError& e) {
                 // The container was destroyed (end of a --live-rm run) or a read failed:
@@ -561,8 +585,10 @@ int main(int argc, char** argv) {
                 m.close();
                 if (++errors > 1 || e.rc() == -DER_NONEXIST || e.rc() == -DER_NO_HDL) {
                     if (!m.open()) {
-                        out << "{\"type\":\"end\",\"t\":" << std::fixed << unixNow()
-                            << ",\"why\":\"container destroyed\"}" << std::endl;
+                        std::ostringstream end;
+                        end << "{\"type\":\"end\",\"t\":" << std::fixed << unixNow()
+                            << ",\"why\":\"container destroyed\"}";
+                        put(end.str());
                         logOut("container " + o.cont + " is gone: end of the run");
                         return 0;
                     }

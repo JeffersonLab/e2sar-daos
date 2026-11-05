@@ -29,7 +29,7 @@ There are two test suites:
 
 | Suite | Test | Needs |
 |---|---|---|
-| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`LayoutTests`: checks the run layout of [daos-layout](../concepts/daos-layout.md): object ids, index keys, batch tables, and the catalog's `key=value` records.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary | DAOS headers and libraries, no DAOS server |
+| `unit` | `DAOSNativeTests`: checks that `<daos.h>` compiles and links, and the DAOS major version is 2.<br>`LayoutTests`: checks the run layout of [daos-layout](../concepts/daos-layout.md): object ids, index keys, batch tables, and the catalog's `key=value` records.<br>`LatencyHistogramTests`: checks the latency percentiles in `e2sar_daos_recv`'s timing summary.<br>`TextFilesTests`: checks that manifest and JSON lines are appended whole even when a write comes up short (a full disk, stood in for by a file size limit), and that a cut-off last line is dropped | DAOS headers and libraries, no DAOS server |
 | `integration` | `DAOSKVTest`: writes 5 random 0.5 MiB values into a DAOS KV object, reads them back and compares SHA-256 digests | A reachable DAOS pool and container, plus `openssl-devel` at build time |
 
 `DAOSKVTest` reads the pool and container from `DAOS_POOL` and `DAOS_CONT` (defaults `sc26` and `kv-test`).

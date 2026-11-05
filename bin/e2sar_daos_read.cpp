@@ -52,6 +52,7 @@
 #include "e2sar_daos/daos_handles.hpp"
 #include "e2sar_daos/layout.hpp"
 #include "e2sar_daos/run_reader.hpp"
+#include "e2sar_daos/text_files.hpp"
 
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
@@ -186,15 +187,19 @@ void writeTextFile(const std::string& path, const std::string& text) {
     commitFile(fd, tmp, path);
 }
 
+// A whole line or nothing: on a full disk the file is cut back, so a manifest never ends in half a line.
 void appendLine(const std::string& path, const std::string& line) {
-    const int fd = ::open(path.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
-    if (fd < 0)
-        throw Failure("open " + path + ": " + std::strerror(errno));
-    const std::string s = line + "\n";
-    const bool ok = ::write(fd, s.data(), s.size()) == static_cast<ssize_t>(s.size()) && ::fsync(fd) == 0;
-    ::close(fd);
-    if (!ok)
+    if (!textfile::appendLine(path, line))
         throw Failure("append to " + path + ": " + std::strerror(errno));
+}
+
+// Drop a half line left at the end of a manifest by a crash: the restart then redoes that file.
+void trimManifest(const std::string& path) {
+    const long long n = textfile::trimPartialLine(path);
+    if (n < 0)
+        throw Failure("trim " + path + ": " + std::strerror(errno));
+    if (n > 0)
+        logErr(path + ": dropped a cut-off last line (" + std::to_string(n) + " bytes); its file is written again");
 }
 
 std::vector<std::string> readLines(const std::string& path) {
@@ -344,6 +349,7 @@ struct Options {
     bool live = false, liveRm = false, offline = false, list = false, fetch = false, del = false;
     uint64_t interval = 5, rmAfter = 10, from = 0;
     double stall = 30, endWait = 10, deadAfter = 300;
+    double minFreeGiB = 5;
     bool follow = false, verbose = false;
     std::optional<uint64_t> event;
     std::optional<uint16_t> dataId;
@@ -508,6 +514,50 @@ LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps)
     return res;
 }
 
+// --min-free: room for the next file in -o DIR? Below the floor the reader writes nothing and
+// waits, still following the catalog; DAOS keeps the data, so it catches up once there is room.
+class SpaceGuard {
+public:
+    SpaceGuard(const std::string& dir, double minFreeGiB)
+        : dir_(dir), min_(static_cast<uint64_t>(minFreeGiB * kGiB)) {}
+
+    bool room() {
+        if (min_ == 0)
+            return true;
+        const auto f = textfile::freeBytes(dir_);
+        if (!f)
+            return true;  // can't tell: write, and a failed write stops the reader
+        const double now = steadySec();
+        if (*f >= min_) {
+            if (since_ >= 0) {
+                logOut("resuming: " + gib(*f) + " GiB free in " + dir_ + " after " +
+                       std::to_string(static_cast<long long>(now - since_)) + " s paused");
+                since_ = -1;
+            }
+            return true;
+        }
+        if (since_ < 0 || now - logged_ >= 300) {
+            logErr(std::string(since_ < 0 ? "pausing" : "still paused") + ": " + gib(*f) + " GiB free in " + dir_ +
+                   ", below --min-free " + gib(min_) + " GiB; free space to go on (DAOS keeps the data)");
+            if (since_ < 0)
+                since_ = now;
+            logged_ = now;
+        }
+        return false;
+    }
+
+private:
+    static constexpr double kGiB = 1024.0 * 1024 * 1024;
+    static std::string gib(uint64_t b) {
+        std::ostringstream o;
+        o << std::fixed << std::setprecision(1) << b / kGiB;
+        return o.str();
+    }
+    std::string dir_;
+    uint64_t min_;
+    double since_ = -1, logged_ = 0;
+};
+
 // --live-rm: what to remove once the reader is far enough ahead.
 class Remover {
 public:
@@ -580,13 +630,16 @@ int runLive(const Options& o) {
     removeTmpFiles(o.dir, o.cont);
 
     const std::string manifest = o.dir + "/" + o.cont + "_manifest.txt";
+    trimManifest(manifest);
+    trimManifest(o.dir + "/" + o.cont + "_late_manifest.txt");
     uint64_t W = 0;
     const auto lines = readLines(manifest);
     if (!lines.empty()) {
         std::istringstream in(lines.back());
         std::string sha, name;
         uint64_t lastW = 0, lastI = 0;
-        in >> sha >> name >> lastW >> lastI;
+        if (!(in >> sha >> name >> lastW >> lastI) || sha.size() != 64)
+            throw Failure("the last line of " + manifest + " is not a bundle line: " + lines.back());
         if (lastI != I)
             throw Failure("the manifest was written with --interval " + std::to_string(lastI) + "; restart with the same");
         W = lastW + I;
@@ -640,6 +693,7 @@ int runLive(const Options& o) {
     auto gone = [&](const SlotState& st) { return st.stalled && steadySec() - st.lastChange > o.deadAfter; };
     uint64_t files = 0, events = 0, bytes = 0;
     double endSince = -1;
+    SpaceGuard space(o.dir, o.minFreeGiB);
 
     while (running) {
         refreshSlots(*run.catalog, slots, o.stall);
@@ -651,7 +705,9 @@ int runLive(const Options& o) {
             const SlotState& st = slots[*it];
             const bool past = !stalledSeconds.empty() &&
                               (st.done || (!st.stalled && st.wm && st.wm->index > *stalledSeconds.rbegin()));
-            if (past || (stalledSeconds.empty() && !st.stalled)) {
+            if (past && !space.room()) {
+                ++it;  // its late file waits for room
+            } else if (past || (stalledSeconds.empty() && !st.stalled)) {
                 if (past)
                     readLate(*it);
                 it = owing.erase(it);
@@ -662,8 +718,8 @@ int runLive(const Options& o) {
         remover.update(slots);
         bool progressed = false;
 
-        // Write every window that is complete.
-        while (running && !slots.empty()) {
+        // Write every window that is complete, while there is room for it.
+        while (running && !slots.empty() && space.room()) {
             const uint64_t last = W + I - 1;
             bool complete = true, anyStalled = false;
             uint64_t finalEnd = 0;  // with every slot done or gone: no data at or after this second
@@ -800,6 +856,8 @@ int runOffline(const Options& o) {
     removeTmpFiles(o.dir, o.cont);
     const std::string manifest = o.dir + "/" + o.cont + "_manifest.txt";
     const std::string shaFile = o.dir + "/" + o.cont + ".sha256";
+    trimManifest(manifest);
+    trimManifest(shaFile);
     std::set<std::string> have;
     for (const auto& l : readLines(manifest)) {
         std::istringstream in(l);
@@ -1045,6 +1103,7 @@ int main(int argc, char** argv) {
     opts("dead-after", po::value<double>(&o.deadAfter)->default_value(300), "seconds without watermark progress before a stalled writer counts as gone for the end of the run");
     opts("follow", po::bool_switch(&o.follow), "never end; keep waiting for new writers (--live)");
     opts("verbose", po::bool_switch(&o.verbose), "log the data arrays each window reads and each removal (--live, --live-rm)");
+    opts("min-free", po::value<double>(&o.minFreeGiB)->default_value(5), "GiB that must stay free in -o DIR: below it the reader pauses until there is room (--live, --live-rm; 0: off)");
     opts("event", po::value<uint64_t>(&eventNum), "only this event number (--offline, --fetch, --list)");
     opts("dataid", po::value<unsigned>(&dataIdOpt), "only this dataId (--offline, --fetch, --list)");
     opts("inflight", po::value<size_t>(&o.inflight)->default_value(32), "DAOS reads in flight");
@@ -1090,16 +1149,21 @@ int main(int argc, char** argv) {
         return 1;
     }
     const bool liveMode = o.live || o.liveRm;
-    if ((!liveMode && (!vm["interval"].defaulted() || !vm["from"].defaulted() || o.follow)) ||
+    if ((!liveMode && (!vm["interval"].defaulted() || !vm["from"].defaulted() || !vm["min-free"].defaulted() ||
+                       o.follow)) ||
         (!o.liveRm && !vm["rm-after"].defaulted()) ||
         (liveMode && (o.event || o.dataId))) {
-        std::cerr << "--interval, --from, --follow need --live or --live-rm; --rm-after needs --live-rm; "
+        std::cerr << "--interval, --from, --follow, --min-free need --live or --live-rm; --rm-after needs --live-rm; "
                      "--event/--dataid don't go with --live or --live-rm"
                   << std::endl;
         return 1;
     }
     if (o.interval == 0 || o.readSize == 0 || o.inflight == 0) {
         std::cerr << "--interval, --read-size and --inflight must be > 0" << std::endl;
+        return 1;
+    }
+    if (!(o.minFreeGiB >= 0)) {
+        std::cerr << "--min-free must be >= 0" << std::endl;
         return 1;
     }
 
