@@ -84,6 +84,21 @@ python3 viz/daos_monitor/serve.py /scratch/$USER/${RUNC}_monitor.jsonl
 
 To replay the EVIO viewer too, from the reader's files or one EVIO file: [replay-run](replay-run.md).
 
+## Waiting for a sender
+
+When the sender side starts sending isn't known (a remote frame builder), keep the pipeline up and let `scripts/e2sar_live_pipeline.sh` replace a run that got nothing. From the laptop, which must be able to SSH to both nodes without a password prompt (for example through ControlMaster connections opened beforehand with `ssh -fN <node>`):
+
+```bash
+cd ~/Documents/DAQ/e2sar-daos            # the laptop's checkout; the nodes use ~/daq/e2sar-daos
+export LABEL=e2sar_lb677 OUT=/scratch/epsdaq LOGDIR=e2sar_run/lb677 MON_PORT=8767
+scripts/e2sar_live_pipeline.sh start     # NIC monitors and receivers on both nodes, then reader, monitor and viewer
+scripts/e2sar_live_pipeline.sh watch     # every hour: status, and recycle a run with no events for 1 h
+```
+
+`recycle` deletes a run only if it is at least an hour old (`IDLE_S`) and every receiver log says `in 0 evts` and the reader wrote no file; it checks the receivers' final statistics again before destroying the container. A run that got data is never deleted: `watch` keeps it and reports it. `watch` stops nothing when it can't reach a node, and warns when the reader node has less than 150 GB free (`MIN_FREE_GB`). It never frees the LB. The laptop must stay awake while `watch` runs (`caffeinate -ims` on a Mac). The pipeline itself runs on the nodes and keeps storing data whether `watch` runs or not.
+
+`stop` ends the current run and keeps its data; `status` prints what `watch` prints each hour.
+
 ## Rehearse without DAOS
 
 On any machine, including a laptop:

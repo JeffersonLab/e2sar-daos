@@ -28,6 +28,8 @@ While the run goes on:
 - Each receiver writes a watermark once a second. Second T is complete when every receiver's watermark is past T.
 - The reader checks the container every second and writes one file `DIR/<run>_<W>.evio` per `--interval` window (default 5 s), its events glued back to back in `(evtNum, dataId)` order, about 1–3 s after the window ends. With `--live-rm` it removes objects from DAOS once they are `--rm-after` intervals (default 10) behind the last file written.
 
+Waiting for a sender that starts at an unknown time: `scripts/e2sar_live_pipeline.sh watch` replaces a run that got no events for an hour with a fresh one ([live-monitoring](../howto/live-monitoring.md#waiting-for-a-sender)).
+
 At the end: stop the senders, then the receivers (Ctrl-C), then the NIC monitors (`e2sar_nicmon.sh stop DIR`, then `report DIR` for the drops and the seconds in which packets didn't reach UDP). Each receiver writes its final statistics (`done/<slot>`). The reader sees that in the container, writes the last bundles and exits once every receiver is done and no new one has appeared for `--end-wait` seconds.
 
 ### What the reader guarantees
