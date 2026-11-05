@@ -1,5 +1,8 @@
 # Directory Update Log
 
+## 2026-11-05
+* **Update**: [daos-layout](concepts/daos-layout.md): a diagram of the layout, `images/daos_layout.svg` (catalog, seconds, index[T] with its batch table, sparse data[T, s] arrays, and the object id digits).
+
 ## 2026-11-04
 * **Update**: [scripts](reference/scripts.md): new `scripts/utc.py`, which turns UTC epoch times (seconds, ms/µs/ns, run and bundle names, DAOS object ids, log lines on stdin) into dates.
 * **Creation**: [replay-run](howto/replay-run.md): replay a finished run in the DAOS monitor (its JSON lines file) and the EVIO live viewer (the reader's `--live` files copied at the run's pace, or one EVIO file with `live_replay.py`), without DAOS. Linked from [live-monitoring](howto/live-monitoring.md#5-after-the-run).

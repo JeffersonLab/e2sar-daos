@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="660" viewBox="0 0 1100 660" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1f2328">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+    <pattern id="hole" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="#ffffff"/>
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#d0d7de" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <rect width="1100" height="660" fill="#ffffff"/>
+
+  <text x="550" y="32" text-anchor="middle" font-size="17" font-weight="bold">DAOS layout v2: one run = one container</text>
+
+  <!-- pool / container -->
+  <rect x="20" y="50" width="1060" height="430" rx="10" fill="none" stroke="#8c959f" stroke-dasharray="6 4"/>
+  <text x="36" y="70" font-weight="bold" fill="#57606a">pool sc26</text>
+  <rect x="40" y="80" width="1020" height="385" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+  <text x="56" y="102" font-weight="bold">container e2sar_1793280000</text>
+  <text x="250" y="102" font-size="12" fill="#57606a">one run · plain DAOS container (not POSIX, no dfuse) · T = UTC second, s = writer slot</text>
+
+  <!-- ============ catalog ============ -->
+  <rect x="60" y="120" width="310" height="190" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+  <text x="74" y="142" font-weight="bold">catalog</text>
+  <text x="134" y="142" font-size="11" fill="#57606a">KV object · string keys · class S1</text>
+  <g font-family="Menlo, Consolas, monospace" font-size="10.5">
+    <text x="74" y="168" font-weight="bold">run</text>
+    <text x="142" y="168">start=1793280000 chunk=1MiB</text>
+    <text x="142" y="184">oclass=SX index_oclass=S8</text>
+    <text x="74" y="206" font-weight="bold">writer/0</text>
+    <text x="142" y="206">started=1793280000</text>
+    <text x="74" y="228" font-weight="bold">writer/1</text>
+    <text x="142" y="228">started=1793280001</text>
+    <text x="74" y="250" font-weight="bold">wm/0</text>
+    <text x="142" y="250">index=…042 data=…041</text>
+    <text x="74" y="272" font-weight="bold">wm/1</text>
+    <text x="142" y="272">index=…042 data=…042</text>
+    <text x="74" y="294" font-weight="bold">done/0</text>
+    <text x="142" y="294">committed= failed= lost=</text>
+  </g>
+  <text x="362" y="261" text-anchor="end" font-size="10" fill="#0969da">every 1 s</text>
+
+  <!-- ============ seconds ============ -->
+  <rect x="60" y="335" width="310" height="115" rx="8" fill="#fbefff" stroke="#8250df"/>
+  <text x="74" y="357" font-weight="bold">seconds</text>
+  <text x="140" y="357" font-size="11" fill="#57606a">integer keys · class S8</text>
+  <text x="74" y="374" font-size="11" fill="#57606a">which seconds have index entries</text>
+  <g font-family="Menlo, Consolas, monospace" font-size="10.5" text-anchor="middle">
+    <rect x="74" y="386" width="92" height="24" rx="4" fill="#ffffff" stroke="#8250df"/>
+    <text x="120" y="402">1793280000</text>
+    <rect x="174" y="386" width="92" height="24" rx="4" fill="#ffffff" stroke="#8250df"/>
+    <text x="220" y="402">1793280001</text>
+    <rect x="274" y="386" width="86" height="24" rx="4" fill="#ffffff" stroke="#8250df" stroke-dasharray="3 3"/>
+    <text x="317" y="402">…</text>
+  </g>
+  <text x="74" y="435" font-size="11" fill="#57606a">dkey = T, akey = 0, value = 1 byte</text>
+
+  <!-- ============ index[T] ============ -->
+  <rect x="410" y="110" width="300" height="150" rx="8" fill="#fff8c5" stroke="#9a6700" opacity="0.6"/>
+  <text x="700" y="124" text-anchor="end" font-size="10" fill="#9a6700">index[1793280001] …</text>
+  <rect x="400" y="128" width="300" height="150" rx="8" fill="#fff8c5" stroke="#9a6700"/>
+  <text x="414" y="150" font-weight="bold">index[1793280000]</text>
+  <text x="414" y="166" font-size="11" fill="#57606a">integer keys · batches committed in second T</text>
+  <rect x="414" y="176" width="272" height="42" rx="4" fill="#ffffff" stroke="#9a6700"/>
+  <text x="424" y="193" font-family="Menlo, Consolas, monospace" font-size="10.5" font-weight="bold">dkey (0 &lt;&lt; 48) | 0</text>
+  <text x="424" y="209" font-size="11">batch table: 5 events, data[T, 0] chunk 0</text>
+  <rect x="414" y="226" width="272" height="42" rx="4" fill="#ffffff" stroke="#9a6700"/>
+  <text x="424" y="243" font-family="Menlo, Consolas, monospace" font-size="10.5" font-weight="bold">dkey (1 &lt;&lt; 48) | 0</text>
+  <text x="424" y="259" font-size="11">batch table: 4 events, data[T, 1] chunk 0</text>
+
+  <!-- seconds -> index -->
+  <path d="M370,398 C388,398 386,197 398,197" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ============ batch table ============ -->
+  <line x1="550" y1="268" x2="550" y2="298" stroke="#9a6700" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="558" y="288" font-size="10" fill="#9a6700">value (akey 0)</text>
+  <rect x="400" y="298" width="310" height="152" rx="8" fill="#ffffff" stroke="#9a6700"/>
+  <text x="414" y="318" font-weight="bold" font-size="12">batch table</text>
+  <text x="494" y="318" font-size="11" fill="#57606a">binary, little endian</text>
+  <g font-size="9.5" text-anchor="middle" stroke="#9a6700" stroke-width="1">
+    <rect x="412" y="328" width="28.6" height="24" fill="#ffd8b5"/>
+    <rect x="440.6" y="328" width="28.6" height="24" fill="#fff8c5"/>
+    <rect x="469.2" y="328" width="57.2" height="24" fill="#fff8c5"/>
+    <rect x="526.4" y="328" width="57.2" height="24" fill="#fff8c5"/>
+    <rect x="583.6" y="328" width="57.2" height="24" fill="#fff8c5"/>
+    <rect x="640.8" y="328" width="57.2" height="24" fill="#fff8c5"/>
+  </g>
+  <g font-size="9.5" text-anchor="middle">
+    <text x="426.3" y="344">E2SB</text>
+    <text x="454.9" y="344">n</text>
+    <text x="497.8" y="344">slot · res</text>
+    <text x="555" y="344">T_data</text>
+    <text x="612.2" y="344">offset</text>
+    <text x="669.4" y="344">length</text>
+  </g>
+  <text x="412" y="366" font-size="10" fill="#57606a">header, 40 bytes</text>
+  <g stroke="#9a6700" stroke-width="1" fill="#ffffff">
+    <rect x="412" y="374" width="71.5" height="24"/>
+    <rect x="483.5" y="374" width="71.5" height="24"/>
+    <rect x="555" y="374" width="71.5" height="24"/>
+    <rect x="626.5" y="374" width="17.9" height="24"/>
+    <rect x="644.4" y="374" width="17.9" height="24"/>
+    <rect x="662.3" y="374" width="35.7" height="24"/>
+  </g>
+  <g font-size="9.5" text-anchor="middle">
+    <text x="447.8" y="390">evtNum</text>
+    <text x="519.3" y="390">offset</text>
+    <text x="590.8" y="390">size</text>
+    <text x="635.5" y="390" font-size="8">id</text>
+    <text x="653.4" y="390" font-size="8">fl</text>
+    <text x="680.2" y="390" font-size="8">res</text>
+  </g>
+  <text x="412" y="412" font-size="10" fill="#57606a">n × entry, 32 bytes each (offset from batch start)</text>
+  <text x="412" y="434" font-size="10" fill="#57606a">valid if: starts "E2SB", size = 40 + 32·n, slot = dkey slot</text>
+
+  <!-- ============ data[T, s] ============ -->
+  <!-- data[T,0] -->
+  <rect x="740" y="120" width="300" height="100" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="754" y="140" font-weight="bold">data[1793280000, 0]</text>
+  <text x="754" y="156" font-size="11" fill="#57606a">byte array · writer 0 · batches opened in T</text>
+  <g stroke="#1a7f37" stroke-width="1">
+    <rect x="752" y="166" width="40" height="28" fill="url(#hole)"/>
+    <rect x="752" y="166" width="30" height="28" fill="#4ac26b"/>
+    <rect x="792" y="166" width="40" height="28" fill="url(#hole)"/>
+    <rect x="832" y="166" width="40" height="28" fill="url(#hole)"/>
+    <rect x="872" y="166" width="40" height="28" fill="url(#hole)"/>
+    <rect x="912" y="166" width="40" height="28" fill="url(#hole)"/>
+    <rect x="952" y="166" width="40" height="28" fill="url(#hole)"/>
+    <rect x="992" y="166" width="36" height="28" fill="url(#hole)"/>
+  </g>
+  <g font-size="9.5" fill="#57606a" text-anchor="middle">
+    <text x="772" y="207">0</text><text x="812" y="207">1</text><text x="852" y="207">2</text><text x="892" y="207">3</text><text x="932" y="207">4</text><text x="972" y="207">5</text><text x="1010" y="207">…</text>
+  </g>
+
+  <!-- data[T,1] -->
+  <rect x="740" y="232" width="300" height="100" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="754" y="252" font-weight="bold">data[1793280000, 1]</text>
+  <text x="754" y="268" font-size="11" fill="#57606a">byte array · writer 1</text>
+  <g stroke="#1a7f37" stroke-width="1">
+    <rect x="752" y="278" width="40" height="28" fill="url(#hole)"/>
+    <rect x="752" y="278" width="24" height="28" fill="#4ac26b"/>
+    <rect x="792" y="278" width="120" height="28" fill="#1a7f37"/>
+    <rect x="912" y="278" width="40" height="28" fill="url(#hole)"/>
+    <rect x="952" y="278" width="40" height="28" fill="url(#hole)"/>
+    <rect x="992" y="278" width="36" height="28" fill="url(#hole)"/>
+  </g>
+  <text x="852" y="296" text-anchor="middle" font-size="10" fill="#ffffff">1 large event, 3 chunks</text>
+  <g font-size="9.5" fill="#57606a" text-anchor="middle">
+    <text x="772" y="319">0</text><text x="812" y="319">1</text><text x="852" y="319">2</text><text x="892" y="319">3</text><text x="932" y="319">4</text><text x="972" y="319">5</text><text x="1010" y="319">…</text>
+  </g>
+
+  <!-- data[T+1,0] -->
+  <rect x="740" y="344" width="300" height="106" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+  <text x="754" y="364" font-weight="bold">data[1793280001, 0]</text>
+  <text x="754" y="380" font-size="11" fill="#57606a">next second, same writer: chunk counter goes on</text>
+  <g stroke="#1a7f37" stroke-width="1">
+    <rect x="752" y="390" width="40" height="28" fill="url(#hole)"/>
+    <rect x="792" y="390" width="40" height="28" fill="url(#hole)"/>
+    <rect x="792" y="390" width="34" height="28" fill="#4ac26b"/>
+    <rect x="832" y="390" width="40" height="28" fill="url(#hole)"/>
+    <rect x="832" y="390" width="20" height="28" fill="#4ac26b"/>
+    <rect x="872" y="390" width="40" height="28" fill="url(#hole)"/>
+    <rect x="912" y="390" width="40" height="28" fill="url(#hole)"/>
+    <rect x="952" y="390" width="40" height="28" fill="url(#hole)"/>
+    <rect x="992" y="390" width="36" height="28" fill="url(#hole)"/>
+  </g>
+  <g font-size="9.5" fill="#57606a" text-anchor="middle">
+    <text x="772" y="431">0</text><text x="812" y="431">1</text><text x="852" y="431">2</text><text x="892" y="431">3</text><text x="932" y="431">4</text><text x="972" y="431">5</text><text x="1010" y="431">…</text>
+  </g>
+  <text x="754" y="445" font-size="10" fill="#57606a">chunk = 1 MiB = batch size; every batch starts on a chunk</text>
+
+  <!-- index -> data -->
+  <path d="M686,197 C720,197 724,180 750,180" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M686,247 C722,247 720,292 750,292" fill="none" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ============ object ids ============ -->
+  <text x="40" y="512" font-weight="bold">Object ids</text>
+  <text x="122" y="512" font-size="12" fill="#57606a">all in oid.lo, as decimal digits</text>
+  <g font-family="Menlo, Consolas, monospace" font-size="13" text-anchor="middle">
+    <rect x="40" y="526" width="22" height="30" fill="#dafbe1" stroke="#1a7f37"/>
+    <text x="51" y="546">4</text>
+    <rect x="68" y="526" width="88" height="30" fill="#ffffff" stroke="#57606a"/>
+    <text x="112" y="546">0001</text>
+    <rect x="162" y="526" width="220" height="30" fill="#ffffff" stroke="#57606a"/>
+    <text x="272" y="546">1793280042</text>
+  </g>
+  <g font-size="11" fill="#57606a" text-anchor="middle">
+    <text x="51" y="572">kind</text>
+    <text x="112" y="572">writer slot (4)</text>
+    <text x="272" y="572">UTC second (10)</text>
+  </g>
+  <text x="40" y="596" font-size="12">= K × 10¹⁴ + slot × 10¹⁰ + T   →   data[1793280042, slot 1]</text>
+
+  <g font-size="11.5">
+    <text x="440" y="512" font-weight="bold" fill="#57606a">object</text>
+    <text x="580" y="512" font-weight="bold" fill="#57606a">K</text>
+    <text x="610" y="512" font-weight="bold" fill="#57606a">example oid.lo</text>
+    <text x="780" y="512" font-weight="bold" fill="#57606a">DAOS type</text>
+    <text x="970" y="512" font-weight="bold" fill="#57606a">class</text>
+    <line x1="440" y1="519" x2="1060" y2="519" stroke="#d0d7de"/>
+
+    <rect x="440" y="527" width="12" height="12" rx="2" fill="#ddf4ff" stroke="#0969da"/>
+    <text x="460" y="537">catalog</text>
+    <text x="580" y="537">1</text>
+    <text x="610" y="537" font-family="Menlo, Consolas, monospace" font-size="10.5">100000000000000</text>
+    <text x="780" y="537">KV_HASHED</text>
+    <text x="970" y="537">S1 (fixed)</text>
+
+    <rect x="440" y="551" width="12" height="12" rx="2" fill="#fbefff" stroke="#8250df"/>
+    <text x="460" y="561">seconds</text>
+    <text x="580" y="561">2</text>
+    <text x="610" y="561" font-family="Menlo, Consolas, monospace" font-size="10.5">200000000000000</text>
+    <text x="780" y="561">MULTI_UINT64</text>
+    <text x="970" y="561">--index-oclass</text>
+
+    <rect x="440" y="575" width="12" height="12" rx="2" fill="#fff8c5" stroke="#9a6700"/>
+    <text x="460" y="585">index[T]</text>
+    <text x="580" y="585">3</text>
+    <text x="610" y="585" font-family="Menlo, Consolas, monospace" font-size="10.5">300001793280042</text>
+    <text x="780" y="585">MULTI_UINT64</text>
+    <text x="970" y="585">S8</text>
+
+    <rect x="440" y="599" width="12" height="12" rx="2" fill="#dafbe1" stroke="#1a7f37"/>
+    <text x="460" y="609">data[T, s]</text>
+    <text x="580" y="609">4</text>
+    <text x="610" y="609" font-family="Menlo, Consolas, monospace" font-size="10.5">400011793280042</text>
+    <text x="780" y="609">ARRAY_BYTE</text>
+    <text x="970" y="609">SX</text>
+  </g>
+
+  <!-- legend -->
+  <g font-size="10.5" fill="#57606a">
+    <rect x="40" y="628" width="14" height="12" fill="#4ac26b" stroke="#1a7f37"/>
+    <text x="60" y="638">batch of small events</text>
+    <rect x="190" y="628" width="14" height="12" fill="#1a7f37"/>
+    <text x="210" y="638">large event (batch of one)</text>
+    <rect x="360" y="628" width="14" height="12" fill="url(#hole)" stroke="#1a7f37"/>
+    <text x="380" y="638">hole: unused, takes no space</text>
+    <text x="560" y="638">An event is visible once its batch's index entry exists (written after the data).</text>
+  </g>
+</svg>

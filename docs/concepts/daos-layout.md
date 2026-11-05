@@ -11,6 +11,8 @@ sources:
 
 ## Overview
 
+![DAOS layout v2: catalog, seconds, index[T] and data[T, s] in one run's container](../images/daos_layout.svg)
+
 One run is one container. `T` is a UTC second, `s` a writer slot (0, 1, 2, …: one per running `e2sar_daos_recv`). Example: run `e2sar_1793280000`, two receivers:
 
 ```
