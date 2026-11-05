@@ -95,7 +95,7 @@ scripts/e2sar_live_pipeline.sh start     # NIC monitors and receivers on both no
 scripts/e2sar_live_pipeline.sh watch     # every hour: status, and recycle a run with no events for 1 h
 ```
 
-`recycle` deletes a run only if it is at least an hour old (`IDLE_S`) and every receiver log says `in 0 evts` and the reader wrote no file; it checks the receivers' final statistics again before destroying the container. A run that got data is never deleted: `watch` keeps it and reports it. `watch` stops nothing when it can't reach a node, and warns when the reader node has less than 150 GB free (`MIN_FREE_GB`). It never frees the LB. The laptop must stay awake while `watch` runs (`caffeinate -ims` on a Mac). The pipeline itself runs on the nodes and keeps storing data whether `watch` runs or not.
+`recycle` deletes a run only if it is at least an hour old (`IDLE_S`) and every receiver log says `in 0 evts` and the reader wrote no file; it checks the receivers' final statistics again before destroying the container. A run that got data is never deleted: `watch` keeps it and reports it. `watch` stops nothing when it can't reach a node, and warns when the reader node has less than 150 GB free (`MIN_FREE_GB`). Below 50 GiB the reader itself pauses and catches up once space is freed (`READ_ARGS`, [e2sar_daos_read --min-free](../reference/e2sar_daos_read.md#a-full-disk---min-free)); at R Gbps the files take R × 7.5 GB a minute. It never frees the LB. The laptop must stay awake while `watch` runs (`caffeinate -ims` on a Mac). The pipeline itself runs on the nodes and keeps storing data whether `watch` runs or not.
 
 `stop` ends the current run and keeps its data; `status` prints what `watch` prints each hour.
 

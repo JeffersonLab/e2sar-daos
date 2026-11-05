@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: "Reading a run from DAOS: e2sar_daos_read"
-description: "The reader: --live, --live-rm and --offline, what each writes, what --live-rm removes, and every option."
+description: "The reader: --live, --live-rm and --offline, what each writes, what --live-rm removes, what it does on a full disk (--min-free), and every option."
 tags: [e2sar_daos_read, options, reader]
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/DAOS_READER.md", title: "DAOS_READER.md at 0d85d00" }
@@ -67,12 +67,23 @@ DIR/<run>_missing.txt     event number gaps per dataId still open: dataId first 
 
 - **Glued, no headers.** A bundle is the events' bytes back to back, unchanged: no file header, no trailer, no wrapping. For EVIO-record events (`e2sar_evio_send`, coda-fb) that is the frames in order.
 - **Bounded memory.** The file is laid out from the index tables before any data is read, so each piece is written straight to its place; a window is never held in memory whole.
-- The last line of the manifest is the restart point: the reader continues with the next window. Restart with the same `--interval`.
+- The last line of the manifest is the restart point: the reader continues with the next window. Restart with the same `--interval`. Manifest lines are written whole or not at all, and on start the reader drops a cut-off last line left by a crash, so that window's file is written again.
 - A bundle's content depends only on what is in DAOS, so a reader started during the run and one started after it write the same files with the same checksums.
 - Order is strict within a bundle. Across bundles it is close to event number order: an event that committed in a later window than higher-numbered events lands in that later bundle. The manifest's `first_evt last_evt` show each bundle's range. An event lower than one already written is counted as late, and takes its number off `<run>_missing.txt`, which is rewritten after each bundle.
 - `--follow` keeps waiting for new writers after the end of the run, instead of exiting after `--end-wait` seconds.
 
 **A writer that stalls.** If a writer's watermark doesn't move for `--stall` seconds (30), the reader goes on without it, but never past the newest watermark any writer has published, so it doesn't run ahead into seconds still to come. When the stalled writer moves again and passes those seconds, the reader reads them again for that writer and writes any entries it hadn't seen to `DIR/<run>_<T>_late<k>.evio`, listed in `<run>_late_manifest.txt`. A writer still stalled after `--dead-after` seconds (300) counts as gone, and the run can end without it. `--live-rm` then keeps the container (the writer may be alive with writes in flight): read the rest with `--offline` or `--fetch`, then `--delete`.
+
+### A full disk: `--min-free`
+
+`-o DIR` is often much smaller than the DAOS pool. A run at R Gbps fills R × 7.5 GB a minute, so 1.2 Gbps fills 740 GB in about 80 minutes, while `--live` leaves everything in DAOS.
+
+- **`--min-free` (GiB, default 5).** Before each file the reader checks the free space in `DIR`. Below the floor it writes nothing, logs `pausing: … GiB free in DIR, below --min-free …` (again every 5 minutes), and keeps following the catalog. Once there is room it logs `resuming: … after N s paused` and catches up from DAOS. Nothing is lost: with `--live` the data stays in DAOS, and with `--live-rm` nothing is removed for windows not yet written (DAOS then fills instead). `--min-free 0` turns this off.
+- **Set it above one file.** A file is about rate × `--interval` (0.75 GB for 5 s at 1.2 Gbps). Leave room for the other writers in that file system, such as the monitor's JSON lines file.
+- **If the disk fills anyway** (another program, or `--min-free 0`), a write fails, the reader exits with an error, and at most a `.tmp` is left. Free space and run the same command again: it removes the `.tmp`, drops a cut-off manifest line if there is one, and goes on from the last whole manifest line.
+- `scripts/e2sar_live_pipeline.sh` starts the reader with `--min-free 50` (`READ_ARGS`), and its `status` shows when the reader is paused.
+
+Tested on ebpf2203 against the last 30 s of LB 677 run 1 (6 files, 3.85 GB). A reader paused by `--min-free` until space was freed, a reader killed with `kill -9` and restarted with half its last manifest line cut off, and a reader whose `.evio` write failed and was restarted: each ended with a manifest identical, line for line, to a plain read, with no `.tmp` left.
 
 ### What `--live-rm` removes
 
@@ -123,6 +134,7 @@ DIR/<run>_missing.txt              event number gaps per dataId
 ## All modes
 
 - Every output file is written as `.tmp`, flushed, then renamed, so other programs only see complete files. A crash leaves at most a `.tmp`, which is removed on restart.
+- Manifest and `.sha256` lines are appended whole: if a write comes up short (a full disk), the file is cut back to its old size. On start, a cut-off last line is dropped, and that file is written again.
 - `--pool` and `-o DIR` are required.
 
 ## Inspect, verify, delete
@@ -153,6 +165,7 @@ They see what is committed when they run: they list `seconds` to find the non-em
 | `--end-wait` | 10 | seconds with every writer done and no new writer before the end of the run |
 | `--dead-after` | 300 | seconds without watermark progress before a stalled writer counts as gone, so the run can end without it |
 | `--verbose` | off | log the data arrays each window reads and each removal (`--live`, `--live-rm`) |
+| `--min-free` | 5 | GiB that must stay free in `-o DIR`; below it the reader pauses until there is room (`--live`, `--live-rm`; 0: off). See [A full disk](#a-full-disk---min-free) |
 | `--follow` | off | never end; keep waiting for new writers |
 | `--event`, `--dataid` | all | only this event number / dataId (`--offline`, `--list`, `--fetch`) |
 | `--inflight` | 32 | DAOS reads in flight |
