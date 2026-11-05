@@ -1,6 +1,9 @@
 # Directory Update Log
 
 ## 2026-11-05
+* **Creation**: `scripts/e2sar_nicmon.sh` ([scripts](reference/scripts.md)): samples the NIC, IP, UDP and TCP counters (by name) and softnet drops once a second on a receiver node, with `start`, `stop` and `report`. `e2sar_e2e_bench.sh` and `e2sar_site2ebpf_recv.sh` run it around the receiver; [streaming-workflow](concepts/streaming-workflow.md#the-workflow), [live-monitoring](howto/live-monitoring.md) and [lb-test](howto/lb-test.md) start it with every run.
+* **Update**: [2026-11-05-201815UTC-lb677-run2-evio](results/2026-11-05-201815UTC-lb677-run2-evio.md): the 20:41:30 burst isn't placed. The data port also carries NFS (`$HOME`) and SSH, so the 10,761 packets that didn't reach UDP may be other traffic while the events never arrived.
+* **Update**: `e2sar_daos_monitor` stops on Ctrl-C in the middle of its first tick on a long run (it reads every second's index), without writing a partial line.
 * **Update**: [e2sar_daos_recv](reference/e2sar_daos_recv.md#stopping): Ctrl-C now deregisters from the LB first and keeps storing events until none has arrived for `--drain-quiet` ms (2000; at most `--drain-max` s, 10), so stopping one receiver mid-run no longer drops its queued events. A second Ctrl-C stops at once; `--drain-quiet 0` keeps the old order.
 * **Update**: Removed the DAOS layout version field from every result's header, and its tags and explanations from [results/index.md](results/index.md), [index.md](index.md) and `AGENTS.md`.
 * **Creation**: [2026-11-05-201815UTC-lb677-run2-evio](results/2026-11-05-201815UTC-lb677-run2-evio.md): run 2 on LB 677, 34.05M frames in 37 min, 9,583 missing in three bursts: the half-hourly one on ebpf2201's path, 7,600 from stopping a receiver mid-run (the shutdown order of `e2sar_daos_recv`), and 1,399 lost inside ebpf2203 between the NIC and UDP with no drop counter moving (likely `rx_steer_missed_packets`, now sampled).

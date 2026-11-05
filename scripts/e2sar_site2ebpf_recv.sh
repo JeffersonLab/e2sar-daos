@@ -63,6 +63,7 @@ source ~/.bashrc >/dev/null 2>&1 || true   # before set -u: .bashrc uses unset v
 set -u
 : "${E2SAR_BIN:?E2SAR_BIN not set (see docs/howto/install-e2sar.md, the E2SAR environment)}"
 BIN=$E2SAR_DAOS_BUILD/bin
+NICMON=$(cd "$(dirname "$0")" && pwd)/e2sar_nicmon.sh
 ME=$(hostname -s)
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
@@ -146,6 +147,8 @@ cmd_start() {
 
     nstat -n
     nic_counters > "$d/$ME.nic0"
+    # 1 s NIC/IP/UDP samples for the whole receive, to place any burst of missing events
+    NIC="$NIC" bash "$NICMON" start "$d"
 
     # Ctrl-C goes to the receiver, which deregisters and prints its statistics. tee and
     # this script ignore it, so the log keeps those statistics and step 7 runs afterwards.
@@ -160,6 +163,8 @@ cmd_start() {
     echo
     echo "=== $ME: drop checks ==="
     nstat -z UdpRcvbufErrors | tee "$d/$ME.nstat"
+    NIC="$NIC" bash "$NICMON" stop "$d"
+    NIC="$NIC" bash "$NICMON" report "$d" | tee "$d/$ME.nicreport"
     nic_counters > "$d/$ME.nic1"
     paste "$d/$ME.nic0" "$d/$ME.nic1" | awk '{print $1, "+" $4-$2}' | tee "$d/$ME.nicdiff"
     grep -E 'Lost in|Events (committed|failed)' "$d/$ME.recv.log"

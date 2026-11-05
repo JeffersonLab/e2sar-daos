@@ -345,6 +345,8 @@ public:
         std::vector<Event> evs;
         uint64_t inBytes = 0;
         for (uint64_t t : listed) {
+            if (!running)
+                return {};  // Ctrl-C: the first tick of a long run reads every second's index
             Second& sec = seconds_[t];
             if (sec.final)
                 continue;
@@ -547,7 +549,10 @@ int main(int argc, char** argv) {
         while (running) {
             const auto t0 = std::chrono::steady_clock::now();
             try {
-                out << m.tick() << std::endl;
+                const std::string line = m.tick();
+                if (line.empty())
+                    break;  // stopped in the middle of a tick: no partial line
+                out << line << std::endl;
                 errors = 0;
             } catch (const DaosError& e) {
                 // The container was destroyed (end of a --live-rm run) or a read failed:
