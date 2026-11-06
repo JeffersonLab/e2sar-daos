@@ -17,7 +17,7 @@ A C++ library and applications for storing E2SAR data streams in [DAOS](https://
 A run can be watched live in a browser, for example on a laptop that reaches the reader node only through SSH:
 
 - **DAOS monitor:** [`e2sar_daos_monitor`](docs/reference/e2sar_daos_monitor.md) writes the container's state as JSON lines, and [`viz/daos_monitor/`](viz/daos_monitor/) serves them as a dashboard: events per second in and out of DAOS, data waiting in DAOS, each writer's lag, and every `dataId`'s event numbers, with missing ones marked. **Replay** plays a finished run back from its JSON lines file, without DAOS.
-- **EVIO live viewer:** [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (`serve.py --live`, branch `sc26-live-viz`) decodes the newest file the reader wrote: hits per channel × time in frame, per crate.
+- **EVIO live viewer:** [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (`serve.py --live`) decodes the newest file the reader wrote: hits per channel × time in frame, per crate.
 
 Both only read, so the receivers and the reader run the same with or without them. The steps for the SC26 booth, including a demo mode without DAOS, are in [docs/howto/live-monitoring.md](docs/howto/live-monitoring.md).
 

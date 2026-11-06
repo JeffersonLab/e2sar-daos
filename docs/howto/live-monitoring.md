@@ -5,7 +5,7 @@ description: "Run the DAOS monitor and the EVIO live viewer next to e2sar_daos_r
 tags: [monitoring, e2sar_daos_monitor, evio-interactive-view, ssh, sc26]
 sources:
   - { id: monitor, resource: "../reference/e2sar_daos_monitor.md", title: "e2sar_daos_monitor and its dashboard" }
-  - { id: viewer, resource: "https://code.jlab.org/xmei/evio-interactive-view/-/tree/sc26-live-viz", title: "evio-interactive-view, branch sc26-live-viz: serve.py --live, live_replay.py, live_demo.py" }
+  - { id: viewer, resource: "https://code.jlab.org/xmei/evio-interactive-view", title: "evio-interactive-view: serve.py --live, live_replay.py, live_demo.py" }
 ---
 
 # Live monitoring of a run from a laptop (SC26 booth)
@@ -18,7 +18,7 @@ Status: run on the ebpf testbed on 2026-10-30 (receiver on ebpf2203; monitor, re
 
 ```bash
 cd ~/daq/e2sar-daos && git pull && meson compile -C build      # builds build/bin/e2sar_daos_monitor
-cd ~/daq && git clone -b sc26-live-viz git@code.jlab.org:xmei/evio-interactive-view.git
+cd ~/daq && git clone git@code.jlab.org:xmei/evio-interactive-view.git
 ```
 
 `viz/daos_monitor/serve.py` needs only Python ≥ 3.8. The viewer's `serve.py` needs only the standard library too; its `live_demo.py` needs numpy.
@@ -82,7 +82,7 @@ The monitor exits once a `--live-rm` run's container is destroyed (otherwise Ctr
 python3 viz/daos_monitor/serve.py /scratch/$USER/${RUNC}_monitor.jsonl
 ```
 
-To replay the EVIO viewer too, from the reader's files or one EVIO file: [replay-run](replay-run.md).
+To replay the EVIO viewer too, from the reader's files or one EVIO file: [replay-run](replay-run.md). To turn the reader's `.dat` files into one EVIO file: [streaming-workflow](../concepts/streaming-workflow.md#the-workflow) (`scripts/evio/evio_concat.py`).
 
 ## Waiting for a sender
 

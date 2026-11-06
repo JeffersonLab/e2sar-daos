@@ -200,7 +200,7 @@ def scenario_c3(out):
                         perf_senders(streams, 1048576, each, n_each, sockets=2), n_each * streams, out)
 
 
-BIG_EVIO = "/scratch/xmei/evio/frames_thread0_all.evio"   # 21 files joined with bin/evio_concat.py
+BIG_EVIO = "/scratch/xmei/evio/frames_thread0_all.evio"   # 21 files joined with scripts/evio/evio_concat.py
 
 
 def scenario_s(out):

@@ -8,9 +8,8 @@
 | `e2sar_evio_send` | Test sender: reads an EVIO v6 file (`-F`) and sends it by frames (each record is one frame; `-f F` consecutive frames per event, default 1) through several E2SAR Segmenters, paced, with per-event timing and digests. See [e2e-bench](../docs/howto/e2e-bench.md#the-events) |
 | `e2sar_e2e_analyze.py` | The analysis step of [`scripts/e2sar_e2e_bench.sh`](../scripts/e2sar_e2e_bench.sh). `--profile 0.1` shows latency and loss per 0.1 s of a run |
 | `e2sar_live_check.py` | Checks the files of `e2sar_daos_read --live`/`--live-rm` against the frames `e2sar_evio_send --digests` sent. See [the walkthrough](../docs/howto/streaming-walkthrough.md#walkthrough---live-rm-streaming-of-an-evio-file) |
-| `evio_concat.py` | Joins EVIO v6 files into one valid EVIO v6 file (one file header, all records, the last-record bit only on the last). `--fix-last-bit FILE` fixes that bit in place |
 
-`e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer.
+`e2sar_ft` sends each file as one E2SAR event. So an event read back from DAOS is byte-for-byte the original file, e.g. an EVIO v6 file you can open in an EVIO viewer; `--offline` names it `.evio`. The `--live` files are many events glued together without a file header, so they are `.dat`; the EVIO tools, such as [`scripts/evio/evio_concat.py`](../scripts/evio/evio_concat.py) (`.dat` → `.evio`), are in [scripts/](../scripts/README.md).
 
 The bash scripts that drive these apps on the test nodes (the end-to-end bench, its rate sweep, the receiver tuning sweep, and the LCF receiver) are in [scripts/](../scripts/README.md).
 
@@ -34,7 +33,7 @@ All options and what each mode writes: [docs/reference/e2sar_daos_read.md](../do
 
 | Mode | Output in `-o DIR` |
 |---|---|
-| `--live` | Follows the run: one file per `--interval` s (default 5), the events glued back to back in `(evtNum, dataId)` order, with an `.idx` per file, a manifest (the restart point) and the missing event numbers. DAOS is left as it is |
+| `--live` | Follows the run: one `.dat` file (bare EVIO records, no file header) per `--interval` s (default 5), the events glued back to back in `(evtNum, dataId)` order, with an `.idx` per file, a manifest (the restart point) and the missing event numbers. DAOS is left as it is |
 | `--live-rm` | The same, and removes data from DAOS `--rm-after` intervals (default 10) behind the last file written; destroys the container at the end of the run |
 | `--offline` | One file per `(evtNum, dataId)`, byte for byte the sent event, with its SHA-256 in `<run>.sha256`. DAOS is left as it is |
 | `--list` | (no files) The run record, the writers, then one line per event: `evtNum dataId bytes second slot` |

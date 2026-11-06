@@ -19,7 +19,7 @@ The frames of [LB 677 run 1](../results/2026-11-05-194730UTC-lb677-run1-evio.md)
 ## The quick measurement
 
 - **Data:** the first 20,000 frames (194.1 MB) of `/scratch/epsdaq/live_e2sar_lb677_1793905825/e2sar_lb677_1793905825_1793908285.evio`, the 49th of run 1's 224 `--live` files. 9,703 bytes and 2,360 hit words per frame, hit words 97.3% of the bytes; one ROC (12), 13 payload banks per frame, 1.3% of them empty.
-- **Script:** [`scripts/evio_hit_compression.py`](../../scripts/evio_hit_compression.py) `FILE 20000`, run on ebpf2203 (AMD EPYC 7763) with evio-interactive-view's `.venv` (pyarrow 21.0.0, numpy 2.0.2). Parquet test files go to node-local `/tmp` and are removed.
+- **Script:** [`scripts/evio/evio_hit_compression.py`](../../scripts/evio/evio_hit_compression.py) `FILE 20000`, run on ebpf2203 (AMD EPYC 7763) with evio-interactive-view's `.venv` (pyarrow 21.0.0, numpy 2.0.2). Parquet test files go to node-local `/tmp` and are removed.
 - **Ratio** = raw EVIO bytes / compressed bytes. **Speed** = raw EVIO bytes per second on one thread.
 - **Hit word** as in evio-interactive-view: `t = bits[30:17]` (4 ns ticks in the 65,536 ns frame), `ch = bits[16:13]`, `q = bits[12:0]`.
 

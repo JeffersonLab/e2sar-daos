@@ -445,7 +445,7 @@ struct LiveWindow {
     std::set<std::pair<uint64_t, uint64_t>> entries;  // (second, dkey) of the batches read
 };
 
-// Write the events of these batches to <base>.evio (glued in (evtNum, dataId) order) and
+// Write the events of these batches to <base>.dat (glued in (evtNum, dataId) order) and
 // <base>.idx, and append its line to `manifest`. Returns the events written.
 std::vector<Event> writeBundle(Run& run, const Options& o, const std::vector<IndexedBatch>& batches,
                                const std::string& base, uint64_t W, const std::string& manifest, uint64_t* bytes) {
@@ -466,7 +466,7 @@ std::vector<Event> writeBundle(Run& run, const Options& o, const std::vector<Ind
         off += e.size;
     }
 
-    const std::string tmp = base + ".evio.tmp";
+    const std::string tmp = base + ".dat.tmp";
     const int fd = openTmp(tmp);
     if (::ftruncate(fd, static_cast<off_t>(off)) != 0)
         throw Failure("ftruncate " + tmp + ": " + std::strerror(errno));
@@ -483,10 +483,10 @@ std::vector<Event> writeBundle(Run& run, const Options& o, const std::vector<Ind
         throw Failure("fsync " + tmp + ": " + std::strerror(errno));
     const std::string sha = fileSha256(tmp);
     writeTextFile(base + ".idx", idx.str());
-    commitFile(fd, tmp, base + ".evio");
+    commitFile(fd, tmp, base + ".dat");
 
     std::ostringstream m;
-    m << sha << "  " << fs::path(base + ".evio").filename().string() << "  " << W << ' ' << o.interval << ' '
+    m << sha << "  " << fs::path(base + ".dat").filename().string() << "  " << W << ' ' << o.interval << ' '
       << evs.size() << ' ' << off << ' ' << evs.front().evtNum << ' ' << evs.back().evtNum;
     appendLine(manifest, m.str());
     *bytes = off;
@@ -684,7 +684,7 @@ int runLive(const Options& o) {
         lateEvents += evs.size();
         logErr("writer slot " + std::to_string(s) + ": " + std::to_string(evs.size()) +
                " events committed after the reader passed their seconds, written to " +
-               fs::path(base + ".evio").filename().string());
+               fs::path(base + ".dat").filename().string());
     };
     remover.startAt(W);
     remover.verbose = o.verbose;
@@ -767,7 +767,7 @@ int runLive(const Options& o) {
                 events += w.events;
                 bytes += w.bytes;
                 std::ostringstream m;
-                m << std::fixed << std::setprecision(2) << "wrote " << o.cont << "_" << W << ".evio: " << w.events
+                m << std::fixed << std::setprecision(2) << "wrote " << o.cont << "_" << W << ".dat: " << w.events
                   << " events, " << w.bytes / 1048576.0 << " MiB in " << steadySec() - t0 << " s";
                 logOut(m.str());
             }

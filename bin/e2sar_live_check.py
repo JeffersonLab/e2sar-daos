@@ -6,7 +6,7 @@ frames of the EVIO file that e2sar_evio_send sent.
   e2sar_live_check.py DIR RUN --digests FILE [--expected N]
 
   DIR        the reader's -o directory
-  RUN        the run (container label): files are DIR/<RUN>_<W>.evio, .idx, _manifest.txt
+  RUN        the run (container label): files are DIR/<RUN>_<W>.dat, .idx, _manifest.txt
   --digests  e2sar_evio_send --digests output: '<i> <sha256>' per distinct event i (with -f 1:
              per frame of the file)
   --expected events the sender sent (its "Sent:" line); default: don't check the count
@@ -49,7 +49,7 @@ def main():
         if len(data) != size or hashlib.sha256(data).hexdigest() != sha:
             print(f"{name}: size or SHA-256 differs from the manifest")
             bad += 1
-        for row in open(f"{a.dir}/{name[:-len('.evio')]}.idx"):
+        for row in open(f"{a.dir}/{name.rsplit('.', 1)[0]}.idx"):
             evt, data_id, off, n = map(int, row.split())
             if (evt, data_id) in seen:
                 dup += 1

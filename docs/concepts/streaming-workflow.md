@@ -26,11 +26,13 @@ While the run goes on:
 
 - Each receiver batches small events and writes them asynchronously. A batch becomes visible when its index entry is written.
 - Each receiver writes a watermark once a second. Second T is complete when every receiver's watermark is past T.
-- The reader checks the container every second and writes one file `DIR/<run>_<W>.evio` per `--interval` window (default 5 s), its events glued back to back in `(evtNum, dataId)` order, about 1–3 s after the window ends. With `--live-rm` it removes objects from DAOS once they are `--rm-after` intervals (default 10) behind the last file written.
+- The reader checks the container every second and writes one file `DIR/<run>_<W>.dat` per `--interval` window (default 5 s), its events glued back to back in `(evtNum, dataId)` order (bare EVIO records for EVIO senders, no file header), about 1–3 s after the window ends. With `--live-rm` it removes objects from DAOS once they are `--rm-after` intervals (default 10) behind the last file written.
 
 Waiting for a sender that starts at an unknown time: `scripts/e2sar_live_pipeline.sh watch` replaces a run that got no events for an hour with a fresh one ([live-monitoring](../howto/live-monitoring.md#waiting-for-a-sender)).
 
 At the end: stop the senders, then the receivers (Ctrl-C), then the NIC monitors (`e2sar_nicmon.sh stop DIR`, then `report DIR` for the drops and the seconds in which packets didn't reach UDP). Each receiver writes its final statistics (`done/<slot>`). The reader sees that in the container, writes the last bundles and exits once every receiver is done and no new one has appeared for `--end-wait` seconds.
+
+**To EVIO, at JLab.** The `--live` files are `.dat`: EVIO v6 records back to back, without the EVIO file header, so they are not EVIO files yet. [`scripts/evio/evio_concat.py`](../../scripts/evio/evio_concat.py) adds the 14-word file header (with the record count) and sets the last-record bit on the last record only; only its output is named `.evio`. For a whole run, in manifest order: `cd DIR && scripts/evio/evio_concat.py <run>.evio $(awk '{print $2}' <run>_manifest.txt)`; for one bundle, `evio_concat.py <run>_<W>.evio <run>_<W>.dat`. evio-interactive-view opens files under 2 GiB, so split a long run with its `evio_split.py`.
 
 ### What the reader guarantees
 
@@ -39,7 +41,7 @@ At the end: stop the senders, then the receivers (Ctrl-C), then the NIC monitors
 | Complete windows | A bundle is written only after every receiver has committed everything for each second of its window |
 | Order | Strict within a bundle. Across bundles close to event-number order; events that come out late are counted |
 | Restart | The manifest's last bundle is the restart point. A bundle's content depends only on DAOS, so a rerun writes identical files |
-| File transfers (`e2sar_ft`) | With `--offline` (after the transfer): one file per `(evtNum, dataId)`, byte for byte the sent file, with its SHA-256 printed; the run stays in DAOS until `--delete`. A file with any lost packet is dropped by E2SAR and only appears in `<run>_missing.txt` |
+| File transfers (`e2sar_ft`) | With `--offline` (after the transfer): one `.evio` file per `(evtNum, dataId)`, byte for byte the sent file (header included), with its SHA-256 printed; the run stays in DAOS until `--delete`. A file with any lost packet is dropped by E2SAR and only appears in `<run>_missing.txt` |
 | Lost events | Gaps per `dataId` go to `<run>_missing.txt`. A receiver that dies is reported, and the reader continues without it after a timeout |
 
 ## Monitoring
@@ -49,8 +51,8 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 | | DAOS monitor | EVIO live viewer |
 |---|---|---|
 | Shows | The container: events coming in, events leaving DAOS, event numbers missing per `dataId` | The data: the newest bundle the reader wrote, decoded (hits per channel × time in frame, per-crate maps, rates) |
-| Reads | The catalog and the index of the container, read-only | `-o DIR` of `e2sar_daos_read --live`/`--live-rm`: the newest `<run>_<W>.evio` and its `.idx` |
-| Programs | [`e2sar_daos_monitor`](../reference/e2sar_daos_monitor.md) (C++) writes a JSON line per 2 s; [`viz/daos_monitor/serve.py`](../../viz/daos_monitor/serve.py) serves the page | `serve.py --live DIR` of [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (branch `sc26-live-viz`) |
+| Reads | The catalog and the index of the container, read-only | `-o DIR` of `e2sar_daos_read --live`/`--live-rm`: the newest `<run>_<W>.dat` and its `.idx` (its Live tab still matches `<run>_<W>.evio`, to be changed in the viewer) |
+| Programs | [`e2sar_daos_monitor`](../reference/e2sar_daos_monitor.md) (C++) writes a JSON line per 2 s; [`viz/daos_monitor/serve.py`](../../viz/daos_monitor/serve.py) serves the page | `serve.py --live DIR` of [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (`main`) |
 | Runs on | A DAOS client with access to the pool. The reader node is the natural place; not a receiver node, whose cores go to reassembly | The reader node, where the bundles are (or any node that mounts `-o DIR`) |
 | Port | 8766 | 8765 |
 | Load on the run | One read of each 32-byte index entry, one `seconds` listing per 2 s (estimated, not yet measured on DAOS) | None on DAOS. Reads at most the sample (default 32 MiB) of each bundle from the page cache |
