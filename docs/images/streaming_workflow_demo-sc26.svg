@@ -46,7 +46,7 @@
   <!-- reader -->
   <rect x="735" y="205" width="220" height="56" rx="8" fill="#ffebe9" stroke="#cf222e"/>
   <text x="845" y="228" text-anchor="middle" font-weight="bold">e2sar_daos_read --live</text>
-  <text x="845" y="247" text-anchor="middle" font-size="12">one .dat per --interval s, in order</text>
+  <text x="845" y="247" text-anchor="middle" font-size="12">one file per --interval s, in order</text>
   <line x1="845" y1="159" x2="845" y2="203" stroke="#57606a" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <!-- monitors (optional, read-only) -->
@@ -60,13 +60,7 @@
   <text x="845" y="323" text-anchor="middle" font-weight="bold">EVIO viewer: serve.py --live</text>
   <text x="845" y="341" text-anchor="middle" font-size="12">newest bundle, sampled :8765</text>
   <line x1="845" y1="261" x2="845" y2="298" stroke="#57606a" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
-  <text x="852" y="285" font-size="12" fill="#57606a">.dat in -o DIR</text>
-
-  <!-- to EVIO: the only step that writes .evio -->
-  <rect x="470" y="325" width="220" height="48" rx="8" fill="#f6f8fa" stroke="#57606a"/>
-  <text x="580" y="345" text-anchor="middle" font-weight="bold" font-size="12">scripts/evio/evio_concat.py</text>
-  <text x="580" y="363" text-anchor="middle" font-size="12">adds the EVIO file header → .evio</text>
-  <path d="M735,255 C722,255 722,349 692,349" fill="none" stroke="#57606a" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="852" y="285" font-size="12" fill="#57606a">files in -o DIR</text>
 
   <!-- booth laptop -->
   <text x="20" y="262" font-weight="bold" fill="#57606a">SC26 booth</text>
