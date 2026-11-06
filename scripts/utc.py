@@ -6,7 +6,7 @@ utc.py: turn the UTC epoch times found in e2sar-daos names, ids and logs into da
   scripts/utc.py 1793821780.606                   # log timestamps: seconds with a fraction
   scripts/utc.py 1793813535565250                 # ms, µs (LB predictedeventnum) or ns, by digit count
   scripts/utc.py e2sar_lb675_1793817098           # a run (container) name
-  scripts/utc.py e2sar_lb675_1793817098_1793818185.evio        # a --live bundle: run start and window
+  scripts/utc.py e2sar_lb675_1793817098_1793818185.dat         # a --live bundle: run start and window
   scripts/utc.py 937030334908727296.400011793820836            # a DAOS object id: kind, slot, second
   tail -3 recv.log | scripts/utc.py               # no arguments: read lines, add the date after each time
   scripts/utc.py --local 1793817098               # local time too
