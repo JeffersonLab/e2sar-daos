@@ -89,14 +89,14 @@ One JSON object per line. `type` is `tick`, or `end` once.
 | `strip` | `span` event numbers shown per `dataId`, `bins`, `width` = event numbers per bin |
 | `streams[]` | Per `dataId`: `id`, `events`, `bytes`, `d_events`, `first`, `max`, `gaps` (open), `gaps_total` (cumulative), `restarts`, `pending`, `late`, `dups`, `strip_lo` (first event number of the strip) and `strip` |
 
-`strip` is the state of event numbers `strip_lo … strip_lo + span − 1` in `bins` bins, run-length encoded, e.g. `o420d176g1d3` = 420 bins left DAOS, 176 in DAOS, 1 gap, 3 in DAOS. A bin shows the most important state among its event numbers, in this order:
+`strip` is the state of event numbers `strip_lo … strip_lo + span − 1` in `bins` bins, run-length encoded, e.g. `o420d176g1d3` = 420 bins left DAOS, 176 in DAOS, 1 gap, 3 in DAOS. A bin shows the first of these states that any of its event numbers has, so a bin with any stored event is `d` or `o`, and `g` or `p` only when none of its events is stored:
 
 | Letter | State |
 |---|---|
-| `g` | Gap: at least one event number of the bin (`m` in files from before 2026-11-09) |
-| `p` | Pending |
 | `d` | In DAOS |
 | `o` | Left DAOS |
+| `g` | Gap (`m` in files from before 2026-11-09, which ranked gaps first: one absent number marked its bin) |
+| `p` | Pending |
 | `u` | Not seen: not committed yet, or before the first event the monitor saw |
 
 A line with 18 `dataId`s is about 4 KB, or about 7 MB per hour at one line per 2 s.
@@ -109,8 +109,8 @@ Standard library only (Python ≥ 3.8). It reads the JSON lines file as it grows
 
 | Part | Shows |
 |---|---|
-| Tiles | Incoming and outgoing Events/s and Gbps, data in DAOS, *Missing* (lost by the receivers: reassembly, enqueue, failed), *Event number gaps so far* (with still open, arrived late, pending, duplicates) |
-| Event numbers per `dataId` | One row per `dataId`, the newest number at the right: in DAOS (blue), left DAOS (aqua), gap (orange, full height, marked ▲), pending (yellow), not seen (gray). Each row ends with that `dataId`'s gap count so far and Events/s; hover for the event range of a bin |
+| Tiles | Incoming and outgoing Events/s and Gbps, data in DAOS, *Missing* (lost by the receivers: reassembly, enqueue, failed). Event number gaps aren't shown: with a clock-based event number a sender skips numbers by design (LB 682: ~27% of 65.536 µs frame numbers); they stay in the JSON lines (`gaps`) and the log line |
+| Event numbers per `dataId` | One row per `dataId`, the newest number at the right: in DAOS (blue), left DAOS (aqua), not seen (gray, also bins whose numbers are all absent). Each row ends with that `dataId`'s Events/s; hover for the event range of a bin |
 | Events/s | The last 5 minutes before the frame shown. Incoming: over the last 3 updates (~6 s). Outgoing: events per second of data removed, over the last 5 updates. A plain per-update rate would flicker: the reader removes one `--interval` window at a time, at times that jitter against the monitor's 2 s looks, so a look can catch 0 or 2 windows (seen in the first real run, between 0 and 125k Events/s). A red ▲ on the time axis marks an update in which the receivers lost events (in older files: event numbers went into gaps); hover for how many and the total so far. Loss counts share no axis with Events/s, so they are marks, not a line |
 | Data in DAOS | GiB committed and not yet removed, mean of the last 3 updates, the last 5 minutes |
 | Writers | Each slot's watermark and lag (*behind* if more than 5 s), and the events it lost: reassembly / enqueue / failed |

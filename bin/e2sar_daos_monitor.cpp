@@ -108,7 +108,9 @@ struct Options {
 // ------------------------------------------------------------------ per-dataId state
 
 enum : char { kUnknown = 'u', kOut = 'o', kIn = 'd', kPending = 'p', kGap = 'g' };
-int rank(char c) { return c == kGap ? 4 : c == kPending ? 3 : c == kIn ? 2 : c == kOut ? 1 : 0; }
+// A bin with any stored event shows it: with a sender that skips event numbers (a clock-based
+// number) nearly every bin has an absent number, and a gap would hide the bin's events.
+int rank(char c) { return c == kIn ? 4 : c == kOut ? 3 : c == kGap ? 2 : c == kPending ? 1 : 0; }
 
 struct Stream {
     explicit Stream(uint64_t restartGap) : gaps(restartGap) {}
@@ -176,10 +178,10 @@ struct Stream {
 
     /**
         The state of event numbers [lo, lo + bins × width) in `bins` bins of `width`, one
-        character per bin, run-length encoded ("d120o30g2p10"): g = gap, p = pending,
-        d = in DAOS, o = left DAOS, u = unknown (not committed yet, before the first event the
-        monitor saw, or removed before the monitor started). A bin shows its most
-        important state, in that order, so one absent event number marks its bin.
+        character per bin, run-length encoded ("d120o30g2p10"): d = in DAOS, o = left DAOS,
+        g = gap, p = pending, u = unknown (not committed yet, before the first event the
+        monitor saw, or removed before the monitor started). A bin shows the first of these
+        that any of its event numbers has: g or p only when none of its events is stored.
     */
     std::string strip(uint64_t lo, uint64_t width, size_t bins, const std::set<uint64_t>& gone, double now,
                       double grace) const {
