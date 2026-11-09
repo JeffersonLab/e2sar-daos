@@ -171,7 +171,7 @@ EOF
     on "$READER" "$c" <<'EOF'
 source "$HOME/$ENV_FILE" 2>/dev/null
 D=$OUT/live_$1
-echo "[$H] reader $(pgrep -fc "[e]2sar_daos_read .*--cont $1( |\$)" || true), monitor $(pgrep -fc "[e]2sar_daos_monitor .*--cont $1( |\$)" || true), pages $(pgrep -fc "[s]erve.py .*$1" || true); files: $(ls "$D"/*.evio 2>/dev/null | wc -l) in $D"
+echo "[$H] reader $(pgrep -fc "[e]2sar_daos_read .*--cont $1( |\$)" || true), monitor $(pgrep -fc "[e]2sar_daos_monitor .*--cont $1( |\$)" || true), pages $(pgrep -fc "[s]erve.py .*$1" || true); files: $(ls "$D"/*.dat 2>/dev/null | wc -l) in $D"
 tail -1 "$L/monitor.log" 2>/dev/null | grep -oE 'in DAOS [0-9]+ events.*' | sed "s/^/[$H] monitor: /"
 "$E2SAR_BIN/lbadm" --status 2>&1 | grep -E 'Registered senders' | sed "s/^/[LB] /"
 "$E2SAR_BIN/lbadm" --status 2>&1 | grep -oE 'name=[^,]+|slotsassigned=[0-9]+|totalEventsRecv=[0-9]+' | paste - - - | sed "s/^/[LB] /"
@@ -189,7 +189,7 @@ n=$(grep -oE ' in [0-9]+ evts' "$L/recv_$H.log" | tail -1 | grep -oE '[0-9]+')
 echo "${n:-unknown}"
 EOF
 read -r -d '' FILES_SNIP <<'EOF'
-ls "$OUT/live_$1"/*.evio 2>/dev/null | wc -l | tr -d ' '
+ls "$OUT/live_$1"/*.dat 2>/dev/null | wc -l | tr -d ' '
 EOF
 read -r -d '' COMMITTED_SNIP <<'EOF'
 n=$(grep -oE 'Events committed: +[0-9]+' "$L/$1/recv_$H.log" | grep -oE '[0-9]+$')

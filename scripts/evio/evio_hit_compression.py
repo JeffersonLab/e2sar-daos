@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """How far EVIO time frames of fADC250 hits compress, by method.
 
-Reads the first N records of an EVIO v6 file or an e2sar_daos_read --live
-bundle (bare records), pulls out the hit words, and prints the size ratio
+Reads the first N records of an EVIO v6 file or an e2sar_daos_read .dat
+file (bare records, no file header), pulls out the hit words, and prints the size ratio
 (raw EVIO bytes / compressed bytes) and single-thread speed of:
 general codecs on the raw bytes, per-frame compression, Parquet, and
 hit-aware columns (time step within a port bank, channel, charge, count).
@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 
 def read_hits(path, nrec):
     raw = np.memmap(path, dtype=np.uint8, mode='r')
-    # bare records (--live bundle) or a file with a 14-word file header first
+    # bare records (.dat) or a file with a 14-word file header first
     for skip in (0, 14):
         for dt in ('>u4', '<u4'):
             w = raw.view(dt)[skip:]

@@ -44,8 +44,8 @@ SRC=/scratch/$USER/live_$RUNC            # the reader's -o DIR
 REPLAY=/tmp/$USER-replay_$RUNC; mkdir -p $REPLAY
 I=5; SPEED=1                              # I: the run's --interval; SPEED: 2 = twice as fast
 awk '{print $2}' $SRC/${RUNC}_manifest.txt | while read f; do
-  cp $SRC/$f $SRC/${f%.evio}.idx $REPLAY/
-  ls -t $REPLAY/*.evio | tail -n +4 | while read o; do rm -f "$o" "${o%.evio}.idx"; done   # keep 3
+  cp $SRC/$f $SRC/${f%.dat}.idx $REPLAY/
+  ls -t $REPLAY/*.dat | tail -n +4 | while read o; do rm -f "$o" "${o%.dat}.idx"; done   # keep 3
   sleep $(awk "BEGIN{print $I/$SPEED}")
 done
 ```

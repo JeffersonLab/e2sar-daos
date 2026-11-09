@@ -45,7 +45,7 @@ It prints `writer slot 0 found` and waits for data.
 ./build/bin/e2sar_evio_send -u "$URI" --port-per-segmenter --mtu 9000 -P 4 -s 1 -n 250000 \
     -F ~/evio-data/frames_thread0_file0010.evio -r 0.15 --digests /scratch/$USER/digests_$RUNC
 ```
-It ends with `Sent: 1000000 events, … 0 errors`. Meanwhile the reader prints `wrote <RUNC>_<W>.evio: …` every 2 s, and the run's objects in DAOS stay few, since `--live-rm` removes what it has read (`daos container list-objects sc26 $RUNC | wc -l` on any node).
+It ends with `Sent: 1000000 events, … 0 errors`. Meanwhile the reader prints `wrote <RUNC>_<W>.dat: …` every 2 s, and the run's objects in DAOS stay few, since `--live-rm` removes what it has read (`daos container list-objects sc26 $RUNC | wc -l` on any node).
 
 **4. Stop the writer.** About 15 s after `Sent:` (the reassembly timeout is 10 s), Ctrl-C on ebpf2203. It prints `Events committed: 1000000` and writes `done/0`. The reader then writes its last file, waits `--end-wait` 5 s for another writer, and ends:
 ```
