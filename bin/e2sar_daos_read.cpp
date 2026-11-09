@@ -275,8 +275,10 @@ std::string eventName(const std::string& run, uint64_t evtNum, uint16_t dataId) 
     return run + "_" + std::to_string(evtNum) + "_" + std::to_string(dataId) + ".evio";
 }
 
-// Event number gaps per dataId. Events come in order within a call; an event lower than
-// one already seen is late: it fills its gap if it was missing, or else is a duplicate. A jump
+// Event number gaps per dataId, for <run>_gaps.txt. A gap is only a hint of loss: a sender
+// need not number its events one after another (receiverLosses() has what the receivers lost).
+// Events come in order within a call; an event lower than one already seen is late: it fills
+// its gap if it was in one, or else is a duplicate. A jump
 // of more than restartGap numbers is a sender restart, not a gap (event_gaps.hpp).
 class GapTracker {
 public:
@@ -306,7 +308,7 @@ public:
                     o << id << ' ' << first << ' ' << gap.last << ' ' << gap.last - first + 1 << '\n';
         return o.str();
     }
-    uint64_t missing() const {
+    uint64_t open() const {
         uint64_t n = 0;
         for (const auto& [id, g] : byId_)
             n += g.open();
@@ -326,6 +328,28 @@ private:
     std::map<uint16_t, EventGaps> byId_;
     uint64_t late_ = 0, dups_ = 0;
 };
+
+// "receivers lost N (reassembly a, enqueue b, failed c)": the writers' loss counters from
+// their watermarks in the catalog.
+std::string receiverLosses(Catalog& cat) {
+    L::Losses l;
+    size_t unknown = 0;
+    for (uint32_t s : cat.slots()) {
+        const auto wm = cat.watermark(s);
+        if (wm && wm->losses) {
+            l.reassembly += wm->losses->reassembly;
+            l.enqueue += wm->losses->enqueue;
+            l.failed += wm->losses->failed;
+        } else {
+            unknown++;
+        }
+    }
+    std::string t = "receivers lost " + std::to_string(l.total()) + " (reassembly " + std::to_string(l.reassembly) +
+                    ", enqueue " + std::to_string(l.enqueue) + ", failed " + std::to_string(l.failed) + ")";
+    if (unknown)
+        t += ", " + std::to_string(unknown) + " writers without counts";
+    return t;
+}
 
 // ------------------------------------------------------------------ the run
 
@@ -494,7 +518,7 @@ LiveWindow writeWindow(Run& run, const Options& o, uint64_t W, GapTracker& gaps)
     if (evs.empty())
         return res;
     gaps.add(evs);
-    writeTextFile(o.dir + "/" + o.cont + "_missing.txt", gaps.text());
+    writeTextFile(o.dir + "/" + o.cont + "_gaps.txt", gaps.text());
     res.events = evs.size();
     res.written = true;
     return res;
@@ -665,7 +689,7 @@ int runLive(const Options& o) {
         uint64_t nbytes = 0;
         const auto evs = writeBundle(run, o, late, base, first, o.dir + "/" + o.cont + "_late_manifest.txt", &nbytes);
         gaps.add(evs);
-        writeTextFile(o.dir + "/" + o.cont + "_missing.txt", gaps.text());
+        writeTextFile(o.dir + "/" + o.cont + "_gaps.txt", gaps.text());
         lateFiles++;
         lateEvents += evs.size();
         logErr("writer slot " + std::to_string(s) + ": " + std::to_string(evs.size()) +
@@ -797,8 +821,9 @@ int runLive(const Options& o) {
 
     std::ostringstream m;
     m << std::fixed << std::setprecision(2) << (running ? "end of run: " : "stopped: ") << files << " files, "
-      << events << " events, " << bytes / 1048576.0 << " MiB; " << gaps.missing() << " missing, " << gaps.late()
-      << " late, " << gaps.duplicates() << " duplicate event numbers";
+      << events << " events, " << bytes / 1048576.0 << " MiB; " << receiverLosses(*run.catalog) << "; "
+      << gaps.open() << " in event number gaps (" << o.cont << "_gaps.txt), " << gaps.late() << " late, "
+      << gaps.duplicates() << " duplicate event numbers";
     if (gaps.restarts())
         m << "; " << gaps.restarts() << " sender restarts (event numbers jumped more than --restart-gap)";
     if (lateFiles)
@@ -946,11 +971,12 @@ int runOffline(const Options& o) {
 
     std::sort(all.begin(), all.end(), byEvent);
     gaps.add(all);
-    writeTextFile(o.dir + "/" + o.cont + "_missing.txt", gaps.text());
+    writeTextFile(o.dir + "/" + o.cont + "_gaps.txt", gaps.text());
 
     std::ostringstream m;
     m << std::fixed << std::setprecision(2) << files << " files, " << bytes / 1048576.0 << " MiB written to "
-      << o.dir << "; " << gaps.missing() << " missing event numbers (" << o.cont << "_missing.txt), " << dups
+      << o.dir << "; " << receiverLosses(*run.catalog) << "; " << gaps.open() << " in event number gaps ("
+      << o.cont << "_gaps.txt), " << dups
       << " duplicates, " << errors << " errors";
     logErr(m.str());
 
@@ -1093,7 +1119,7 @@ int main(int argc, char** argv) {
     opts("verbose", po::bool_switch(&o.verbose), "log the data arrays each window reads and each removal (--live, --live-rm)");
     opts("min-free", po::value<double>(&o.minFreeGiB)->default_value(5), "GiB that must stay free in -o DIR: below it the reader pauses until there is room (--live, --live-rm; 0: off)");
     opts("restart-gap", po::value<uint64_t>(&o.restartGap)->default_value(EventGaps::kDefaultRestartGap),
-         "a jump of more than this many event numbers is a sender restart, not a gap (missing counts)");
+         "a jump of more than this many event numbers is a sender restart, not a gap (<run>_gaps.txt)");
     opts("event", po::value<uint64_t>(&eventNum), "only this event number (--offline, --fetch, --list)");
     opts("dataid", po::value<unsigned>(&dataIdOpt), "only this dataId (--offline, --fetch, --list)");
     opts("inflight", po::value<size_t>(&o.inflight)->default_value(32), "DAOS reads in flight");

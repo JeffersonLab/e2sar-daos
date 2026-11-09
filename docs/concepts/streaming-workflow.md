@@ -51,7 +51,7 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 | | DAOS monitor | EVIO live viewer |
 |---|---|---|
 | Shows | The container: events coming in, events leaving DAOS, event numbers missing per `dataId` | The data: the newest bundle the reader wrote, decoded (hits per channel × time in frame, per-crate maps, rates) |
-| Reads | The catalog and the index of the container, read-only | `-o DIR` of `e2sar_daos_read --live`/`--live-rm`: the newest `<run>_<W>.dat` and its `.idx` (its Live tab still matches `<run>_<W>.evio`, to be changed in the viewer) |
+| Reads | The catalog and the index of the container, read-only | `-o DIR` of `e2sar_daos_read --live`/`--live-rm`: the newest `<run>_<W>.dat` and its `.idx` |
 | Programs | [`e2sar_daos_monitor`](../reference/e2sar_daos_monitor.md) (C++) writes a JSON line per 2 s; [`viz/daos_monitor/serve.py`](../../viz/daos_monitor/serve.py) serves the page | `serve.py --live DIR` of [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (`main`) |
 | Runs on | A DAOS client with access to the pool. The reader node is the natural place; not a receiver node, whose cores go to reassembly | The reader node, where the bundles are (or any node that mounts `-o DIR`) |
 | Port | 8766 | 8765 |

@@ -22,7 +22,7 @@ pool sc26
     │     run         start=1793280000 chunk=1048576 oclass=SX index_oclass=S8 batch_threshold=0.9
     │     writer/0    started=1793280000
     │     writer/1    started=1793280001
-    │     wm/0        index=1793280042 data=1793280041          (updated once a second)
+    │     wm/0        index=1793280042 data=1793280041 …        (updated once a second)
     │     wm/1        index=1793280042 data=1793280042
     │     done/0      committed=… failed=… lost=…               (when writer 0 stops)
     ├── seconds                                    integer keys: which seconds have index entries
@@ -97,7 +97,7 @@ A KV object with string keys. Values are records of `key=value` pairs separated 
 |---|---|---|
 | `run` | `start=<UTC s> chunk=<bytes> oclass=<data class> index_oclass=<class> batch_threshold=<θ>` | By the first receiver, with a conditional insert (`putIfAbsent`). Later receivers read it and check that their settings match |
 | `writer/<slot>` | `started=<UTC s>` | When a receiver starts: it claims the first free slot 0, 1, 2, … with `putIfAbsent` |
-| `wm/<slot>` | `index=<S> data=<S'>` | Once a second by each receiver: its watermarks, below |
+| `wm/<slot>` | `index=<S> data=<S'> reassembly_loss=<n> enqueue_loss=<n> failed=<n>` | Once a second by each receiver: its watermarks (below) and the events it lost so far. Receivers built before 2026-11-09 write only `index` and `data` |
 | `done/<slot>` | final statistics (`committed= failed= lost= batches= …`) | When the receiver stops. Marks the slot as finished |
 
 A receiver prints its slot in its own log ("writer slot 1"), so a slot can be matched to a machine when debugging.
@@ -106,6 +106,7 @@ A receiver prints its slot in its own log ("writer slot 1"), so a slot can be ma
 
 - `index=S`: every index write this receiver started before second S has completed. No new entry can appear in `index[T]` for T < S, because its clock is already past T.
 - `data=S'`: every batch this receiver opened before second S' (so every batch in `data[T, s]` with T < S') is committed: its data write and its index write have both completed. Used by readers that remove data from DAOS, to know when `data[T, s]` can go.
+- `reassembly_loss`, `enqueue_loss`, `failed`: events this receiver lost so far. In reassembly, E2SAR dropped an event whose packets didn't all arrive within `--timeout`. In enqueue, E2SAR's event queue was full. Failed, the DAOS write of the event's batch failed. `e2sar_daos_monitor` sums them over the slots as *missing* ([e2sar_daos_monitor](../reference/e2sar_daos_monitor.md#what-it-counts)). An event of which no packet reached the receiver is in none of them.
 
 **A second T is complete** when every claimed slot has `index > T` or a `done/<slot>` entry. The reader reads `index[T]` only after that, so it never misses an entry that is still being written. If a slot's watermark hasn't changed for `--stall` seconds (default 30, measured on the reader's clock as time since it last saw the value change; receiver killed), the reader warns and continues without that slot. If the slot's watermark moves again later, the reader reads those seconds again for that slot and writes what it adds there to a separate late file ([e2sar_daos_read](../reference/e2sar_daos_read.md#--live-and---live-rm-one-file-per---interval-seconds)).
 
@@ -191,7 +192,7 @@ A receiver writes `seconds[T]` the first time it puts an index entry into `index
    The index write is started by the thread after it polls its event queue, not from inside the completion callback.
 4. **Back-pressure.** If every in-flight slot or every batch buffer is busy, the thread polls its event queue until one frees up. The Reassembler's queue absorbs short delays ("Lost in enqueue" counts what it can't).
 5. **Failures.** If a data write fails, no index entry is written: the batch's events count as failed and are never visible. A failed write is retried once before that.
-6. **Once a second,** the stats thread writes `wm/<slot>` from the dequeue threads' oldest pending index write (`index`) and oldest batch not yet committed (`data`).
+6. **Once a second,** the stats thread writes `wm/<slot>` from the dequeue threads' oldest pending index write (`index`) and oldest batch not yet committed (`data`), with the Reassembler's loss counters and the failed events.
 7. **Stop.** Flush and drain every thread, write the final watermark and `done/<slot>`.
 
 The same event number is never written by two receivers: the LB picks the receiver from the event number alone, so all `dataId`s and segments of event N go to one receiver. A sender that reuses event numbers (for example after a restart) produces duplicates, which the readers report.

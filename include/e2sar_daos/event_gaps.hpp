@@ -1,7 +1,8 @@
 #pragma once
 /**
-    Event number gaps of one dataId, for the missing counts of e2sar_daos_monitor and
-    e2sar_daos_read.
+    Event number gaps of one dataId, for the gap counts of e2sar_daos_monitor and
+    e2sar_daos_read. A gap is only a hint of loss: a sender need not number its events one
+    after another. The receivers' own loss counters are in the catalog (layout::Losses).
 
     Events mostly come in order. A number above the highest seen opens a gap below it; a
     number inside a gap fills it (late); any other number already passed is a duplicate.

@@ -124,6 +124,18 @@ BOOST_AUTO_TEST_CASE(CatalogRecords) {
     BOOST_REQUIRE(w);
     BOOST_CHECK_EQUAL(w->index, 5ull);
     BOOST_CHECK_EQUAL(w->data, 4ull);
+    BOOST_CHECK(!w->losses);  // a receiver built before the loss counters
+
+    Watermark lw{7, 6, Losses{577, 2, 1}};
+    const std::string lrec = formatRecord(lw.toRecord());
+    BOOST_CHECK_EQUAL(lrec, "data=6 enqueue_loss=2 failed=1 index=7 reassembly_loss=577");
+    const auto l = Watermark::fromRecord(parseRecord(lrec));
+    BOOST_REQUIRE(l && l->losses);
+    BOOST_CHECK_EQUAL(l->losses->reassembly, 577ull);
+    BOOST_CHECK_EQUAL(l->losses->enqueue, 2ull);
+    BOOST_CHECK_EQUAL(l->losses->failed, 1ull);
+    BOOST_CHECK_EQUAL(l->losses->total(), 580ull);
+    BOOST_CHECK(!Watermark::fromRecord(parseRecord("index=7 data=6 reassembly_loss=1")));  // half a loss record
 }
 
 BOOST_AUTO_TEST_CASE(Chunks) {

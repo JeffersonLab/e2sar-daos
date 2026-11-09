@@ -9,15 +9,19 @@
       incoming   events newly committed: index entries not seen before
       outgoing   events that left DAOS: their index second was removed (e2sar_daos_read --live-rm)
       in DAOS    incoming - outgoing
-      missing    event numbers absent, per dataId, for more than --grace seconds while a
-                 higher number of that dataId is committed. Younger gaps are "pending"
-                 (another writer may still commit them). A gap filled later counts as late.
-                 Reported both as still open and as a cumulative total that never goes down.
-                 A jump of more than --restart-gap event numbers is a sender restart, not a
-                 gap: the numbers after it are tracked as a new segment (event_gaps.hpp).
+      missing    events the receivers lost, from their counters in the catalog (wm/<slot>):
+                 lost in reassembly, lost in enqueue, failed DAOS writes. Events of which
+                 no packet reached a receiver are not counted: nothing saw them
+      gaps       event numbers absent, per dataId, for more than --grace seconds while a
+                 higher number of that dataId is committed. Only a hint: a sender need not
+                 number its events one after another. Younger gaps are "pending" (another
+                 writer may still commit them). A gap filled later counts as late. Reported
+                 both as still open and as a cumulative total that never goes down. A jump
+                 of more than --restart-gap event numbers is a sender restart, not a gap:
+                 the numbers after it are tracked as a new segment (event_gaps.hpp).
 
     Each line also holds, per dataId, the state of its event numbers
-    (in DAOS / left DAOS / missing / pending) over its newest --span event numbers (default
+    (in DAOS / left DAOS / gap / pending) over its newest --span event numbers (default
     about 32 s of events), in --bins bins, run-length encoded: the dashboard draws them as a
     moving strip. Lines go to --out (appended), so a run can be replayed.
 
@@ -103,8 +107,8 @@ struct Options {
 
 // ------------------------------------------------------------------ per-dataId state
 
-enum : char { kUnknown = 'u', kOut = 'o', kIn = 'd', kPending = 'p', kMissing = 'm' };
-int rank(char c) { return c == kMissing ? 4 : c == kPending ? 3 : c == kIn ? 2 : c == kOut ? 1 : 0; }
+enum : char { kUnknown = 'u', kOut = 'o', kIn = 'd', kPending = 'p', kGap = 'g' };
+int rank(char c) { return c == kGap ? 4 : c == kPending ? 3 : c == kIn ? 2 : c == kOut ? 1 : 0; }
 
 struct Stream {
     explicit Stream(uint64_t restartGap) : gaps(restartGap) {}
@@ -172,10 +176,10 @@ struct Stream {
 
     /**
         The state of event numbers [lo, lo + bins × width) in `bins` bins of `width`, one
-        character per bin, run-length encoded ("d120o30m2p10"): m = missing, p = pending,
+        character per bin, run-length encoded ("d120o30g2p10"): g = gap, p = pending,
         d = in DAOS, o = left DAOS, u = unknown (not committed yet, before the first event the
         monitor saw, or removed before the monitor started). A bin shows its most
-        important state, in that order, so one missing event marks its bin.
+        important state, in that order, so one absent event number marks its bin.
     */
     std::string strip(uint64_t lo, uint64_t width, size_t bins, const std::set<uint64_t>& gone, double now,
                       double grace) const {
@@ -201,7 +205,7 @@ struct Stream {
             if (g != cur.begin())
                 --g;
             for (; g != cur.end() && g->first <= hi; ++g)
-                mark(g->first, g->second.last, now - g->second.since > grace ? kMissing : kPending);
+                mark(g->first, g->second.last, now - g->second.since > grace ? kGap : kPending);
         }
         std::string out;
         for (size_t i = 0; i < bins;) {
@@ -365,11 +369,23 @@ public:
         j << "{\"type\":\"tick\",\"tick\":" << tick_ << ",\"t\":" << now << ",\"dt\":" << dt
           << ",\"run\":" << jsonStr(o_.cont) << ",\"start\":" << settings_.start << ",\"grace\":" << o_.grace;
         j << ",\"writers\":[";
+        L::Losses lost;        // summed over the writers that report it
+        uint64_t noCounts = 0;  // writers without loss counters (built before 2026-11-09)
         bool first = true;
         for (const auto& [s, w] : writers_) {
             j << (first ? "" : ",") << "{\"slot\":" << s << ",\"done\":" << (w.done ? "true" : "false");
             if (w.wm)
                 j << ",\"wm_index\":" << w.wm->index << ",\"wm_data\":" << w.wm->data << ",\"lag\":" << now - w.wm->index;
+            if (w.wm && w.wm->losses) {
+                const auto& l = *w.wm->losses;
+                j << ",\"lost\":" << l.total() << ",\"reassembly_loss\":" << l.reassembly << ",\"enqueue_loss\":" << l.enqueue
+                  << ",\"failed\":" << l.failed;
+                lost.reassembly += l.reassembly;
+                lost.enqueue += l.enqueue;
+                lost.failed += l.failed;
+            } else {
+                noCounts++;
+            }
             j << ",\"events\":" << w.events << ",\"bytes\":" << w.bytes << "}";
             first = false;
         }
@@ -383,6 +399,8 @@ public:
         if (!listed.empty())
             j << ",\"first\":" << listed.front() << ",\"last\":" << listed.back();
         j << "}";
+        j << ",\"missing\":{\"total\":" << lost.total() << ",\"reassembly\":" << lost.reassembly << ",\"enqueue\":" << lost.enqueue
+          << ",\"failed\":" << lost.failed << ",\"writers_unknown\":" << noCounts << "}";
         uint64_t miss = 0, pend = 0, late = 0, dups = 0, total = 0, restarts = 0;
         // The strip's span: --span, or --strip-seconds of events at the fastest dataId's rate,
         // as a power of two × --bins. It only grows (the first update with data can be partly
@@ -417,7 +435,7 @@ public:
             restarts += st.gaps.restarts();
             j << (first ? "" : ",") << "{\"id\":" << id << ",\"events\":" << st.events << ",\"bytes\":" << st.bytes
               << ",\"d_events\":" << st.events - st.prevEvents << ",\"first\":" << st.first() << ",\"max\":" << top
-              << ",\"missing\":" << m << ",\"missing_total\":" << st.gaps.everMissing() << ",\"restarts\":" << st.gaps.restarts() << ",\"pending\":" << p << ",\"late\":" << st.late << ",\"dups\":" << st.dups
+              << ",\"gaps\":" << m << ",\"gaps_total\":" << st.gaps.everMissing() << ",\"restarts\":" << st.gaps.restarts() << ",\"pending\":" << p << ",\"late\":" << st.late << ",\"dups\":" << st.dups
               << ",\"strip_lo\":" << lo;
             if (span_)
                 j << ",\"strip\":\"" << st.strip(lo, width, o_.bins, gone_, now, o_.grace) << "\"";
@@ -426,16 +444,21 @@ public:
             first = false;
         }
         j << "]";
-        j << ",\"missing\":{\"total\":" << total << ",\"events\":" << miss << ",\"pending\":" << pend << ",\"late\":" << late
+        j << ",\"gaps\":{\"total\":" << total << ",\"events\":" << miss << ",\"pending\":" << pend << ",\"late\":" << late
           << ",\"dups\":" << dups << ",\"restarts\":" << restarts << "}}";
 
-        char line[320];
+        char line[400];
         std::snprintf(line, sizeof(line),
-                      "in %llu events (+%zu) | out %llu (+%llu) | in DAOS %llu events, %.1f MiB, %zu s | missing %llu so far (%llu open), pending %llu%s",
+                      "in %llu events (+%zu) | out %llu (+%llu) | in DAOS %llu events, %.1f MiB, %zu s | missing %llu "
+                      "(reassembly %llu, enqueue %llu, failed %llu)%s | gaps %llu so far (%llu open), pending %llu%s",
                       static_cast<unsigned long long>(inEvents_), evs.size(),
                       static_cast<unsigned long long>(outEvents_), static_cast<unsigned long long>(outEvents),
                       static_cast<unsigned long long>(inEvents_ - outEvents_),
-                      (inBytes_ - outBytes_) / 1048576.0, listed.size(), static_cast<unsigned long long>(total),
+                      (inBytes_ - outBytes_) / 1048576.0, listed.size(), static_cast<unsigned long long>(lost.total()),
+                      static_cast<unsigned long long>(lost.reassembly), static_cast<unsigned long long>(lost.enqueue),
+                      static_cast<unsigned long long>(lost.failed),
+                      noCounts ? (", " + std::to_string(noCounts) + " writers without counts").c_str() : "",
+                      static_cast<unsigned long long>(total),
                       static_cast<unsigned long long>(miss),
                       static_cast<unsigned long long>(pend),
                       restarts ? (" | sender restarts " + std::to_string(restarts)).c_str() : "");
@@ -476,7 +499,7 @@ int main(int argc, char** argv) {
     opts("span", po::value<uint64_t>(&o.span)->default_value(0), "event numbers per dataId in the strip (0: --strip-seconds of events at the measured rate)");
     opts("strip-seconds", po::value<double>(&o.stripSeconds)->default_value(32), "with --span 0: about this many seconds of events in the strip");
     opts("bins", po::value<size_t>(&o.bins)->default_value(600), "bins per strip");
-    opts("grace", po::value<double>(&o.grace)->default_value(5), "seconds an event number may be absent before it counts as missing");
+    opts("grace", po::value<double>(&o.grace)->default_value(5), "seconds an event number may be absent before it counts as a gap");
     opts("restart-gap", po::value<uint64_t>(&o.restartGap)->default_value(EventGaps::kDefaultRestartGap),
          "a jump of more than this many event numbers is a sender restart (a new segment), not a gap");
 

@@ -14,7 +14,8 @@
         most --max-write.
     A batch's bytes go into data[T_open, slot] (a DAOS byte array); when they are written,
     its batch table goes into index[T_commit] (the commit marker). Once a second the
-    receiver writes its watermarks to the catalog; at stop, its final statistics.
+    receiver writes its watermarks and losses so far to the catalog; at stop, its final
+    statistics.
 
     Ctrl-C (or SIGTERM) stops without dropping what is still coming: the receiver first
     deregisters from the load balancer, keeps storing events until none has arrived for
@@ -787,23 +788,31 @@ bool drain(Reassembler& reas, bool withCP, int quietMs, int maxSec) {
     return deregistered;
 }
 
-// Once a second: wm/<slot> = the oldest second each thread still has pending (or now).
-L::Watermark currentWatermark(const std::vector<std::unique_ptr<Pending>>& pending) {
+// Once a second: wm/<slot> = the oldest second each thread still has pending (or now), and
+// this receiver's losses so far (reas: null before it exists and with --synthetic).
+L::Watermark currentWatermark(const std::vector<std::unique_ptr<Pending>>& pending, Reassembler* reas) {
     const uint64_t now = utcSecond();  // read the clock first: see Pending
-    L::Watermark wm{now, now};
+    L::Watermark wm{now, now, L::Losses{}};
     for (const auto& p : pending)
         p->oldest(&wm.index, &wm.data);
+    if (reas) {
+        const auto rs = reas->getStats();
+        wm.losses->reassembly = rs.reassemblyLoss;
+        wm.losses->enqueue = rs.enqueueLoss;
+    }
+    wm.losses->failed = stats.eventsFailed;
     return wm;
 }
 
-void watermarkLoop(Catalog* catalog, uint32_t slot, const std::vector<std::unique_ptr<Pending>>* pending) {
+void watermarkLoop(Catalog* catalog, uint32_t slot, const std::vector<std::unique_ptr<Pending>>* pending,
+                   Reassembler* reas) {
     while (running) {
         for (int i = 0; i < 10 && running; i++)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (!running)
             break;
         try {
-            catalog->putWatermark(slot, currentWatermark(*pending));
+            catalog->putWatermark(slot, currentWatermark(*pending, reas));
         } catch (const DaosError& e) {
             logErr(std::string("unable to write the watermark: ") + e.what());
         }
@@ -1230,7 +1239,7 @@ int main(int argc, char** argv) {
             logOut("Large events:         written in pieces of <= " + std::to_string(maxWrite) + " bytes");
             logOut("Dequeue threads:      " + std::to_string(deqThreads) + " x " + std::to_string(inflight) +
                    " in flight, " + std::to_string(batchBuffers) + " batch buffers each");
-            catalog->putWatermark(slot, currentWatermark(pending));
+            catalog->putWatermark(slot, currentWatermark(pending, nullptr));
         }
 
         std::unique_ptr<Reassembler> reas;
@@ -1290,7 +1299,7 @@ int main(int argc, char** argv) {
         if (reportSec > 0)
             reporter = std::thread(reportLoop, reas.get(), reportSec, vm["log-idle"].as<bool>());
         if (catalog)
-            wmThread = std::thread(watermarkLoop, catalog.get(), cfg.slot, &pending);
+            wmThread = std::thread(watermarkLoop, catalog.get(), cfg.slot, &pending, reas.get());
 
         // Run until Ctrl-C, or until the dequeue threads end on their own (the last
         // synthetic event, or a fatal error).
@@ -1320,7 +1329,7 @@ int main(int argc, char** argv) {
         printTiming();
         if (catalog) {
             try {
-                catalog->putWatermark(cfg.slot, currentWatermark(pending));
+                catalog->putWatermark(cfg.slot, currentWatermark(pending, reas.get()));
                 catalog->putDone(cfg.slot, finalStatsRecord(reas.get()));
                 logOut("Final watermark and statistics written to the catalog as " + L::doneKey(cfg.slot));
             } catch (const DaosError& e) {  // the events are stored; only the end marker is missing

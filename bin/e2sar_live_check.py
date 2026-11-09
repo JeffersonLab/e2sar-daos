@@ -14,7 +14,8 @@ frames of the EVIO file that e2sar_evio_send sent.
 Checks every file in the manifest (its SHA-256 and size), then every event in its .idx:
 event number n of any dataId must be distinct event (n - 1) % E of the file, byte for byte,
 where E is the number of digest lines.
-Also reports duplicates, the events per dataId and the reader's _missing.txt.
+Also reports duplicates, the events per dataId and the event numbers in the reader's _gaps.txt
+(_missing.txt from a reader built before 2026-11-09).
 Exit status 0 if everything matches.
 """
 
@@ -62,15 +63,17 @@ def main():
                 if bad <= 5:
                     print(f"event {evt}/{data_id} in {name}: not frame {(evt - 1) % frames} of the file")
 
-    missing = 0
-    try:
-        for line in open(f"{a.dir}/{a.run}_missing.txt"):
-            missing += int(line.split()[3])
-    except FileNotFoundError:
-        pass
+    gaps = 0
+    for name in (f"{a.run}_gaps.txt", f"{a.run}_missing.txt"):
+        try:
+            for line in open(f"{a.dir}/{name}"):
+                gaps += int(line.split()[3])
+            break
+        except FileNotFoundError:
+            pass
 
     print(f"{files} files, {ok} events match their frame, {bad} bad, {dup} duplicates, "
-          f"{missing} missing (_missing.txt)")
+          f"{gaps} in event number gaps (_gaps.txt)")
     print("events per dataId: " + ", ".join(f"{k}: {v}" for k, v in sorted(per_id.items())))
     good = bad == 0 and dup == 0 and (a.expected is None or ok == a.expected)
     if a.expected is not None:

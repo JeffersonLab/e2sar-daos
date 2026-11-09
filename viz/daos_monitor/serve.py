@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Live dashboard for e2sar_daos_monitor: serves a web page that follows the monitor's JSON
-lines file (one line per --every seconds) and draws it as a movie: incoming, outgoing and
-missing events, what is in DAOS, and the event-number strip per dataId.
+lines file (one line per --every seconds) and draws it as a movie: incoming and outgoing
+events, events the receivers lost, what is in DAOS, event-number gaps, and the event-number
+strip per dataId.
 
   python3 viz/daos_monitor/serve.py MON.jsonl                # follow a running monitor
   python3 viz/daos_monitor/serve.py MON.jsonl --port 8766
@@ -115,6 +116,7 @@ def demo(path, every, backfill=0.0, n_streams=18, rate=15259, bins=600, rm_after
     lost = {i: [] for i in ids}  # (evt, when) of lost event numbers still in the strip
     lost_before = {i: 0 for i in ids}  # lost ones that scrolled out of the strip: still missing
     late_total = 0
+    lost_count = [0, 0]  # per writer: the receivers' reassembly loss (every lost event, at once)
     size = 20480
     tick = 0
     with open(path, "a") as f:
@@ -134,7 +136,9 @@ def demo(path, every, backfill=0.0, n_streams=18, rate=15259, bins=600, rm_after
             bytes_in += n * n_streams * size
             for i in ids:  # occasional lost events, more on one crate
                 for _ in range((rng.random() < 0.002) + (rng.randint(1, 4) if i == ids[7] and rng.random() < 0.02 else 0)):
-                    lost[i].append((rng.randint(new_lo, ev), now))
+                    e = rng.randint(new_lo, ev)
+                    lost[i].append((e, now))
+                    lost_count[e % 2] += 1
             # the reader: complete windows rm_after intervals behind are removed
             d_out = d_out_b = d_secs = 0
             for s in sorted(seconds):
@@ -163,7 +167,7 @@ def demo(path, every, backfill=0.0, n_streams=18, rate=15259, bins=600, rm_after
                 for e, w in lost[i]:
                     k = (e - lo) // width
                     old = now - w > 5
-                    b[k] = "m" if old else "p"
+                    b[k] = "g" if old else "p"
                     m += old
                     p += not old
                 miss_all += m
@@ -176,21 +180,23 @@ def demo(path, every, backfill=0.0, n_streams=18, rate=15259, bins=600, rm_after
                     enc += f"{b[k]}{j - k}"
                     k = j
                 streams.append({"id": i, "events": ev - m - p, "bytes": (ev - m - p) * size, "d_events": n, "first": 1,
-                                "max": ev, "missing": m, "missing_total": m, "pending": p, "late": 0, "dups": 0, "strip_lo": lo, "strip": enc})
+                                "max": ev, "gaps": m, "gaps_total": m, "pending": p, "late": 0, "dups": 0, "strip_lo": lo, "strip": enc})
             in_daos_secs = [s for s in seconds if s not in gone]
             line = {
                 "type": "tick", "tick": tick, "t": round(now, 3), "dt": every, "run": "demo_" + str(start), "start": start,
                 "grace": 5,
                 "writers": [{"slot": s, "done": False, "wm_index": sec - (s == 1 and int(now) % 60 < 6) * 3, "wm_data": sec - 1,
                              "lag": round(now - sec + (s == 1 and int(now) % 60 < 6) * 3, 3),
-                             "events": total_in // 2, "bytes": bytes_in // 2} for s in (0, 1)],
+                             "events": total_in // 2, "bytes": bytes_in // 2, "lost": lost_count[s],
+                             "reassembly_loss": lost_count[s], "enqueue_loss": 0, "failed": 0} for s in (0, 1)],
                 "in": {"events": total_in, "bytes": bytes_in, "d_events": n * n_streams, "d_bytes": n * n_streams * size},
                 "out": {"events": total_out, "bytes": bytes_out, "d_events": d_out, "d_bytes": d_out_b, "d_seconds": d_secs},
                 "daos": {"events": total_in - total_out, "bytes": bytes_in - bytes_out, "seconds": len(in_daos_secs),
                          "first": min(in_daos_secs, default=sec), "last": max(in_daos_secs, default=sec)},
                 "strip": {"span": span, "bins": bins, "width": width},
                 "streams": streams,
-                "missing": {"total": miss_all, "events": miss_all, "pending": pend_all, "late": late_total, "dups": 0},
+                "missing": {"total": sum(lost_count), "reassembly": sum(lost_count), "enqueue": 0, "failed": 0, "writers_unknown": 0},
+                "gaps": {"total": miss_all, "events": miss_all, "pending": pend_all, "late": late_total, "dups": 0, "restarts": 0},
             }
             f.write(json.dumps(line, separators=(",", ":")) + "\n")
             f.flush()

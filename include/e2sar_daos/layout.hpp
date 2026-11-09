@@ -239,15 +239,43 @@ struct RunSettings {
     }
 };
 
-/** `wm/<slot>`: every index write started before `index` and every batch opened before `data` is done. */
+/**
+    A writer's lost events so far: events the LB sent it that it got packets of but didn't
+    store. Events of which no packet arrived are invisible to it.
+*/
+struct Losses {
+    uint64_t reassembly = 0;  // E2SAR dropped an event with packets still missing at --timeout
+    uint64_t enqueue = 0;     // E2SAR's event queue was full
+    uint64_t failed = 0;      // the DAOS write failed
+
+    uint64_t total() const { return reassembly + enqueue + failed; }
+};
+
+/**
+    `wm/<slot>`: every index write started before `index` and every batch opened before `data`
+    is done, and the writer's losses so far (absent from receivers built before 2026-11-09).
+*/
 struct Watermark {
     uint64_t index = 0;
     uint64_t data = 0;
+    std::optional<Losses> losses;
 
-    Record toRecord() const { return {{"index", std::to_string(index)}, {"data", std::to_string(data)}}; }
+    Record toRecord() const {
+        Record r{{"index", std::to_string(index)}, {"data", std::to_string(data)}};
+        if (losses) {
+            r["reassembly_loss"] = std::to_string(losses->reassembly);
+            r["enqueue_loss"] = std::to_string(losses->enqueue);
+            r["failed"] = std::to_string(losses->failed);
+        }
+        return r;
+    }
     static std::optional<Watermark> fromRecord(const Record& r) {
         try {
-            return Watermark{std::stoull(r.at("index")), std::stoull(r.at("data"))};
+            Watermark wm{std::stoull(r.at("index")), std::stoull(r.at("data")), std::nullopt};
+            if (r.count("reassembly_loss"))
+                wm.losses = Losses{std::stoull(r.at("reassembly_loss")), std::stoull(r.at("enqueue_loss")),
+                                   std::stoull(r.at("failed"))};
+            return wm;
         } catch (const std::exception&) {
             return std::nullopt;
         }
