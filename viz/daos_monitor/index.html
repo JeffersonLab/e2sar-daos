@@ -231,10 +231,15 @@ function strip(f) {
     for (let i = 0; i < bins;) { let j = i; while (j < bins && b[j] === b[i]) j++;
       if (b[i] !== 'g') { g.fillStyle = cols[b[i]]; g.fillRect(L + i * bw, y + 2, (j - i) * bw, rowH - 4); }
       i = j; }
-    // gaps last, full height, with a ▲ above: shape as well as color
+    // gaps last: each run of gap bins is one block (at least 2 px wide, so a lone one shows) with
+    // one ▲ above its middle: shape as well as color, without a ▲ per bin in a row full of gaps
     g.fillStyle = cols.g;
-    for (let i = 0; i < bins; i++) if (b[i] === 'g') { const x = L + i * bw; g.fillRect(x, y - 1, Math.max(bw, 2), rowH + 2);
-      g.beginPath(); g.moveTo(x + bw / 2 - 3, y - 2); g.lineTo(x + bw / 2 + 3, y - 2); g.lineTo(x + bw / 2, y - 6); g.fill(); }
+    for (let i = 0; i < bins;) { if (b[i] !== 'g') { i++; continue; }
+      let j = i; while (j < bins && b[j] === 'g') j++;
+      const x = L + i * bw, w = Math.max((j - i) * bw, 2), c = x + w / 2;
+      g.fillRect(x, y + 2, w, rowH - 4);
+      g.beginPath(); g.moveTo(c - 3, y + 1); g.lineTo(c + 3, y + 1); g.lineTo(c, y - 4); g.fill();
+      i = j; }
     const mt = streamGaps(s); g.textAlign = 'right'; g.fillStyle = mt ? cols.g : fg3; g.fillText(fmt(mt), W - 80, y + rowH / 2);
     g.fillStyle = fg3; g.textAlign = 'right'; g.fillText(si(s.d_events / (f.dt || 2)), W - 4, y + rowH / 2);
   });
