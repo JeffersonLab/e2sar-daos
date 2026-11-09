@@ -30,6 +30,13 @@ text_files_test = executable('text_files_test', files('test_text_files.cpp'),
 
 test('TextFilesTests', text_files_test, suite: ['daos', 'unit'])
 
+# Event number gaps and sender restarts of event_gaps.hpp (header-only; no server)
+event_gaps_test = executable('event_gaps_test', files('test_event_gaps.cpp'),
+                                include_directories: project_include_dir,
+                                dependencies: [boost_dep])
+
+test('EventGapsTests', event_gaps_test, suite: ['daos', 'unit'])
+
 # Toy KV round-trip (5 x 0.5 MiB, SHA-256 verified) against a live DAOS system.
 # Not part of 'unit': it needs a DAOS server.
 # Pool/container come from -Ddaos_pool / -Ddaos_cont, exported as DAOS_POOL / DAOS_CONT.

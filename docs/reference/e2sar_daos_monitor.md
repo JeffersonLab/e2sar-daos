@@ -27,6 +27,7 @@ It reads only the container (the catalog, `seconds`, `index[T]`), never the data
 | In DAOS | Incoming − outgoing, in events and bytes, and the number of index seconds present |
 | Missing | Per `dataId`, event numbers absent for more than `--grace` seconds (5) while a higher number of that `dataId` is committed. Two counts: *so far* (cumulative: each number counted once, when it first goes missing; never goes down) and *still open* (drops when a late event fills its gap) |
 | Pending | Absent for less than `--grace`: another writer may still commit them |
+| Sender restarts | Per `dataId`, jumps of more than `--restart-gap` event numbers (1,000,000), up or down: a sender that restarted its numbering. The numbers after a jump are a new segment with its own gaps, not one huge gap, and not duplicates. Late events of an older segment still fill its gaps. The strip and `first`/`max` show the newest segment |
 | Late | Numbers that were absent and then arrived |
 | Duplicates | Numbers committed twice for one `dataId` |
 
@@ -66,6 +67,7 @@ python3 viz/daos_monitor/serve.py /scratch/$USER/<run>_monitor.jsonl          # 
 | `-o, --out` | `<cont>_monitor.jsonl` | JSON lines file, appended |
 | `--every` | 2 | Seconds between looks at the container |
 | `--grace` | 5 | Seconds an event number may be absent before it counts as missing |
+| `--restart-gap` | 1000000 | A jump of more than this many event numbers is a sender restart (a new segment), not a gap |
 | `--span` | 0 | Event numbers per `dataId` in the strip. 0: `--strip-seconds` of events at the fastest `dataId`'s rate, rounded up to a power of two × `--bins`; it only grows, so it settles after the first updates with data |
 | `--strip-seconds` | 32 | With `--span 0`: about this many seconds of events in the strip |
 | `--bins` | 600 | Bins per strip |
@@ -81,9 +83,9 @@ One JSON object per line. `type` is `tick`, or `end` once.
 | `writers[]` | `slot`, `done`, `wm_index`, `wm_data`, `lag` (now − `wm_index`, s), `events`, `bytes` committed by that slot |
 | `in`, `out` | `events`, `bytes` (run totals), `d_events`, `d_bytes` (since the previous line); `out.d_seconds`: index seconds removed since the previous line |
 | `daos` | `events`, `bytes` in DAOS, `seconds` present, `first`, `last` second |
-| `missing` | `total` (cumulative), `events` (still open), `pending`, `late`, `dups`, summed over the `dataId`s |
+| `missing` | `total` (cumulative), `events` (still open), `pending`, `late`, `dups`, `restarts`, summed over the `dataId`s |
 | `strip` | `span` event numbers shown per `dataId`, `bins`, `width` = event numbers per bin |
-| `streams[]` | Per `dataId`: `id`, `events`, `bytes`, `d_events`, `first`, `max`, `missing` (open), `missing_total` (cumulative), `pending`, `late`, `dups`, `strip_lo` (first event number of the strip) and `strip` |
+| `streams[]` | Per `dataId`: `id`, `events`, `bytes`, `d_events`, `first`, `max`, `missing` (open), `missing_total` (cumulative), `restarts`, `pending`, `late`, `dups`, `strip_lo` (first event number of the strip) and `strip` |
 
 `strip` is the state of event numbers `strip_lo … strip_lo + span − 1` in `bins` bins, run-length encoded, e.g. `o420d176m1d3` = 420 bins left DAOS, 176 in DAOS, 1 missing, 3 in DAOS. A bin shows the most important state among its event numbers, in this order:
 

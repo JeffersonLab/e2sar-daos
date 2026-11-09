@@ -55,6 +55,7 @@ e2sar_daos = library('e2sar-daos',
 
 install_headers(
     'include/e2sar_daos/daos_handles.hpp',
+    'include/e2sar_daos/event_gaps.hpp',
     'include/e2sar_daos/latency_histogram.hpp',
     'include/e2sar_daos/layout.hpp',
     'include/e2sar_daos/daos_objects.hpp',

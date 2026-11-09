@@ -13,7 +13,7 @@ On the receiver node (`192.168.1.20`), with DAOS:
 
 ```bash
 export EJFAT_URI='ejfat://useless@10.0.0.1:18347/lb/1?data=192.168.1.20&sync=192.168.1.20:19020'
-./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 --pool sc26 --cont-name run42
+./build/bin/e2sar_daos_recv --ip 192.168.1.20 --port 19522 -b 1073741824 --pool sc26 --cont-name run42
 ```
 
 On the sender node, using the same `EJFAT_URI`, send 100 events of 1 MiB at 5 Gbps with `e2sar_perf`:

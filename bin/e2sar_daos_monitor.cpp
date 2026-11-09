@@ -13,6 +13,8 @@
                  higher number of that dataId is committed. Younger gaps are "pending"
                  (another writer may still commit them). A gap filled later counts as late.
                  Reported both as still open and as a cumulative total that never goes down.
+                 A jump of more than --restart-gap event numbers is a sender restart, not a
+                 gap: the numbers after it are tracked as a new segment (event_gaps.hpp).
 
     Each line also holds, per dataId, the state of its event numbers
     (in DAOS / left DAOS / missing / pending) over its newest --span event numbers (default
@@ -48,6 +50,7 @@
 
 #include "e2sar_daos/catalog.hpp"
 #include "e2sar_daos/daos_handles.hpp"
+#include "e2sar_daos/event_gaps.hpp"
 #include "e2sar_daos/layout.hpp"
 #include "e2sar_daos/run_reader.hpp"
 #include "e2sar_daos/text_files.hpp"
@@ -94,53 +97,48 @@ struct Options {
     std::string pool, cont, out;
     double every = 2, grace = 5, stripSeconds = 32;
     uint64_t span = 0;  // event numbers per strip; 0 = from the rate (stripSeconds of events)
+    uint64_t restartGap = EventGaps::kDefaultRestartGap;
     size_t bins = 600;
 };
 
 // ------------------------------------------------------------------ per-dataId state
 
-struct Gap {
-    uint64_t last = 0;
-    double since = 0;      // when it opened (unix s)
-    bool counted = false;  // already added to the cumulative missing count
-};
-
-// Bin states, by priority: a bin shows the most important state among its event numbers.
 enum : char { kUnknown = 'u', kOut = 'o', kIn = 'd', kPending = 'p', kMissing = 'm' };
 int rank(char c) { return c == kMissing ? 4 : c == kPending ? 3 : c == kIn ? 2 : c == kOut ? 1 : 0; }
 
 struct Stream {
+    explicit Stream(uint64_t restartGap) : gaps(restartGap) {}
+
     uint64_t events = 0, bytes = 0, prevEvents = 0;
-    bool any = false;
-    uint64_t first = 0, max = 0;
-    std::map<uint64_t, Gap> gaps;  // first -> gap
-    // Committed event numbers near the top, as runs [start, end] with one commit second:
-    // start -> (end, second). Events mostly come in order, so a second is a few runs.
+    EventGaps gaps;  // segments of event numbers, with their gaps
+    // Committed event numbers of the newest segment near its top, as runs [start, end] with
+    // one commit second: start -> (end, second). Events mostly come in order, so a second is
+    // a few runs.
     std::map<uint64_t, std::pair<uint64_t, uint64_t>> runs;
     uint64_t late = 0, dups = 0;
-    uint64_t everMissing = 0;  // cumulative: each number counted once, when it first counts as missing
 
     void add(uint64_t evt, uint64_t second, uint64_t size, double now, uint64_t span) {
         events++;
         bytes += size;
-        if (!any) {
-            any = true;
-            first = max = evt;
-        } else if (evt > max) {
-            if (evt > max + 1)
-                gaps[max + 1] = {evt - 1, now};
-            max = evt;
-        } else if (fill(evt)) {
-            late++;
-        } else if (evt >= first) {
-            dups++;
-            return;
-        } else {
-            first = evt;  // below the first event seen: the stream started earlier
+        bool current = false;
+        switch (gaps.add(evt, now, &current)) {
+            case EventGaps::Kind::Restart:
+                runs.clear();  // the strip follows the new numbers
+                break;
+            case EventGaps::Kind::Late:
+                late++;
+                break;
+            case EventGaps::Kind::Duplicate:
+                dups++;
+                return;
+            default:
+                break;
         }
-        if (evt + span > max)
+        if (current && evt + span > gaps.current().max)
             addRun(evt, second);
     }
+    uint64_t first() const { return gaps.empty() ? 0 : gaps.current().first; }
+    uint64_t max() const { return gaps.empty() ? 0 : gaps.current().max; }
 
     void addRun(uint64_t evt, uint64_t second) {
         auto next = runs.upper_bound(evt);
@@ -164,43 +162,6 @@ struct Stream {
             return;
         }
         runs[evt] = {evt, second};
-    }
-
-    // Take n out of its gap, if it is in one.
-    bool fill(uint64_t n) {
-        auto it = gaps.upper_bound(n);
-        if (it == gaps.begin())
-            return false;
-        --it;
-        const uint64_t lo = it->first;
-        const Gap g = it->second;
-        if (n > g.last)
-            return false;
-        gaps.erase(it);
-        if (lo < n)
-            gaps[lo] = {n - 1, g.since, g.counted};
-        if (n < g.last)
-            gaps[n + 1] = {g.last, g.since, g.counted};
-        return true;
-    }
-
-    // Missing (older than grace, still open) and pending event numbers. Gaps that just
-    // passed grace are added to everMissing, once: it never goes down, even when a late
-    // event fills its gap.
-    std::pair<uint64_t, uint64_t> missing(double now, double grace) {
-        uint64_t m = 0, p = 0;
-        for (auto& [lo, g] : gaps) {
-            if (now - g.since > grace) {
-                m += g.last - lo + 1;
-                if (!g.counted) {
-                    everMissing += g.last - lo + 1;
-                    g.counted = true;
-                }
-            } else {
-                p += g.last - lo + 1;
-            }
-        }
-        return {m, p};
     }
 
     // Forget runs below lo.
@@ -234,11 +195,14 @@ struct Stream {
             --r;
         for (; r != runs.end() && r->first <= hi; ++r)
             mark(r->first, r->second.first, gone.count(r->second.second) ? kOut : kIn);
-        auto g = gaps.upper_bound(lo);
-        if (g != gaps.begin())
-            --g;
-        for (; g != gaps.end() && g->first <= hi; ++g)
-            mark(g->first, g->second.last, now - g->second.since > grace ? kMissing : kPending);
+        if (!gaps.empty()) {
+            const auto& cur = gaps.current().gaps;
+            auto g = cur.upper_bound(lo);
+            if (g != cur.begin())
+                --g;
+            for (; g != cur.end() && g->first <= hi; ++g)
+                mark(g->first, g->second.last, now - g->second.since > grace ? kMissing : kPending);
+        }
         std::string out;
         for (size_t i = 0; i < bins;) {
             size_t k = i;
@@ -384,7 +348,7 @@ public:
             return a.evtNum != b.evtNum ? a.evtNum < b.evtNum : a.dataId < b.dataId;
         });
         for (const auto& e : evs)
-            streams_[e.dataId].add(e.evtNum, e.second, e.size, now, span_ ? span_ : ~0ull >> 1);
+            streams_.try_emplace(e.dataId, o_.restartGap).first->second.add(e.evtNum, e.second, e.size, now, span_ ? span_ : ~0ull >> 1);
 
         inEvents_ += evs.size();
         inBytes_ += inBytes;
@@ -419,7 +383,7 @@ public:
         if (!listed.empty())
             j << ",\"first\":" << listed.front() << ",\"last\":" << listed.back();
         j << "}";
-        uint64_t miss = 0, pend = 0, late = 0, dups = 0, total = 0;
+        uint64_t miss = 0, pend = 0, late = 0, dups = 0, total = 0, restarts = 0;
         // The strip's span: --span, or --strip-seconds of events at the fastest dataId's rate,
         // as a power of two × --bins. It only grows (the first update with data can be partly
         // filled), so the strip moves smoothly once the rate is steady.
@@ -442,17 +406,18 @@ public:
         j << ",\"streams\":[";
         first = true;
         for (auto& [id, st] : streams_) {
-            const uint64_t lo = st.max + 1 >= width * o_.bins ? st.max + 1 - width * o_.bins : 0;
+            const uint64_t top = st.max(), lo = top + 1 >= width * o_.bins ? top + 1 - width * o_.bins : 0;
             st.prune(lo);
-            const auto [m, p] = st.missing(now, o_.grace);
+            const auto [m, p] = st.gaps.missing(now, o_.grace);
             miss += m;
             pend += p;
             late += st.late;
             dups += st.dups;
-            total += st.everMissing;
+            total += st.gaps.everMissing();
+            restarts += st.gaps.restarts();
             j << (first ? "" : ",") << "{\"id\":" << id << ",\"events\":" << st.events << ",\"bytes\":" << st.bytes
-              << ",\"d_events\":" << st.events - st.prevEvents << ",\"first\":" << st.first << ",\"max\":" << st.max
-              << ",\"missing\":" << m << ",\"missing_total\":" << st.everMissing << ",\"pending\":" << p << ",\"late\":" << st.late << ",\"dups\":" << st.dups
+              << ",\"d_events\":" << st.events - st.prevEvents << ",\"first\":" << st.first() << ",\"max\":" << top
+              << ",\"missing\":" << m << ",\"missing_total\":" << st.gaps.everMissing() << ",\"restarts\":" << st.gaps.restarts() << ",\"pending\":" << p << ",\"late\":" << st.late << ",\"dups\":" << st.dups
               << ",\"strip_lo\":" << lo;
             if (span_)
                 j << ",\"strip\":\"" << st.strip(lo, width, o_.bins, gone_, now, o_.grace) << "\"";
@@ -462,17 +427,18 @@ public:
         }
         j << "]";
         j << ",\"missing\":{\"total\":" << total << ",\"events\":" << miss << ",\"pending\":" << pend << ",\"late\":" << late
-          << ",\"dups\":" << dups << "}}";
+          << ",\"dups\":" << dups << ",\"restarts\":" << restarts << "}}";
 
-        char line[256];
+        char line[320];
         std::snprintf(line, sizeof(line),
-                      "in %llu events (+%zu) | out %llu (+%llu) | in DAOS %llu events, %.1f MiB, %zu s | missing %llu so far (%llu open), pending %llu",
+                      "in %llu events (+%zu) | out %llu (+%llu) | in DAOS %llu events, %.1f MiB, %zu s | missing %llu so far (%llu open), pending %llu%s",
                       static_cast<unsigned long long>(inEvents_), evs.size(),
                       static_cast<unsigned long long>(outEvents_), static_cast<unsigned long long>(outEvents),
                       static_cast<unsigned long long>(inEvents_ - outEvents_),
                       (inBytes_ - outBytes_) / 1048576.0, listed.size(), static_cast<unsigned long long>(total),
                       static_cast<unsigned long long>(miss),
-                      static_cast<unsigned long long>(pend));
+                      static_cast<unsigned long long>(pend),
+                      restarts ? (" | sender restarts " + std::to_string(restarts)).c_str() : "");
         logOut(line);
         return j.str();
     }
@@ -511,6 +477,8 @@ int main(int argc, char** argv) {
     opts("strip-seconds", po::value<double>(&o.stripSeconds)->default_value(32), "with --span 0: about this many seconds of events in the strip");
     opts("bins", po::value<size_t>(&o.bins)->default_value(600), "bins per strip");
     opts("grace", po::value<double>(&o.grace)->default_value(5), "seconds an event number may be absent before it counts as missing");
+    opts("restart-gap", po::value<uint64_t>(&o.restartGap)->default_value(EventGaps::kDefaultRestartGap),
+         "a jump of more than this many event numbers is a sender restart (a new segment), not a gap");
 
     po::variables_map vm;
     try {

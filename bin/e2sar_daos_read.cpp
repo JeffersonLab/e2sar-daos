@@ -50,6 +50,7 @@
 
 #include "e2sar_daos/catalog.hpp"
 #include "e2sar_daos/daos_handles.hpp"
+#include "e2sar_daos/event_gaps.hpp"
 #include "e2sar_daos/layout.hpp"
 #include "e2sar_daos/run_reader.hpp"
 #include "e2sar_daos/text_files.hpp"
@@ -275,70 +276,54 @@ std::string eventName(const std::string& run, uint64_t evtNum, uint16_t dataId) 
 }
 
 // Event number gaps per dataId. Events come in order within a call; an event lower than
-// one already seen is late: it fills its gap if it was missing, or else is a duplicate.
+// one already seen is late: it fills its gap if it was missing, or else is a duplicate. A jump
+// of more than restartGap numbers is a sender restart, not a gap (event_gaps.hpp).
 class GapTracker {
 public:
+    explicit GapTracker(uint64_t restartGap = EventGaps::kDefaultRestartGap) : restartGap_(restartGap) {}
+
     void add(const std::vector<Event>& evs) {
         for (const auto& e : evs) {
-            auto it = last_.find(e.dataId);
-            if (it == last_.end()) {
-                last_[e.dataId] = e.evtNum;
-                continue;
-            }
-            if (e.evtNum > it->second) {
-                if (e.evtNum > it->second + 1)
-                    gaps_[e.dataId][it->second + 1] = e.evtNum - 1;
-                it->second = e.evtNum;
-            } else if (fill(e.dataId, e.evtNum)) {
-                late_++;
-            } else {
-                dups_++;
+            switch (byId_.try_emplace(e.dataId, restartGap_).first->second.add(e.evtNum, 0)) {
+                case EventGaps::Kind::Late:
+                    late_++;
+                    break;
+                case EventGaps::Kind::Duplicate:
+                    dups_++;
+                    break;
+                default:
+                    break;
             }
         }
     }
 
-    /** One line per gap still open: "dataId first last count". */
+    /** One line per gap still open: "dataId first last count", each segment in turn. */
     std::string text() const {
         std::ostringstream o;
-        for (const auto& [id, ranges] : gaps_)
-            for (const auto& [first, last] : ranges)
-                o << id << ' ' << first << ' ' << last << ' ' << last - first + 1 << '\n';
+        for (const auto& [id, g] : byId_)
+            for (const auto& seg : g.segments())
+                for (const auto& [first, gap] : seg.gaps)
+                    o << id << ' ' << first << ' ' << gap.last << ' ' << gap.last - first + 1 << '\n';
         return o.str();
     }
     uint64_t missing() const {
         uint64_t n = 0;
-        for (const auto& [id, ranges] : gaps_)
-            for (const auto& [first, last] : ranges)
-                n += last - first + 1;
+        for (const auto& [id, g] : byId_)
+            n += g.open();
         return n;
     }
     uint64_t late() const { return late_; }
     uint64_t duplicates() const { return dups_; }
-
-private:
-    // Take n out of its gap, if it is in one.
-    bool fill(uint16_t id, uint64_t n) {
-        auto g = gaps_.find(id);
-        if (g == gaps_.end())
-            return false;
-        auto& ranges = g->second;
-        auto it = ranges.upper_bound(n);
-        if (it == ranges.begin())
-            return false;
-        --it;
-        const uint64_t first = it->first, last = it->second;
-        if (n > last)
-            return false;
-        ranges.erase(it);
-        if (first < n)
-            ranges[first] = n - 1;
-        if (n < last)
-            ranges[n + 1] = last;
-        return true;
+    uint64_t restarts() const {
+        uint64_t n = 0;
+        for (const auto& [id, g] : byId_)
+            n += g.restarts();
+        return n;
     }
 
-    std::map<uint16_t, uint64_t> last_;
-    std::map<uint16_t, std::map<uint64_t, uint64_t>> gaps_;  // first -> last
+private:
+    uint64_t restartGap_;
+    std::map<uint16_t, EventGaps> byId_;
     uint64_t late_ = 0, dups_ = 0;
 };
 
@@ -350,6 +335,7 @@ struct Options {
     uint64_t interval = 5, rmAfter = 10, from = 0;
     double stall = 30, endWait = 10, deadAfter = 300;
     double minFreeGiB = 5;
+    uint64_t restartGap = EventGaps::kDefaultRestartGap;
     bool follow = false, verbose = false;
     std::optional<uint64_t> event;
     std::optional<uint16_t> dataId;
@@ -654,7 +640,7 @@ int runLive(const Options& o) {
            (o.liveRm ? "; removing from DAOS " + std::to_string(o.rmAfter) + " intervals behind" : ""));
 
     std::map<uint32_t, SlotState> slots;
-    GapTracker gaps;
+    GapTracker gaps(o.restartGap);
     Remover remover;
     std::set<uint64_t> stalledSeconds;  // read without a stalled slot: never removed before the end
     std::map<uint64_t, std::set<uint64_t>> readThen;  // stalled second -> index dkeys already read
@@ -813,6 +799,8 @@ int runLive(const Options& o) {
     m << std::fixed << std::setprecision(2) << (running ? "end of run: " : "stopped: ") << files << " files, "
       << events << " events, " << bytes / 1048576.0 << " MiB; " << gaps.missing() << " missing, " << gaps.late()
       << " late, " << gaps.duplicates() << " duplicate event numbers";
+    if (gaps.restarts())
+        m << "; " << gaps.restarts() << " sender restarts (event numbers jumped more than --restart-gap)";
     if (lateFiles)
         m << "; " << lateFiles << " late files with " << lateEvents << " events (" << o.cont << "_late_manifest.txt)";
     logOut(m.str());
@@ -877,7 +865,7 @@ int runOffline(const Options& o) {
     };
     uint64_t files = 0, bytes = 0, errors = 0, dups = 0;
     std::set<std::pair<uint16_t, uint64_t>> seen;
-    GapTracker gaps;
+    GapTracker gaps(o.restartGap);
     std::vector<Event> all;
 
     forEachGroup(run, [&](const std::vector<IndexedBatch>& batches, const std::vector<Event>& evs) {
@@ -1104,6 +1092,8 @@ int main(int argc, char** argv) {
     opts("follow", po::bool_switch(&o.follow), "never end; keep waiting for new writers (--live)");
     opts("verbose", po::bool_switch(&o.verbose), "log the data arrays each window reads and each removal (--live, --live-rm)");
     opts("min-free", po::value<double>(&o.minFreeGiB)->default_value(5), "GiB that must stay free in -o DIR: below it the reader pauses until there is room (--live, --live-rm; 0: off)");
+    opts("restart-gap", po::value<uint64_t>(&o.restartGap)->default_value(EventGaps::kDefaultRestartGap),
+         "a jump of more than this many event numbers is a sender restart, not a gap (missing counts)");
     opts("event", po::value<uint64_t>(&eventNum), "only this event number (--offline, --fetch, --list)");
     opts("dataid", po::value<unsigned>(&dataIdOpt), "only this dataId (--offline, --fetch, --list)");
     opts("inflight", po::value<size_t>(&o.inflight)->default_value(32), "DAOS reads in flight");

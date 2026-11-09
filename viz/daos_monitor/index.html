@@ -122,7 +122,7 @@ async function poll() {
   try {
     const r = await fetch('api/frames?from=' + next, { cache: 'no-store' });
     const j = await r.json(); fileName = j.file;
-    if (j.next < next) { F.length = 0; ended = null; }        // file replaced: start over
+    if (j.next < next) { F.length = 0; ended = null; next = 0; return; }   // file replaced (a new run): start over from its first line
     for (const f of j.frames) {
       if (f.type === 'tick') { if (F.length && f.run !== F[F.length - 1].run) { F.length = 0; ended = null; } F.push(f); }   // a new run in the same file: start over
       else if (f.type === 'end') ended = f; }

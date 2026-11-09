@@ -51,7 +51,7 @@ E2SAR options (same meaning as `e2sar_ft -r`):
 | `--ip` / `--autoip` | — | Listen address (exactly one is required) |
 | `--port` | 10000 | Starting UDP port |
 | `--threads` / `--cores` | 1 | E2SAR receive (reassembly) threads, or cores to pin them to |
-| `-b, --bufsize` | 3 MB | Socket receive buffer |
+| `-b, --bufsize` | 3 MB | Socket receive buffer. Always pass `-b 1073741824` (1 GiB; `ss -uamn` shows `rb2147483646`): with 3 MB, LB 682 lost ~10% of packets at the socket (`Udp.RcvbufErrors`) at ~1.5 Gbps per node |
 | `--timeout` | 500 | Event reassembly timeout (ms) |
 | `--numa` | -1 | Bind memory to this NUMA node |
 | `-4`, `-6`, `-v` | | Prefer IPv4/IPv6 for the control plane; skip cert validation |

@@ -32,7 +32,7 @@
 : "${LABEL:=e2sar_live}"                                      # container = LABEL_<UTC epoch s>
 : "${POOL:=sc26}"
 : "${PORT:=20700}"                                            # first UDP port of each receiver
-: "${RECV_ARGS:=--threads 4 --deq 16 --report 10 --log-idle}"
+: "${RECV_ARGS:=--threads 4 --deq 16 --report 10 --log-idle -b 1073741824}"   # keep -b 1 GiB: 3 MB drops ~10% at 1.5 Gbps
 : "${READ_ARGS:=--min-free 50}"                               # e2sar_daos_read --live: pauses below 50 GiB free in OUT
 : "${OUT:=/scratch/$USER}"                                    # reader files: OUT/live_<run>; monitor: OUT/<run>_monitor.jsonl
 : "${LOGDIR:=e2sar_run/live}"

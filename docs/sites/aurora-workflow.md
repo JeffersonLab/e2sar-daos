@@ -137,7 +137,7 @@ export RUN=test_$(date +%s)          # one run = one container
 
 # receiver on the second node
 ssh $RECV_NODE "source ~/.bashrc; cd ~/daq/e2sar-daos; EJFAT_URI='$EJFAT_URI' \
-    ./build/bin/e2sar_daos_recv --ip $RECV_IP --port 19522 --pool e2sar-daos --cont-name $RUN" \
+    ./build/bin/e2sar_daos_recv --ip $RECV_IP --port 19522 -b 1073741824 --pool e2sar-daos --cont-name $RUN" \
     &> ~/daq/recv_$RUN.log &
 
 # sender on this node
