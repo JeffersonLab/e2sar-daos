@@ -4,8 +4,7 @@
 <title>E2SAR → DAOS live monitor</title>
 <style>
 /* Palette: the viewer's (evio-interactive-view) tokens. Event states: in DAOS = series blue,
-   left DAOS = series aqua, gap = series orange (+ full-height mark), pending = status warning.
-   Missing (events the receivers lost) = status critical. */
+   left DAOS = series aqua. Missing (events the receivers lost) = status critical. */
 :root {
   --bg: #f6f6f3; --surface: #fcfcfb; --line: #e3e2dc; --grid: #ecebe6; --hover: #efeee9;
   --fg: #0b0b0b; --fg2: #52514e; --fg3: #7a7974; --q0: #ecebe6;
@@ -92,11 +91,9 @@ table.t th { color: var(--fg2); font-weight: 500; } table.t td:first-child, tabl
       <div class="legend" id="stripLegend">
         <span><i class="sw" style="background:var(--in)"></i>in DAOS</span>
         <span><i class="sw" style="background:var(--out)"></i>left DAOS (read out)</span>
-        <span><i class="sw" style="background:var(--gap)"></i>gap ▲</span>
-        <span><i class="sw" style="background:var(--pend)"></i>pending</span>
         <span><i class="sw" style="background:var(--q0);border:1px solid var(--line)"></i>not seen</span>
       </div></div>
-    <p id="stripSub">Each row is one dataId (one stream, e.g. one VTP crate); the newest event number is at the right edge. New events enter on the right in blue, turn aqua when the reader removes their second from DAOS, and slide left. A bin is orange, and marked ▲, if any event number in it is absent for more than the grace time (a gap). A gap is only a hint: a sender need not number its events one after another.</p>
+    <p id="stripSub">Each row is one dataId (one stream, e.g. one VTP crate); the newest event number is at the right edge. New events enter on the right in blue, turn aqua when the reader removes their second from DAOS, and slide left. Gray: no event of the bin seen.</p>
     <canvas id="strip" height="10" role="img" aria-label="Event number state per dataId"></canvas>
   </section>
 </div>
@@ -189,13 +186,11 @@ function show(i) {
 }
 const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return (h ? h + ' h ' : '') + (h || m ? m + ' min ' : '') + (s % 60) + ' s'; };
 
-// Monitor files from before 2026-11-09 have no receiver losses: their "missing" is the gap count.
-const gapsOf = f => f.gaps ?? f.missing;
+// Monitor files from before 2026-11-09 have no receiver losses (their "missing" is event number gaps).
 const lostOf = f => f.gaps ? f.missing : null;
-const streamGaps = s => s.gaps_total ?? s.gaps ?? s.missing_total ?? s.missing;
 
 function tiles(f, i) {
-  const ga = gapsOf(f), lo = lostOf(f);
+  const lo = lostOf(f);
   const T = [
     ['var(--in)', 'Incoming', si(rateAt(i, 'in')) + ' Events/s', `${gbps(rateAt(i, 'in', 'bytes'), 1)} · ${si(f.in.events)} events total`],
     ['var(--out)', 'Outgoing (left DAOS)', si(rateAt(i, 'out')) + ' Events/s', `${gbps(rateAt(i, 'out', 'bytes'), 1)} · ${si(f.out.events)} events total`],
@@ -203,16 +198,16 @@ function tiles(f, i) {
     ['var(--miss)', 'Missing (lost by the receivers)', lo ? fmt(lo.total) : '–',
      lo ? `reassembly ${fmt(lo.reassembly)} · enqueue ${fmt(lo.enqueue)} · failed ${fmt(lo.failed)}` + (lo.writers_unknown ? ` · ${lo.writers_unknown} writer${lo.writers_unknown === 1 ? '' : 's'} without counts` : '')
         : 'not in this file (monitor before 2026-11-09)'],
-    ['var(--gap)', 'Event number gaps so far', fmt(ga.total ?? ga.events), `${fmt(ga.events)} still open · ${fmt(ga.late)} arrived late · ${fmt(ga.pending)} pending · ${fmt(ga.dups)} dup`],
   ];
   $('tiles').innerHTML = T.map(([c, k, v, s]) => `<div class="tile"><div class="k">${c ? `<i class="sw" style="background:${c}"></i>` : ''}${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join('');
 }
 
 // ---------------------------------------------------------------- event strip (canvas)
-const COLOR = { d: '--in', o: '--out', g: '--gap', p: '--pend', u: '--q0' };
+const COLOR = { d: '--in', o: '--out', u: '--q0' };
 let SM = null;  // strip geometry for hover
-// 'm' is a gap in monitor files from before 2026-11-09
-function decode(s, bins) { const out = new Array(bins); let k = 0; for (const [, c, n] of s.matchAll(/([a-z])(\d+)/g)) for (let i = 0; i < +n && k < bins; i++) out[k++] = c === 'm' ? 'g' : c; while (k < bins) out[k++] = 'u'; return out; }
+// Gap and pending bins ('g', 'p', and 'm' in files from before 2026-11-09) aren't shown: they
+// draw as not seen. The monitor marks a bin gap or pending only when none of its events is stored.
+function decode(s, bins) { const out = new Array(bins); let k = 0; for (const [, c, n] of s.matchAll(/([a-z])(\d+)/g)) for (let i = 0; i < +n && k < bins; i++) out[k++] = c === 'd' || c === 'o' ? c : 'u'; while (k < bins) out[k++] = 'u'; return out; }
 function strip(f) {
   const cv = $('strip'), S = f.streams, st = f.strip;
   const rowH = S.length > 24 ? 14 : 22, gap = 4, L = 92, R = 150, T = 18, B = 22;
@@ -224,23 +219,13 @@ function strip(f) {
   if (!st || !S.length || !S[0].strip) { g.fillStyle = fg2; g.fillText('Waiting for events (the strip appears once the rate is known, after 2 updates).', L, T + 10); SM = null; return; }
   const bins = st.bins, bw = (W - L - R) / bins;
   g.fillStyle = fg3; g.textAlign = 'left'; g.fillText('older event numbers', L, 8); g.textAlign = 'right'; g.fillText('newest →', W - R, 8);
-  g.fillText('gaps', W - 80, 8); g.fillText('Events/s', W - 4, 8);
+  g.fillText('Events/s', W - 4, 8);
   S.forEach((s, r) => {
     const y = T + r * (rowH + gap), b = decode(s.strip || '', bins);
     g.textAlign = 'right'; g.fillStyle = fg2; g.fillText('dataId ' + s.id, L - 8, y + rowH / 2);
     for (let i = 0; i < bins;) { let j = i; while (j < bins && b[j] === b[i]) j++;
-      if (b[i] !== 'g') { g.fillStyle = cols[b[i]]; g.fillRect(L + i * bw, y + 2, (j - i) * bw, rowH - 4); }
+      g.fillStyle = cols[b[i]]; g.fillRect(L + i * bw, y + 2, (j - i) * bw, rowH - 4);
       i = j; }
-    // gaps last: each run of gap bins is one block (at least 2 px wide, so a lone one shows) with
-    // one ▲ above its middle: shape as well as color, without a ▲ per bin in a row full of gaps
-    g.fillStyle = cols.g;
-    for (let i = 0; i < bins;) { if (b[i] !== 'g') { i++; continue; }
-      let j = i; while (j < bins && b[j] === 'g') j++;
-      const x = L + i * bw, w = Math.max((j - i) * bw, 2), c = x + w / 2;
-      g.fillRect(x, y + 2, w, rowH - 4);
-      g.beginPath(); g.moveTo(c - 3, y + 1); g.lineTo(c + 3, y + 1); g.lineTo(c, y - 4); g.fill();
-      i = j; }
-    const mt = streamGaps(s); g.textAlign = 'right'; g.fillStyle = mt ? cols.g : fg3; g.fillText(fmt(mt), W - 80, y + rowH / 2);
     g.fillStyle = fg3; g.textAlign = 'right'; g.fillText(si(s.d_events / (f.dt || 2)), W - 4, y + rowH / 2);
   });
   const lo = S[0].strip_lo, hi = lo + st.span - 1;
@@ -248,13 +233,13 @@ function strip(f) {
   g.textAlign = 'center'; g.fillText(`event number · ${fmt(st.width)} per bin · ${fmt(st.span)} shown`, (L + W - R) / 2, H - 8);
   SM = { f, L, R, T, rowH, gap, bw, W, bins };
 }
-const STATE = { d: 'in DAOS', o: 'left DAOS (read out)', g: 'gap (at least one number absent)', p: 'pending', u: 'not seen' };
+const STATE = { d: 'in DAOS', o: 'left DAOS (read out)', u: 'not seen' };
 $('strip').addEventListener('mousemove', e => {
   if (!SM) return; const r = $('strip').getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   const row = Math.floor((y - SM.T) / (SM.rowH + SM.gap)), i = Math.floor((x - SM.L) / SM.bw), s = SM.f.streams[row];
   if (!s || i < 0 || i >= SM.bins) return hideTip();
   const b = decode(s.strip || '', SM.bins)[i], w = SM.f.strip.width, e0 = s.strip_lo + i * w;
-  showTip(e, `dataId ${s.id}<br>events ${fmt(e0)}–${fmt(e0 + w - 1)}<br><b>${STATE[b]}</b><br>dataId total: ${fmt(s.events)} events, ${fmt(streamGaps(s))} in gaps so far`);
+  showTip(e, `dataId ${s.id}<br>events ${fmt(e0)}–${fmt(e0 + w - 1)}<br><b>${STATE[b]}</b><br>dataId total: ${fmt(s.events)} events`);
 });
 $('strip').addEventListener('mouseleave', hideTip);
 addEventListener('resize', () => { if (cur >= 0) { strip(F[cur]); charts(cur); } });
@@ -293,10 +278,10 @@ function charts(i) {
   const W = F.slice(a, i + 1), xs = W.map(f => f.t);
   const inR = W.map((f, k) => rateAt(a + k, 'in')), outR = W.map((f, k) => rateAt(a + k, 'out'));
   const lastIn = inR[inR.length - 1], lastOut = outR[outR.length - 1];
-  // ▲: the receivers lost events in this update (older files: event numbers went into gaps)
-  const tot = f => lostOf(f) ? lostOf(f).total : gapsOf(f).total ?? gapsOf(f).events, what = f => lostOf(f) ? 'lost by the receivers' : 'in gaps', marks = [];
+  // ▲: the receivers lost events in this update (none in files without receiver counts)
+  const tot = f => lostOf(f) ? lostOf(f).total : 0, marks = [];
   W.forEach((f, k) => { const prev = a + k > 0 ? tot(F[a + k - 1]) : 0, d = tot(f) - prev;
-    if (d > 0) marks.push({ i: k, html: `<span style="color:var(--miss)">▲</span> +${fmt(d)} ${what(f)} (${fmt(tot(f))} so far)` }); });
+    if (d > 0) marks.push({ i: k, html: `<span style="color:var(--miss)">▲</span> +${fmt(d)} lost by the receivers (${fmt(tot(f))} so far)` }); });
   lineChart($('cRate'), xs, [{ name: 'incoming', y: inR, color: 'var(--in)', dy: lastIn >= lastOut ? 6 : -6 },
                              { name: 'outgoing', y: outR, color: 'var(--out)', dy: lastIn >= lastOut ? -6 : 6 }], v => si(v), marks);
   lineChart($('cDaos'), xs, [{ name: 'in DAOS', y: W.map((f, k) => daosAt(a + k) / 2 ** 30), color: 'var(--in)' }], v => v.toFixed(v < 10 ? 2 : 0));
