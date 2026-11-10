@@ -21,7 +21,7 @@ A run can be watched live in a browser, for example on a laptop that reaches the
 
 Both only read, so the receivers and the reader run the same with or without them. The steps for the SC26 booth, including a demo mode without DAOS, are in [docs/howto/live-monitoring.md](docs/howto/live-monitoring.md).
 
-![The DAOS monitor on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 10 Gbps (250 frames, ~100 KB, per event; 4 streams), the fastest lossless rate of a 20/15/10/5 Gbps sweep: 1,105,172 events sent, all stored, 0 missing. Read with e2sar_daos_read --live-rm --interval 2 on the receiver node; the reader writes ~2 Gbps, so data waits in DAOS (In DAOS grows) while Outgoing counts seconds of data removed](docs/images/sc26_daos_monitor.png)
+![The DAOS monitor on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 15 Gbps (250 frames, ~100 KB, per event; 4 streams), ramped up from 1 Gbps over the first 10 s (e2sar_evio_send --ramp 10): 1,657,756 events sent, all stored, 0 missing; without the ramp 15 Gbps lost 21. Read with e2sar_daos_read --live-rm --interval 2 on the receiver node; the reader writes ~2 Gbps, so data waits in DAOS (In DAOS grows) while Outgoing counts seconds of data removed](docs/images/sc26_daos_monitor.png)
 
 ## Build
 
