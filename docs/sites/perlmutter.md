@@ -1,7 +1,7 @@
 ---
 type: Site
 title: "LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS"
-description: "Send e2sar_perf events from a Perlmutter (NERSC) or LUX (OLCF) compute node through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up. LUX works like Perlmutter, on its own LB instance."
+description: "Send e2sar_perf events from a compute node of an LCF using Slurm (Perlmutter at NERSC, LUX at OLCF) through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
 tags: [perlmutter, nersc, lux, olcf, lcf, lb]
 stale_after: 2027-01-31T00:00:00Z
 sources:
@@ -10,11 +10,11 @@ sources:
 
 # LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS
 
-This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF**, through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
+This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF using Slurm** (Perlmutter at NERSC, LUX at OLCF), through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
 The LB splits the events between the two receivers, and each receiver writes the events it gets into the same DAOS container.
 Both receivers write into the run's one container, each under its own writer slot, so the run reads back as one set of events. At the end, `e2sar_daos_read` checks that every event arrived exactly once, with the right size and content.
 
-The worked example is **Perlmutter** at NERSC: its node details, addresses and commands are shown below. **LUX** at OLCF works the same way, on its own LB instance: see [LUX (OLCF)](#lux-olcf). For another LCF, the JLab side is the same; redo steps 1 and 3 for that site's nodes, network and batch system.
+The worked example is **Perlmutter**: its node details, addresses and commands are shown below. LUX works the same way (`SITE=lux` in [the receiver script](#the-receiver-script)), with its own LB instance: two sites on one LB send different events under the same event number and data id, which crashed the receivers on LB 682 ([2026-11-09](../results/2026-11-09-lb682-perlmutter-losses.md)). For another LCF, the JLab side is the same; redo steps 1 and 3 for that site's nodes, network and batch system.
 
 The commands follow the JLab procedure in [lb-test](../howto/lb-test.md). The site-specific parts are marked *(check)*: confirm them when you run, and update this page with what you find.
 
@@ -396,15 +396,6 @@ What to look at:
 - 1 MiB events leave each send thread as ~10 Gbps line-rate bursts. More `--sockets` spread the rate over more threads.
 - If the sender reports its rate with 0 errors but both receivers see loss with 0 NIC discards, the loss is on the way: the LCF's egress, the WAN or the LB.
 - Run each rate at least twice, and record the time and the batch job ID with each result.
-
-## LUX (OLCF)
-
-LUX sends like Perlmutter: a public sender address (198.124.49.31, a 198.x address, not 10.x), E2SAR on the node, `e2sar_perf -s --withcp` or a frame builder through the same ESnet LB (stable4) to the same two receivers. The JLab side is unchanged; only these differ:
-
-- **Its own LB instance.** Reserve one for LUX (step 2) and never put LUX and Perlmutter senders on the same instance. Each numbers events from its own clock with data id 1, so the two send different events under the same (event number, data id); E2SAR's reassembly then crashes the receivers. That happened on LB 682 on 2026-11-09, until LUX moved to its own LB 684 ([LB 682 losses](../results/2026-11-09-lb682-perlmutter-losses.md)).
-- **The receiver script:** `SITE=lux` on both nodes, for every command of a run (logs in `~/e2sar_run/lux`), and a container label that names it, e.g. `SITE=lux CONT_LABEL=e2sar-lux .../e2sar_site2ebpf_recv.sh start`. `EJFAT_URI` is LUX's instance.
-- **Telling the runs apart.** With both sites sending at once, the [monitor page](../reference/e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy) header starts with each run's LB (*LB 684* vs *LB 682*), from the receivers' `-c` ([e2sar_daos_recv](../reference/e2sar_daos_recv.md) `--source`).
-- **Steps 1 and 3** (E2SAR on the node, getting a compute node, the path check) follow LUX's own login, batch system and network *(check)*: the Perlmutter commands there don't apply as written. The sender needs an E2SAR with the receivers' packet headers, as on Perlmutter.
 
 ## Recommended settings
 

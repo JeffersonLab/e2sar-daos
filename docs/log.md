@@ -1,7 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-10
-* **Update**: [LCF guide](sites/perlmutter.md#lux-olcf) has a LUX (OLCF) section: like Perlmutter, but on its own LB instance (sharing LB 682 with Perlmutter crashed the receivers on 2026-11-09), `SITE=lux` in the receiver script, and the monitor page's LB label to tell the runs apart. The README's sites list names LUX instead of the Mac.
+* **Update**: the [LCF guide](sites/perlmutter.md) covers LCFs using Slurm, Perlmutter (NERSC) and LUX (OLCF): LUX works the same way on its own LB instance. The README's sites list names LUX instead of the Mac.
 * **Update**: the [monitor page](reference/e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy) shows where a run's data comes from next to the run name ([#46](https://github.com/JeffersonLab/e2sar-daos/issues/46)), e.g. *LB 682* or *node-to-node*: on 2026-11-09 runs on LB 682 and LB 684 couldn't be told apart. [e2sar_daos_recv](reference/e2sar_daos_recv.md) writes `source` in its `writer/<slot>` record ([daos-layout](concepts/daos-layout.md#catalog)): `LB <id>` with `-c` (never the token), `node-to-node` without, `synthetic` with `--synthetic`, or new `--source TEXT`. [e2sar_daos_monitor](reference/e2sar_daos_monitor.md#the-line-format) puts it in its JSON lines (`sources`, `writers[].source`). Older runs show no source. Noted in [streaming-workflow](concepts/streaming-workflow.md#the-workflow) and [live-monitoring](howto/live-monitoring.md#2-the-daos-monitor-on-the-reader-node).
 * **Update**: the [monitor page](reference/e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy)'s Incoming and Outgoing tiles show Gbps in large type and Events/s below it, with the events total ([#48](https://github.com/JeffersonLab/e2sar-daos/issues/48)).
 
