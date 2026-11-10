@@ -60,7 +60,7 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 
 ![DAOS monitor during a real run on the ebpf testbed: frames_thread0_file0020.evio, 4 streams × ~15k frames/s (0.2 Gbps), e2sar_daos_read --live-rm --interval 2 --rm-after 2. The 4,330 missing are frames the sender failed to send (sendto: Operation not permitted, 1,082–1,083 per stream); the receiver lost none, and the reader's _missing.txt lists the same numbers](../images/sc26_daos_monitor.png)
 
-![EVIO live viewer, Live tab, during the same run: EC5/EC6 cosmics, 2 crates, 256 channels](../images/sc26_evio_live_viewer.png)
+![EVIO live viewer, Live tab, on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 20 Gbps (250 frames, ~100 KB, per event), read with e2sar_daos_read --live-rm --interval 2; 2 crates (ROC 18, 19), 256 channels, hit time in frame per crate](../images/sc26_evio_live_viewer.png)
 
 **What the DAOS monitor counts.** *Incoming*: events newly committed (index entries). *Outgoing*: events whose index second was removed from DAOS, by `--live-rm`; 0 with `--live`. *Missing*: events the receivers lost (reassembly, enqueue, failed writes), from their counters in the catalog, marked ▲ on the Gbps chart. Events of which no packet arrived are invisible to the receivers; compare with the sender's count. The strip shows each `dataId`'s newest ~32 s of event numbers, moving left as new ones come in. **Replay** plays back the whole run from the JSON lines file.
 
