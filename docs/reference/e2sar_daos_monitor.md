@@ -14,7 +14,7 @@ sources:
 
 Status: run against DAOS on the ebpf testbed (2026-10-30, 17.4M events at 61k Events/s, 4 dataIds, `--live-rm`): ~8% of one core, one look every 2.02 s, its incoming count within 0.1% of the receiver's committed count. In a second run it flagged 4,330 frames the sender failed to send, within one update, matching the reader's gap list (then `_missing.txt`, now `_gaps.txt`). These numbers came from the event number gaps, which were called *missing* until 2026-11-09.
 
-![The DAOS monitor dashboard during a real run on the ebpf testbed: frames_thread0_file0020.evio, 4 streams × ~15k frames/s (0.2 Gbps), e2sar_daos_read --live-rm --interval 2 --rm-after 2. The 4,330 missing are frames the sender failed to send (sendto: Operation not permitted, 1,082–1,083 per stream); the receiver lost none, and the reader's _missing.txt lists the same numbers](../images/sc26_daos_monitor.png)
+![The DAOS monitor on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 10 Gbps (250 frames, ~100 KB, per event; 4 streams), the fastest lossless rate of a 20/15/10/5 Gbps sweep: 1,105,172 events sent, all stored, 0 missing. Read with e2sar_daos_read --live-rm --interval 2 on the receiver node; the reader writes ~2 Gbps, so data waits in DAOS (In DAOS grows) while Outgoing counts seconds of data removed](../images/sc26_daos_monitor.png)
 
 ## What it counts
 
