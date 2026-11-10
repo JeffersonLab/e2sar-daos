@@ -80,7 +80,7 @@ table.t th { color: var(--fg2); font-weight: 500; } table.t td:first-child, tabl
   <div class="tiles" id="tiles"></div>
 
   <div class="grid2">
-    <section class="panel"><h2>Events/s</h2><p>Committed to DAOS (incoming) and removed from DAOS (outgoing), all dataIds, over the last 3 updates (~6 s). <span style="color:var(--miss)">▲</span> marks an update in which the receivers lost events; hover for how many.</p><svg id="cRate"></svg></section>
+    <section class="panel"><h2>Gbps</h2><p>Committed to DAOS (incoming) and removed from DAOS (outgoing), all dataIds, over the last 3 updates (~6 s); hover for Events/s too. <span style="color:var(--miss)">▲</span> marks an update in which the receivers lost events; hover for how many.</p><svg id="cRate"></svg></section>
     <section class="panel"><h2>Data in DAOS</h2><p>GiB committed and not yet removed, mean of the last 3 updates</p><svg id="cDaos"></svg></section>
   </div>
 
@@ -254,7 +254,8 @@ function lineChart(svg, xs, series, yFmt, marks = []) {
   svg.innerHTML = ''; const W = Math.max(320, svg.clientWidth || svg.parentNode.clientWidth - 32), H = 240, m = { l: 56, r: 70, t: 10, b: 26 };
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('height', H);   // one pixel per unit: text stays 11 px
   if (xs.length < 2) { el('text', { x: m.l, y: H / 2 }, svg).textContent = 'collecting…'; return; }
-  const x0 = xs[0], x1 = xs[xs.length - 1], yMax = Math.max(1e-9, ...series.flatMap(s => s.y)) * 1.1;
+  // all zero (no data yet): a 0–1 axis, not five rows of 0.0
+  const top = Math.max(0, ...series.flatMap(s => s.y)), x0 = xs[0], x1 = xs[xs.length - 1], yMax = top > 0 ? top * 1.1 : 1;
   const X = v => m.l + (v - x0) / (x1 - x0 || 1) * (W - m.l - m.r), Y = v => H - m.b - v / yMax * (H - m.t - m.b);
   for (let k = 0; k <= 4; k++) { const v = yMax * k / 4; el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: k ? 'var(--grid)' : 'var(--line)' }, svg);
     el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, svg).textContent = yFmt(v); }
@@ -271,21 +272,23 @@ function lineChart(svg, xs, series, yFmt, marks = []) {
     const tx = x0 + (sp.x - m.l) / (W - m.l - m.r) * (x1 - x0); let i = 0; while (i < xs.length - 1 && xs[i + 1] <= tx) i++;
     cross.setAttribute('x1', X(xs[i])); cross.setAttribute('x2', X(xs[i])); cross.setAttribute('visibility', 'visible');
     series.forEach((s, k) => { dots[k].setAttribute('cx', X(xs[i])); dots[k].setAttribute('cy', Y(s.y[i])); dots[k].setAttribute('visibility', 'visible'); });
-    showTip(e, clock(xs[i]) + '<br>' + series.map(s => `<span style="color:${s.color}">■</span> ${s.name}: ${yFmt(s.y[i])}`).join('<br>') + (markAt.has(i) ? '<br>' + markAt.get(i) : '')); });
+    showTip(e, clock(xs[i]) + '<br>' + series.map(s => `<span style="color:${s.color}">■</span> ${s.name}: ${yFmt(s.y[i])}${s.tip ? s.tip[i] : ''}`).join('<br>') + (markAt.has(i) ? '<br>' + markAt.get(i) : '')); });
   hit.addEventListener('mouseleave', () => { hideTip(); cross.setAttribute('visibility', 'hidden'); dots.forEach(d => d.setAttribute('visibility', 'hidden')); });
 }
 const WINDOW_S = 300;   // charts show the last 5 minutes before the shown frame
 function charts(i) {
   const t1 = F[i].t; let a = i; while (a > 0 && F[a - 1].t >= t1 - WINDOW_S) a--;
   const W = F.slice(a, i + 1), xs = W.map(f => f.t);
-  const inR = W.map((f, k) => rateAt(a + k, 'in')), outR = W.map((f, k) => rateAt(a + k, 'out'));
+  const gb = (k, key) => rateAt(a + k, key, 'bytes') * 8 / 1e9, ev = key => W.map((f, k) => ' Gbps · ' + si(rateAt(a + k, key)) + ' Events/s');
+  const inR = W.map((f, k) => gb(k, 'in')), outR = W.map((f, k) => gb(k, 'out'));
   const lastIn = inR[inR.length - 1], lastOut = outR[outR.length - 1];
   // ▲: the receivers lost events in this update (none in files without receiver counts)
   const tot = f => lostOf(f) ? lostOf(f).total : 0, marks = [];
   W.forEach((f, k) => { const prev = a + k > 0 ? tot(F[a + k - 1]) : 0, d = tot(f) - prev;
     if (d > 0) marks.push({ i: k, html: `<span style="color:var(--miss)">▲</span> +${fmt(d)} lost by the receivers (${fmt(tot(f))} so far)` }); });
-  lineChart($('cRate'), xs, [{ name: 'incoming', y: inR, color: 'var(--in)', dy: lastIn >= lastOut ? 6 : -6 },
-                             { name: 'outgoing', y: outR, color: 'var(--out)', dy: lastIn >= lastOut ? -6 : 6 }], v => si(v), marks);
+  const gFmt = v => v.toFixed(v >= 10 ? 1 : 2);
+  lineChart($('cRate'), xs, [{ name: 'incoming', y: inR, color: 'var(--in)', dy: lastIn >= lastOut ? 6 : -6, tip: ev('in') },
+                             { name: 'outgoing', y: outR, color: 'var(--out)', dy: lastIn >= lastOut ? -6 : 6, tip: ev('out') }], gFmt, marks);
   lineChart($('cDaos'), xs, [{ name: 'in DAOS', y: W.map((f, k) => daosAt(a + k) / 2 ** 30), color: 'var(--in)' }], v => v.toFixed(v < 10 ? 2 : 0));
 }
 
