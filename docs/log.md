@@ -1,5 +1,8 @@
 # Directory Update Log
 
+## 2026-11-10
+* **Update**: the [monitor page](reference/e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy)'s Incoming and Outgoing tiles show Gbps in large type and Events/s below it, with the events total ([#48](https://github.com/JeffersonLab/e2sar-daos/issues/48)).
+
 ## 2026-11-09
 * **Creation**: [unattended-live-run](howto/unattended-live-run.md): keep a live run up with nobody at the laptop, everything on ebpf2201: a watchdog restarts a crashed receiver (two-check and port-free guard, clean-stop detection, 5 min pause in a crash loop), the NIC sampler and the pages; an hourly job starts a fresh run and deletes runs with no events, logs included. With both scripts.
 * **Creation**: [2026-11-09-lb682-perlmutter-losses](results/2026-11-09-lb682-perlmutter-losses.md) (tagged `bug`): LB 682 frames (28–45 kB, ~3.7 Gbps), why the DAOS receiver isn't the sender's bottleneck, and the losses: 3 MB socket buffers, receiver crashes in E2SAR's reassembly when senders share (event number, data id), and 26–32% of clock-based event numbers never arriving.

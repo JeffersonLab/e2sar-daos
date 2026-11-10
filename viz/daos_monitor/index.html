@@ -192,8 +192,8 @@ const lostOf = f => f.gaps ? f.missing : null;
 function tiles(f, i) {
   const lo = lostOf(f);
   const T = [
-    ['var(--in)', 'Incoming', si(rateAt(i, 'in')) + ' Events/s', `${gbps(rateAt(i, 'in', 'bytes'), 1)} · ${si(f.in.events)} events total`],
-    ['var(--out)', 'Outgoing (left DAOS)', si(rateAt(i, 'out')) + ' Events/s', `${gbps(rateAt(i, 'out', 'bytes'), 1)} · ${si(f.out.events)} events total`],
+    ['var(--in)', 'Incoming', gbps(rateAt(i, 'in', 'bytes'), 1), `${si(rateAt(i, 'in'))} Events/s · ${si(f.in.events)} events total`],
+    ['var(--out)', 'Outgoing (left DAOS)', gbps(rateAt(i, 'out', 'bytes'), 1), `${si(rateAt(i, 'out'))} Events/s · ${si(f.out.events)} events total`],
     [null, 'In DAOS now', gib(daosAt(i)), `${si(f.daos.events)} events · ${f.daos.seconds} index seconds`],
     ['var(--miss)', 'Missing (lost by the receivers)', lo ? fmt(lo.total) : '–',
      lo ? `reassembly ${fmt(lo.reassembly)} · enqueue ${fmt(lo.enqueue)} · failed ${fmt(lo.failed)}` + (lo.writers_unknown ? ` · ${lo.writers_unknown} writer${lo.writers_unknown === 1 ? '' : 's'} without counts` : '')
