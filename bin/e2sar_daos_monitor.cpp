@@ -231,6 +231,8 @@ struct Second {
 };
 
 struct Writer {
+    bool seen = false;  // writer/<slot> read (it doesn't change)
+    std::string source;  // where its data comes from, e.g. "LB 682"; empty from receivers before 2026-11-10
     std::optional<L::Watermark> wm;
     bool done = false;
     uint64_t events = 0, bytes = 0;
@@ -291,6 +293,16 @@ public:
         // writers: done is read before wm, so a done slot's watermark is its final one
         for (uint32_t s : cat_->slots()) {
             Writer& w = writers_[s];
+            if (!w.seen) {
+                if (auto r = cat_->writer(s)) {
+                    w.seen = true;
+                    if (r->count("source"))
+                        w.source = r->at("source");
+                    for (auto& c : w.source)  // the catalog stores spaces as '_'
+                        if (c == '_')
+                            c = ' ';
+                }
+            }
             if (!w.done && cat_->done(s))
                 w.done = true;
             if (auto wm = cat_->watermark(s))
@@ -376,6 +388,8 @@ public:
         bool first = true;
         for (const auto& [s, w] : writers_) {
             j << (first ? "" : ",") << "{\"slot\":" << s << ",\"done\":" << (w.done ? "true" : "false");
+            if (!w.source.empty())
+                j << ",\"source\":" << jsonStr(w.source);
             if (w.wm)
                 j << ",\"wm_index\":" << w.wm->index << ",\"wm_data\":" << w.wm->data << ",\"lag\":" << now - w.wm->index;
             if (w.wm && w.wm->losses) {
@@ -389,6 +403,17 @@ public:
                 noCounts++;
             }
             j << ",\"events\":" << w.events << ",\"bytes\":" << w.bytes << "}";
+            first = false;
+        }
+        j << "]";
+        std::set<std::string> sources;  // where the run's data comes from, over all writers
+        for (const auto& [s, w] : writers_)
+            if (!w.source.empty())
+                sources.insert(w.source);
+        j << ",\"sources\":[";
+        first = true;
+        for (const auto& src : sources) {
+            j << (first ? "" : ",") << jsonStr(src);
             first = false;
         }
         j << "]";

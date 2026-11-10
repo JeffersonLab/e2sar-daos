@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-10
+* **Update**: the [monitor page](reference/e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy) shows where a run's data comes from next to the run name ([#46](https://github.com/JeffersonLab/e2sar-daos/issues/46)), e.g. *LB 682* or *node-to-node*: on 2026-11-09 runs on LB 682 and LB 684 couldn't be told apart. [e2sar_daos_recv](reference/e2sar_daos_recv.md) writes `source` in its `writer/<slot>` record ([daos-layout](concepts/daos-layout.md#catalog)): `LB <id>` with `-c` (never the token), `node-to-node` without, `synthetic` with `--synthetic`, or new `--source TEXT`. [e2sar_daos_monitor](reference/e2sar_daos_monitor.md#the-line-format) puts it in its JSON lines (`sources`, `writers[].source`). Older runs show no source.
 * **Update**: the [monitor page](reference/e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy)'s Incoming and Outgoing tiles show Gbps in large type and Events/s below it, with the events total ([#48](https://github.com/JeffersonLab/e2sar-daos/issues/48)).
 
 ## 2026-11-09

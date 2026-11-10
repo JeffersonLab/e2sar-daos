@@ -1022,7 +1022,7 @@ size_t parseSize(const std::string& s) {
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
 
-    std::string uriStr, recvIP, pool, contName, oclass, indexOclass, timingCsv, eventSizeStr, maxWriteStr;
+    std::string uriStr, source, recvIP, pool, contName, oclass, indexOclass, timingCsv, eventSizeStr, maxWriteStr;
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB, batchBuffers;
     std::vector<int> coreList;
@@ -1048,6 +1048,8 @@ int main(int argc, char** argv) {
     opts("ipv4,4", "force IPv4 control plane address if the URI has a hostname (disables cert validation)");
     opts("ipv6,6", "force IPv6 control plane address if the URI has a hostname (disables cert validation)");
     opts("novalidate,v", "don't validate the control plane server certificate");
+    opts("source", po::value<std::string>(&source),
+         "where the data comes from, shown by the monitor (default: \"LB <id>\" with -c, \"synthetic\" with --synthetic, else \"node-to-node\")");
     // DAOS side
     opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label (must exist)");
     opts("cont-name", po::value<std::string>(&contName), "the run's container label (created if missing); required unless --dryrun. Every receiver of a run uses the same");
@@ -1214,7 +1216,10 @@ int main(int argc, char** argv) {
             mine.indexOclass = indexOclass;
             mine.batchThreshold = batchThreshold;
             const auto [run, created] = catalog->createOrJoin(mine);
-            const uint32_t slot = catalog->claimSlot(utcSecond());
+            // Where the data comes from, for the monitor. Without control plane the URI's LB is a placeholder.
+            if (source.empty())
+                source = !uri ? "synthetic" : withCP ? "LB " + uri->get_lbId() : "node-to-node";
+            const uint32_t slot = catalog->claimSlot(utcSecond(), source);
             seconds = std::make_unique<DaosIntObject>(*daosCont, L::oidLo(L::Kind::Seconds), indexOclass);
 
             cfg.slot = slot;
@@ -1232,7 +1237,7 @@ int main(int argc, char** argv) {
 
             logOut("Run:                  " + std::string(created ? "new, started " : "joined, started ") +
                    std::to_string(run.start));
-            logOut("Writer slot:          " + std::to_string(slot));
+            logOut("Writer slot:          " + std::to_string(slot) + ", source " + source);
             logOut("Classes:              data " + oclass + ", index " + indexOclass + ", catalog " + L::kCatalogClass);
             logOut("Chunk / batch:        " + std::to_string(chunk) + " bytes; events <= " +
                    std::to_string(cfg.threshold) + " bytes batched, flush after " + std::to_string(flushUs) + " us");

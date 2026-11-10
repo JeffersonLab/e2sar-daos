@@ -4,7 +4,8 @@
     oid.lo = 1 0000 0000000000, fixed class layout::kCatalogClass.
 
         run            settings shared by every writer (start, chunk, classes, threshold)
-        writer/<slot>  a writer exists; claimed with a conditional insert
+        writer/<slot>  a writer exists (started, source: where its data comes from);
+                       claimed with a conditional insert
         wm/<slot>      that writer's watermarks, once a second
         done/<slot>    that writer's final statistics, when it stops
 */
@@ -33,14 +34,20 @@ public:
 
     std::optional<layout::RunSettings> run();
 
-    /** Claim the first free writer slot 0, 1, 2, … Throws if all 10,000 are taken. */
-    uint32_t claimSlot(uint64_t startSecond);
+    /**
+        Claim the first free writer slot 0, 1, 2, … with `started` and, if not empty, `source`
+        (where the writer's data comes from, e.g. "LB 682"; never a token). Throws if all
+        10,000 are taken.
+    */
+    uint32_t claimSlot(uint64_t startSecond, const std::string& source = "");
 
     void putWatermark(uint32_t slot, const layout::Watermark& wm);
     void putDone(uint32_t slot, const Record& stats);
 
     /** Claimed slots, sorted. */
     std::vector<uint32_t> slots();
+    /** The writer/<slot> record: started, source (absent from receivers before 2026-11-10). */
+    std::optional<Record> writer(uint32_t slot);
     std::optional<layout::Watermark> watermark(uint32_t slot);
     std::optional<Record> done(uint32_t slot);
 

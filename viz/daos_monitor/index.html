@@ -179,7 +179,9 @@ function show(i) {
   if (live) setMode(ended && i === F.length - 1 ? 'ended' : Date.now() / 1000 - f.t > 3 * (f.dt || 2) + 2 ? 'stale' : 'live',
     ended && i === F.length - 1 ? 'run ended' : Date.now() / 1000 - f.t > 3 * (f.dt || 2) + 2 ? 'no new data' : 'LIVE');
   else setMode('replay', 'REPLAY');
-  $('runInfo').textContent = `${f.run} · ${f.writers.length} writer${f.writers.length === 1 ? '' : 's'} · ${f.streams.length} dataIds`;
+  // Where the data comes from ("LB 682", "node-to-node"): monitors and receivers since 2026-11-10
+  const src = f.sources && f.sources.length ? f.sources.join(', ') + ' · ' : '';
+  $('runInfo').textContent = `${src}${f.run} · ${f.writers.length} writer${f.writers.length === 1 ? '' : 's'} · ${f.streams.length} dataIds`;
   $('clock').textContent = `${clock(f.t)} · ${fmtDur(f.t - f.start)} into the run`;
   $('frameInfo').textContent = `frame ${i + 1} of ${F.length}`;
   tiles(f, i); strip(f); charts(i); writers(f);

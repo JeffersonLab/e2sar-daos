@@ -48,6 +48,7 @@ E2SAR options (same meaning as `e2sar_ft -r`):
 |---|---|---|
 | `-u, --uri` | `$EJFAT_URI` | EJFAT URI |
 | `-c, --withcp` | off | Use the control plane (register worker with the LB) |
+| `--source` | `LB <id>` with `-c`, `synthetic` with `--synthetic`, else `node-to-node` | Where the data comes from, written to this writer's `writer/<slot>` catalog record and shown on the [monitor page](e2sar_daos_monitor.md#the-dashboard-vizdaos_monitorservepy) next to the run name. Only the LB ID, never the token. Set it when the default isn't enough, e.g. `--source "LUX node-to-node"` |
 | `--ip` / `--autoip` | — | Listen address (exactly one is required) |
 | `--port` | 10000 | Starting UDP port |
 | `--threads` / `--cores` | 1 | E2SAR receive (reassembly) threads, or cores to pin them to |
