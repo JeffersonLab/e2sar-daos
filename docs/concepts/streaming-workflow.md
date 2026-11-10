@@ -17,7 +17,7 @@ Implemented (2026-10-29): `e2sar_daos_recv` writes the layout of [daos-layout](d
 The receivers (DAOS writers) and the reader communicate only through the DAOS container: no sockets or shared files. The one rule outside the container is the order: receivers first, then the reader ([writer–reader contract](daos-layout.md#writerreader-contract)). The sequence:
 
 0. **NIC monitor, on every receiver node.** `scripts/e2sar_nicmon.sh start DIR` before the receivers, every time: it samples the NIC, IP and UDP drop counters once a second, so a burst of missing events can later be placed on the wire, in the NIC, in the kernel or in a socket ([scripts](../reference/scripts.md)). The run directory is a good DIR.
-1. **Receivers.** Start `e2sar_daos_recv` on recvA and recvB with the same `--cont-name`. The first creates the container and the run record; each claims a writer slot. With `--withcp` they register with the LB. Receivers must be up before the senders start, or the LB has nowhere to send.
+1. **Receivers.** Start `e2sar_daos_recv` on recvA and recvB with the same `--cont-name`. The first creates the container and the run record; each claims a writer slot and records where its data comes from: `LB <id>` with `--withcp`, `node-to-node` without, or `--source TEXT` ([e2sar_daos_recv](../reference/e2sar_daos_recv.md)); the monitor page shows it before the run name. With `--withcp` they register with the LB. Receivers must be up before the senders start, or the LB has nowhere to send.
 2. **Reader.** Start `e2sar_daos_read --pool <pool> --cont <same name> -o DIR --live` (or `--live-rm` to remove data from DAOS as it reads; a mode is required, see [e2sar_daos_read](../reference/e2sar_daos_read.md)) on the reader node, after the receivers have started (the first one creates the container; a reader started before that exits with an error). It can start before the senders, during the run, or after it (it catches up).
 3. **Senders.** Start sending. The LB sends every event number to one receiver.
 4. **Monitors (optional).** `e2sar_daos_monitor` and the EVIO viewer in live mode, any time after step 1 (see [Monitoring](#monitoring)). They don't change what the receivers or the reader do.
@@ -50,7 +50,7 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 
 | | DAOS monitor | EVIO live viewer |
 |---|---|---|
-| Shows | The container: events coming in, events leaving DAOS, event numbers missing per `dataId` | The data: the newest bundle the reader wrote, decoded (hits per channel × time in frame, per-crate maps, rates) |
+| Shows | Where the data comes from (e.g. *LB 682*, *node-to-node*), then the container: events coming in, events leaving DAOS, event numbers missing per `dataId` | The data: the newest bundle the reader wrote, decoded (hits per channel × time in frame, per-crate maps, rates) |
 | Reads | The catalog and the index of the container, read-only | `-o DIR` of `e2sar_daos_read --live`/`--live-rm`: the newest `<run>_<W>.dat` and its `.idx` |
 | Programs | [`e2sar_daos_monitor`](../reference/e2sar_daos_monitor.md) (C++) writes a JSON line per 2 s; [`viz/daos_monitor/serve.py`](../../viz/daos_monitor/serve.py) serves the page | `serve.py --live DIR` of [evio-interactive-view](https://code.jlab.org/xmei/evio-interactive-view) (`main`) |
 | Runs on | A DAOS client with access to the pool. The reader node is the natural place; not a receiver node, whose cores go to reassembly | The reader node, where the bundles are (or any node that mounts `-o DIR`) |
