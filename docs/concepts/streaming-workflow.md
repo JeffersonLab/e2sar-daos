@@ -58,7 +58,7 @@ Two independent tools show a run live, each in a web page. Neither writes to DAO
 | Load on the run | One read of each 32-byte index entry, one `seconds` listing per 2 s (estimated, not yet measured on DAOS) | None on DAOS. Reads at most the sample (default 32 MiB) of each bundle from the page cache |
 | Load on the page | ~4 KB per update; the page draws one canvas and three small charts | The browser decodes the sample: ~4,300 frames of 18 crates per 32 MiB, under 1 s |
 
-![The DAOS monitor on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 15 Gbps (250 frames, ~100 KB, per event; 4 streams), ramped up from 1 Gbps over the first 10 s (e2sar_evio_send --ramp 10): 1,657,756 events sent, all stored, 0 missing; without the ramp 15 Gbps lost 21. Read with e2sar_daos_read --live-rm --interval 2 on the receiver node; the reader writes ~2 Gbps, so data waits in DAOS (In DAOS grows) while Outgoing counts seconds of data removed](../images/sc26_daos_monitor.png)
+![The DAOS monitor on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 5 Gbps (250 frames, ~100 KB, per event; 4 streams), ramped up from 1 Gbps over the first 10 s (e2sar_evio_send --ramp 10): 552,584 events sent, all stored, 0 missing. Read with e2sar_daos_read --live-rm --interval 2 on the receiver node. Part of a rate sweep that was lossless up to 15 Gbps with the ramp (docs/results/2026-11-10-lb682-rate-sweep-ramp.md)](../images/sc26_daos_monitor.png)
 
 ![EVIO live viewer, Live tab, on 2026-11-10: frames_thread0_file0020.evio sent through LB 682 at 20 Gbps (250 frames, ~100 KB, per event), read with e2sar_daos_read --live-rm --interval 2; 2 crates (ROC 18, 19), 256 channels, hit time in frame per crate](../images/sc26_evio_live_viewer.png)
 
