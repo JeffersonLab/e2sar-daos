@@ -41,6 +41,6 @@ Start at [docs/index.md](docs/index.md). The docs are an [Open Knowledge Format 
 |---|---|
 | [concepts/](docs/concepts/index.md) | The DAOS layout, the streaming workflow, the throughput metrics, the lossless ceiling |
 | [howto/](docs/howto/index.md) | Build, install E2SAR, run the tests, the end-to-end checks, the streaming walkthrough, live monitoring, the LB test, the bench |
-| [sites/](docs/sites/index.md) | Mac, the ebpf testbed, the Slurm TB, Perlmutter, Aurora |
+| [sites/](docs/sites/index.md) | JLab ebpf testbed, JLab Slurm TB, Perlmutter (NERSC), Aurora (ALCF), LUX (OLCF) |
 | [reference/](docs/reference/index.md) | `e2sar_daos_recv`, `e2sar_daos_read`, `e2sar_daos_monitor`, `lbadm`, the scripts, the Meson options |
 | [results/](docs/results/index.md) | Dated measurements |

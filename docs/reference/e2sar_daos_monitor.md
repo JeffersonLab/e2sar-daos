@@ -81,7 +81,8 @@ One JSON object per line. `type` is `tick`, or `end` once.
 |---|---|
 | `tick`, `t`, `dt` | Line number, UTC time (s), seconds since the previous line |
 | `run`, `start` | Container label, run start (UTC s) from the run record |
-| `writers[]` | `slot`, `done`, `wm_index`, `wm_data`, `lag` (now − `wm_index`, s), `events`, `bytes` committed by that slot; `lost`, `reassembly_loss`, `enqueue_loss`, `failed` when the receiver writes its counters |
+| `sources` | Where the run's data comes from (each writer's `source`, deduplicated, e.g. `["LB 682"]`); empty for receivers built before 2026-11-10 |
+| `writers[]` | `slot`, `source`, `done`, `wm_index`, `wm_data`, `lag` (now − `wm_index`, s), `events`, `bytes` committed by that slot; `lost`, `reassembly_loss`, `enqueue_loss`, `failed` when the receiver writes its counters |
 | `in`, `out` | `events`, `bytes` (run totals), `d_events`, `d_bytes` (since the previous line); `out.d_seconds`: index seconds removed since the previous line |
 | `daos` | `events`, `bytes` in DAOS, `seconds` present, `first`, `last` second |
 | `missing` | Events the receivers lost: `total`, `reassembly`, `enqueue`, `failed`, summed over the writers with counters; `writers_unknown`: writers without counters |
@@ -109,7 +110,8 @@ Standard library only (Python ≥ 3.8). It reads the JSON lines file as it grows
 
 | Part | Shows |
 |---|---|
-| Tiles | Incoming and outgoing Events/s and Gbps, data in DAOS, *Missing* (lost by the receivers: reassembly, enqueue, failed). Event number gaps aren't shown: with a clock-based event number a sender skips numbers by design (LB 682: ~27% of 65.536 µs frame numbers); they stay in the JSON lines (`gaps`) and the log line |
+| Header | Live or replay, the run's `sources` (e.g. *LB 682*, *node-to-node*), the run name, writers and `dataId`s |
+| Tiles | Incoming and outgoing Gbps (large) and Events/s, data in DAOS, *Missing* (lost by the receivers: reassembly, enqueue, failed). Event number gaps aren't shown: with a clock-based event number a sender skips numbers by design (LB 682: ~27% of 65.536 µs frame numbers); they stay in the JSON lines (`gaps`) and the log line |
 | Event numbers per `dataId` | One row per `dataId`, the newest number at the right: in DAOS (blue), left DAOS (aqua), not seen (gray, also bins whose numbers are all absent). Each row ends with that `dataId`'s Events/s; hover for the event range of a bin |
 | Events/s | The last 5 minutes before the frame shown. Incoming: over the last 3 updates (~6 s). Outgoing: events per second of data removed, over the last 5 updates. A plain per-update rate would flicker: the reader removes one `--interval` window at a time, at times that jitter against the monitor's 2 s looks, so a look can catch 0 or 2 windows (seen in the first real run, between 0 and 125k Events/s). A red ▲ on the time axis marks an update in which the receivers lost events (in older files: event numbers went into gaps); hover for how many and the total so far. Loss counts share no axis with Events/s, so they are marks, not a line |
 | Data in DAOS | GiB committed and not yet removed, mean of the last 3 updates, the last 5 minutes |

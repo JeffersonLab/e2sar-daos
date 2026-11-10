@@ -1,20 +1,20 @@
 ---
 type: Site
-title: "LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS"
-description: "Send e2sar_perf events from a Perlmutter compute node through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
-tags: [perlmutter, nersc, lcf, lb]
+title: "LCFs using Slurm (Perlmutter, LUX): one sender, two receivers, through the ESnet LB into DAOS"
+description: "Send e2sar_perf events from a compute node of an LCF using Slurm (Perlmutter at NERSC, LUX at OLCF) through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
+tags: [perlmutter, nersc, lux, olcf, lcf, lb]
 stale_after: 2027-01-31T00:00:00Z
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/LCF2JLAB_GUIDE.md", title: "LCF2JLAB_GUIDE.md at 0d85d00" }
 ---
 
-# LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS
+# LCFs using Slurm (Perlmutter, LUX): one sender, two receivers, through the ESnet LB into DAOS
 
-This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF**, through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
+This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF using Slurm** (Perlmutter at NERSC, LUX at OLCF), through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
 The LB splits the events between the two receivers, and each receiver writes the events it gets into the same DAOS container.
 Both receivers write into the run's one container, each under its own writer slot, so the run reads back as one set of events. At the end, `e2sar_daos_read` checks that every event arrived exactly once, with the right size and content.
 
-The worked example is **Perlmutter** at NERSC: its node details, addresses and commands are shown below. For another LCF (e.g. Lux, `SITE=lux` in [the receiver script](#the-receiver-script)), the JLab side is the same; redo steps 1 and 3 for that site's nodes, network and batch system.
+The worked example is **Perlmutter**: its node details, addresses and commands are shown below. LUX works the same way (`SITE=lux` in [the receiver script](#the-receiver-script)), with its own LB instance: two sites on one LB send different events under the same event number and data id, which crashed the receivers on LB 682 ([2026-11-09](../results/2026-11-09-lb682-perlmutter-losses.md)). For another LCF, the JLab side is the same; redo steps 1 and 3 for that site's nodes, network and batch system.
 
 The commands follow the JLab procedure in [lb-test](../howto/lb-test.md). The site-specific parts are marked *(check)*: confirm them when you run, and update this page with what you find.
 

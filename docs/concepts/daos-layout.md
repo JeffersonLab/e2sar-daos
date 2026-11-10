@@ -20,8 +20,8 @@ pool sc26
 └── container e2sar_1793280000                     one run
     ├── catalog                                    KV object, string keys
     │     run         start=1793280000 chunk=1048576 oclass=SX index_oclass=S8 batch_threshold=0.9
-    │     writer/0    started=1793280000
-    │     writer/1    started=1793280001
+    │     writer/0    started=1793280000 source=LB_682
+    │     writer/1    started=1793280001 source=LB_682
     │     wm/0        index=1793280042 data=1793280041 …        (updated once a second)
     │     wm/1        index=1793280042 data=1793280042
     │     done/0      committed=… failed=… lost=…               (when writer 0 stops)
@@ -96,7 +96,7 @@ A KV object with string keys. Values are records of `key=value` pairs separated 
 | Key | Value | Written |
 |---|---|---|
 | `run` | `start=<UTC s> chunk=<bytes> oclass=<data class> index_oclass=<class> batch_threshold=<θ>` | By the first receiver, with a conditional insert (`putIfAbsent`). Later receivers read it and check that their settings match |
-| `writer/<slot>` | `started=<UTC s>` | When a receiver starts: it claims the first free slot 0, 1, 2, … with `putIfAbsent` |
+| `writer/<slot>` | `started=<UTC s> source=<where the data comes from>` | When a receiver starts: it claims the first free slot 0, 1, 2, … with `putIfAbsent`. `source` (spaces stored as `_`) is `LB_<id>` with the control plane, `node-to-node` without, `synthetic` with `--synthetic`, or the receiver's `--source`; only a label for the monitor, never a token. Receivers built before 2026-11-10 write only `started` |
 | `wm/<slot>` | `index=<S> data=<S'> reassembly_loss=<n> enqueue_loss=<n> failed=<n>` | Once a second by each receiver: its watermarks (below) and the events it lost so far. Receivers built before 2026-11-09 write only `index` and `data` |
 | `done/<slot>` | final statistics (`committed= failed= lost= batches= …`) | When the receiver stops. Marks the slot as finished |
 

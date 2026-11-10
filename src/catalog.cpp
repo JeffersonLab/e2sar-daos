@@ -39,8 +39,11 @@ std::optional<RunSettings> Catalog::run() {
     return RunSettings::fromRecord(parseRecord(*v));
 }
 
-uint32_t Catalog::claimSlot(uint64_t startSecond) {
-    const std::string rec = formatRecord({{"started", std::to_string(startSecond)}});
+uint32_t Catalog::claimSlot(uint64_t startSecond, const std::string& source) {
+    Record r{{"started", std::to_string(startSecond)}};
+    if (!source.empty())
+        r["source"] = source;
+    const std::string rec = formatRecord(r);
     for (uint32_t slot = 0; slot <= kMaxSlot; slot++)
         if (kv_.putIfAbsent(writerKey(slot), rec.data(), rec.size()))
             return slot;
@@ -68,6 +71,13 @@ std::vector<uint32_t> Catalog::slots() {
     });
     std::sort(out.begin(), out.end());
     return out;
+}
+
+std::optional<Record> Catalog::writer(uint32_t slot) {
+    const auto v = value(writerKey(slot));
+    if (!v)
+        return std::nullopt;
+    return parseRecord(*v);
 }
 
 std::optional<Watermark> Catalog::watermark(uint32_t slot) {

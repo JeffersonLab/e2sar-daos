@@ -36,7 +36,7 @@ OUT=/scratch/$USER/live_$RUNC
 
 ## 2. The DAOS monitor, on the reader node
 
-Two terminals (or `tmux`). The monitor can start before the receivers; it waits for the container.
+Two terminals (or `tmux`). The monitor can start before the receivers; it waits for the container. The page shows each receiver's source (`LB <id>` with `-c`, `node-to-node` without; set your own with `e2sar_daos_recv --source TEXT`). Receivers and monitors built before 2026-11-10 don't have it, and the header then starts at the run name.
 
 ```bash
 ./build/bin/e2sar_daos_monitor --pool sc26 --cont $RUNC -o /scratch/$USER/${RUNC}_monitor.jsonl
@@ -62,7 +62,7 @@ Then open:
 
 | Page | URL | For the booth |
 |---|---|---|
-| DAOS monitor | http://localhost:8766 | **Live** follows the run. **Replay** plays the run from the start at 1–32× (space: play/pause, ←/→: one frame) |
+| DAOS monitor | http://localhost:8766 | The header names where the data comes from and the run, e.g. `LB 682 · sc26_1793500000 · 2 writers · 18 dataIds`, so two runs at once (two LBs) can't be mixed up. **Live** follows the run. **Replay** plays the run from the start at 1–32× (space: play/pause, ←/→: one frame) |
 | EVIO live viewer | http://localhost:8765 | Opens on the **Live** tab: channels × time in frame, all crates, rates. **Pause** holds a bundle; click a channel to open it in **Plots** |
 
 The viewer pulls one sample per bundle through the tunnel: 32 MiB per 2 s (~130 Mbit/s) by default. Pick 16 MiB in the page if the booth link is slow, or 128 MiB on a fast one.
