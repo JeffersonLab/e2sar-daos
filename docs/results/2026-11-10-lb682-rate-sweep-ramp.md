@@ -65,4 +65,4 @@ Two sweeps of the same sender at 20, 15, 10 and 5 Gbps, 90 s each, through LB 68
 - Move the reader, monitor and pages off the receiver node, to see if the later bursts at 20 Gbps go away.
 - What limits the reader at ~2.2 Gbps: `/scratch`, or reading from DAOS.
 
-The runs' logs (receiver, sender, NIC samples, monitor lines) are in `~/e2sar_run/perlmutter/e2sar_sweep<rate>g_lb682_*` and `e2sar_ramp<rate>g_lb682_*` on the ebpf nodes; their data was deleted.
+The runs' data and logs were deleted after this analysis; the numbers above are from the receiver and sender logs and the 1 s NIC samples (`e2sar_nicmon.sh`).
