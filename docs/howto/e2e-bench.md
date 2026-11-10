@@ -41,6 +41,7 @@ You don't need a different receiver. `e2sar_daos_recv` stores any event, and the
 - Each Segmenter has its own dataId (4321 + i), so every event is a distinct `(evtNum, dataId)` in DAOS. See the [DAOS layout examples](../concepts/daos-layout.md#examples).
 - Events get random entropy, so through the LB they spread over the receiver's T ports. Node-to-node (no LB), Segmenter i sends to port PORT + i (`--port-per-segmenter`), so only P receive threads get traffic. The staged E2SAR 0.4.0rc1 has no `multiPort` sender option.
 - `--rate` is the total over all Segmenters. Each producing thread paces its own share by bytes. The Segmenter's own rate limit works in whole microseconds per event, too coarse for small events.
+- `--ramp S` starts at `--ramp-from` Gbps (total, default 1) and raises the rate linearly to `--rate` over the first S seconds (default 0: full rate from the first event). It tests whether a run's start-up losses come from a receiver that isn't warm yet; real senders (CODA, an LCF frame builder) start at full rate.
 
 **The old synthetic frames.** The results on this page were measured before the sender read files. It built 64 distinct events per Segmenter in memory (event n was copy n mod 64), each an EVIO v6 record of F frames (`-f`, since removed), with the layout of the CODA streaming data in `frames_thread0_*.evio` and `EC5_EC6_cosmics_*.evio`:
 

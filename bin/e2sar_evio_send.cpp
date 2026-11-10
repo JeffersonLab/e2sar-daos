@@ -34,6 +34,8 @@
 
     --rate is the total for all Segmenters, paced by the producing threads (the Segmenter's
     own rate limit works in whole microseconds per event, too coarse for small events).
+    --ramp S starts at --ramp-from Gbps (default 1) and raises the rate linearly to --rate over
+    the first S seconds, so a cold receiver isn't hit at full rate from the first event.
 */
 
 #include <signal.h>
@@ -196,16 +198,28 @@ struct Worker {
     std::atomic<uint64_t> queued{0}, done{0};
 };
 
+// Bits a worker may have sent `t` ns after its start (1 Gbps = 1 bit/ns): `from` Gbps rising
+// linearly to `gbps` over the first `rampNs`, then `gbps`.
+double allowedBits(double t, double gbps, double from, double rampNs) {
+    if (rampNs <= 0 || from >= gbps)
+        return gbps * t;
+    if (t < rampNs)
+        return from * t + (gbps - from) * t * t / (2 * rampNs);
+    return (from + gbps) / 2 * rampNs + gbps * (t - rampNs);
+}
+
 // Pace to `gbps` (total over all workers, so each gets gbps / nWorkers); < 0 = unlimited.
-void produce(Worker& w, uint64_t events, double gbps) {
+// With rampNs > 0, start at `from` (also per worker) and reach `gbps` after rampNs.
+void produce(Worker& w, uint64_t events, double gbps, double from, double rampNs) {
     const auto t0 = std::chrono::steady_clock::now();
     uint64_t sentBytes = 0;
     for (uint64_t e = 0; e < events && running; e++) {
         const uint64_t n = e + 1;   // event number; always passed explicitly (0 = "continue")
         const Frame& ev = (*w.frames)[e % w.frames->size()];
         if (gbps > 0) {
-            const double due = sentBytes * 8.0 / gbps;   // ns since t0
-            while (std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() < due)
+            const double bits = sentBytes * 8.0;
+            while (allowedBits(std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count(),
+                               gbps, from, rampNs) < bits)
                 ;
         }
         w.times[e].queueNs = nowNs();
@@ -238,7 +252,7 @@ int main(int argc, char** argv) {
     uint32_t srcId;
     size_t sockets, segmenters, perEvent;
     uint64_t events;
-    double rate;
+    double rate, ramp, rampFrom;
     int sndBuf;
 
     opts("help,h", "show this help message");
@@ -254,6 +268,8 @@ int main(int argc, char** argv) {
     opts("sockets,s", po::value<size_t>(&sockets)->default_value(1), "send sockets/threads per Segmenter");
     opts("bufsize,b", po::value<int>(&sndBuf)->default_value(3 * 1024 * 1024), "send socket buffer size");
     opts("rate,r", po::value<double>(&rate)->default_value(20), "total send rate in Gbps over all Segmenters (< 0: unlimited)");
+    opts("ramp", po::value<double>(&ramp)->default_value(0), "seconds to raise the rate from --ramp-from to --rate at the start (0: none)");
+    opts("ramp-from", po::value<double>(&rampFrom)->default_value(1), "total Gbps to start --ramp at");
     opts("events,n", po::value<uint64_t>(&events)->default_value(0), "events per Segmenter (0: the file once; more starts over)");
     opts("dataid", po::value<uint16_t>(&dataId)->default_value(4321), "dataId of the first Segmenter (+i for Segmenter i)");
     opts("srcid", po::value<uint32_t>(&srcId)->default_value(1234), "eventSrcId of the first Segmenter (+i for Segmenter i)");
@@ -366,12 +382,15 @@ int main(int argc, char** argv) {
               << ", mean " << meanEvent << " bytes" << std::endl
               << "Distinct events:      " << frames.size() << " (event n is (n - 1) % " << frames.size() << ")" << std::endl
               << "Events:               " << events << " per Segmenter, " << events * segmenters << " total" << std::endl
-              << "Rate:                 " << (rate > 0 ? std::to_string(rate) + " Gbps total" : "unlimited") << std::endl;
+              << "Rate:                 " << (rate > 0 ? std::to_string(rate) + " Gbps total" : "unlimited")
+              << (rate > 0 && ramp > 0 ? ", ramped up from " + std::to_string(rampFrom) + " Gbps over " + std::to_string(ramp) + " s" : "")
+              << std::endl;
 
     const uint64_t t0 = nowNs();
     std::vector<std::thread> producers;
     for (auto& w : workers)
-        producers.emplace_back(produce, std::ref(*w), events, rate > 0 ? rate / segmenters : -1.0);
+        producers.emplace_back(produce, std::ref(*w), events, rate > 0 ? rate / segmenters : -1.0, rampFrom / segmenters,
+                               ramp * 1e9);
     for (auto& t : producers)
         t.join();
 
