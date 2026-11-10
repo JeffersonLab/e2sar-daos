@@ -73,4 +73,4 @@ PASS
 rm -r /scratch/$USER/live_$RUNC /scratch/$USER/digests_$RUNC
 ```
 
-To keep the run in DAOS, use `--live` instead of `--live-rm` in step 2; then `e2sar_daos_read --pool sc26 --cont $RUNC --fetch` also works after the run, and `--delete` removes it. Through the LB, start the writers with `--withcp` and the instance's `EJFAT_URI` instead ([perlmutter](../sites/perlmutter.md)).
+To keep the run in DAOS, use `--live` instead of `--live-rm` in step 2; then `e2sar_daos_read --pool sc26 --cont $RUNC --fetch` also works after the run, and `--delete` removes it. Through the LB, start the writers with `--withcp` and the instance's `EJFAT_URI` instead ([lcf-slurm](../sites/lcf-slurm.md)).

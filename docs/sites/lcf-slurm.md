@@ -1,6 +1,6 @@
 ---
 type: Site
-title: "LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS"
+title: "LCFs using Slurm (Perlmutter, LUX): one sender, two receivers, through the ESnet LB into DAOS"
 description: "Send e2sar_perf events from a compute node of an LCF using Slurm (Perlmutter at NERSC, LUX at OLCF) through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
 tags: [perlmutter, nersc, lux, olcf, lcf, lb]
 stale_after: 2027-01-31T00:00:00Z
@@ -8,7 +8,7 @@ sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/LCF2JLAB_GUIDE.md", title: "LCF2JLAB_GUIDE.md at 0d85d00" }
 ---
 
-# LCF guide: one LCF sender, two receivers, through the ESnet LB into DAOS
+# LCFs using Slurm (Perlmutter, LUX): one sender, two receivers, through the ESnet LB into DAOS
 
 This is the procedure for sending synthetic events with `e2sar_perf` from **one compute node at an LCF using Slurm** (Perlmutter at NERSC, LUX at OLCF), through the ESnet EJFAT load balancer (LB), to **two receivers** at JLab, `e2sar_daos_recv` on **recvA** (ebpf2201) and **recvB** (ebpf2203).
 The LB splits the events between the two receivers, and each receiver writes the events it gets into the same DAOS container.

@@ -119,7 +119,7 @@ ls $DEST/usr/lib64/libre2.so.9                     # not under usr/local
 export LD_LIBRARY_PATH=$DEST/usr/lib64:$LD_LIBRARY_PATH
 ```
 
-The library lands in `$DEST/usr/lib64`, not `$DEST/usr/local/lib64`, so that directory has to be on `LD_LIBRARY_PATH` too. The LCF's `~/.bashrc` in [perlmutter step 1](../sites/perlmutter.md#1-e2sar-on-the-lcf-once) already has it.
+The library lands in `$DEST/usr/lib64`, not `$DEST/usr/local/lib64`, so that directory has to be on `LD_LIBRARY_PATH` too. The LCF's `~/.bashrc` in [lcf-slurm step 1](../sites/lcf-slurm.md#1-e2sar-on-the-lcf-once) already has it.
 That is enough to run the tools (`e2sar_perf`, `lbadm`). Building against E2SAR (e2sar-daos, `pkg-config --libs e2sar`) also needs `re2.pc` from `re2-devel`; on EL9 that's `dnf install re2-devel`, as in [containers/rocky-dev/Dockerfile](../../containers/rocky-dev/Dockerfile).
 
 ## 2. Verify
