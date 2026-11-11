@@ -1,18 +1,37 @@
 ---
 type: Site
-title: "Slurm TB nodes (DAOS pool but no daos-devel)"
-description: "Build and test on the JLab Slurm TB nodes with podman: image storage, the daos_agent socket, SELinux, InfiniBand and batch jobs."
-tags: [slurm-tb, podman, sc26]
+title: "Slurm TB nodes"
+description: "The JLab Slurm TB nodes: their network and DAOS client, build and test with podman (image storage, the daos_agent socket, SELinux, InfiniBand, batch jobs), and running the ebpf2201 build natively, e.g. e2sar_daos_read."
+tags: [slurm-tb, podman, sc26, network]
 stale_after: 2027-01-31T00:00:00Z
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/TESTING.md", title: "TESTING.md at 0d85d00" }
 ---
 
-# 3. Slurm TB nodes (DAOS pool but no daos-devel)
+# 3. Slurm TB nodes
 
 The TB compute nodes run AlmaLinux 9.8 with the DAOS client and `daos_agent`, and can reach pool `sc26`.
-They don't have `daos-devel`, so the project can't be built on the host: the top-level `meson.build` looks for DAOS headers in `/usr/include`.
-Instead, build and run inside the Rocky 9 dev image with **podman**.
+They have `daos-devel` 2.6.5 (checked 2026-11-11 on tb14c01, tb16c01, tb18c07 and tblogin1902), but not E2SAR.
+So build and run inside the Rocky 9 dev image with **podman**, or run the build from ebpf2201 natively ([without a container](#without-a-container)).
+
+## The nodes
+
+Checked 2026-11-11 (`sinfo`, and a 1-CPU job per node).
+
+| Nodes | CPU, memory | Ethernet (up port) | InfiniBand (IPoIB) |
+|---|---|---|---|
+| tb14c01–08 | Haswell, 24 cores, 60 GB | `eno2`, Intel I350, 1 Gbps, MTU 9000 | `ibs1`, ConnectX-3, 4X FDR 56 Gbps |
+| tb16c01–16 | Broadwell, 36 cores, 60 GB | `eno1`, Intel I350, 1 Gbps, MTU 9000 | `ibo1`, ConnectX-3, 4X FDR 56 Gbps |
+| tb18c06 | Skylake, 40 cores, 122 GB | `eno1`, Intel X550 at 1 Gbps | `ibp94s0`, ConnectX-3, FDR 56 Gbps |
+| tb18c07–08 | Skylake, 40 cores, 122 GB | `eno1`, Intel X550 at 1 Gbps | `ibs801f0`, ConnectX-5, FDR 56 Gbps (second port down) |
+
+- Ethernet is 129.57.178.128/25 (DHCP, gateway .129), routed to the login node and ebpf2201/2203 (129.57.178.64/26). At 1 Gbps it can't take E2SAR traffic, and anything written to `$HOME` (NFS) goes through it.
+- IPoIB is 172.19.27.0/24, shared with the login node and the DAOS engines. DAOS uses `ofi+verbs;ofi_rxm` over it.
+- Pool `sc26` sits on two engines, ranks 4 and 5, both on daosfs2302 (`daosfs2302-ib3` 172.19.27.21 and `daosfs2302-ib1` 172.19.27.20).
+- All run the DAOS 2.6.5 client and `daos_agent`. On 2026-11-11 tb16c04's agent predated the 2.6.5 upgrade and every DAOS call failed with `DER_MISC`: use `--exclude=tb16c04` until it is restarted.
+- Partitions `cores` and `sockets`: 8 h default, 4 days at most, no preemption.
+- No IOR. Open MPI 4.1.1 (`openmpi-devel`, `module load mpi/openmpi-x86_64`) and MPICH 4.1.1 (no devel); `srun --mpi=pmix` works. No autotools.
+- Read speed of `e2sar_daos_read` from these nodes: [2026-11-11-tb-nodes-fetch](../results/2026-11-11-tb-nodes-fetch.md).
 The image has its own DAOS 2.6 client and headers.
 The container talks to the real DAOS system through the node's `daos_agent` socket and the node's network.
 
@@ -159,5 +178,11 @@ At run time, `daos_kv_test` only needs `libdaos`, `libdfs`, `libgurt` and `libcr
 It doesn't link E2SAR, and the Boost test framework is header-only here.
 This works when the node's DAOS client minor version matches ebpf2201's.
 A Rocky 9 build normally runs on AlmaLinux 9, but check `ldd build/tests/daos/daos_kv_test` on the node first.
+
+The applications, e.g. `e2sar_daos_read`, run the same way from ebpf2201's `build/`, with the Boost 1.89 libraries of the staged E2SAR on the library path:
+```bash
+export LD_LIBRARY_PATH=$HOME/opt/e2sar-0.4.0rc1/usr/local/lib:$LD_LIBRARY_PATH
+srun -p cores -N1 -n1 --exclude=tb16c04 ~/daq/e2sar-daos/build/bin/e2sar_daos_read --pool sc26 --cont <run> --list
+```
 
 ---

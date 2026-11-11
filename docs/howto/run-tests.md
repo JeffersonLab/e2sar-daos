@@ -16,7 +16,7 @@ sources:
 | 1 | **Local Mac** | none; client headers and libraries only, in the Rocky 9 container | It builds and links, and the `unit` suite passes | [§1](../sites/mac-container.md#1-mac-without-daos) |
 | 2 | **ebpf2201 ↔ ebpf2203, node-to-node** | pool `sc26`, native `daos-devel` | `unit` and `integration` suites. End to end: `e2sar_ft` → `e2sar_daos_recv` → DAOS → `e2sar_daos_read`, with loopback on one node and across the two nodes, with no LB in the path | [§2](../sites/ebpf-testbed.md#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel), [§4](../sites/ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203) |
 | 3 | **ebpf2201 → ESnet EJFAT LB → ebpf2203** | pool `sc26`, native `daos-devel` | The same end-to-end path with `--withcp`, through a reserved LB over the WAN: the sender is added to the allowlist, and the worker registers, gets slots and deregisters. Also a throughput sweep, lossless up to 3 concurrent 2 GiB events (~25.8 Gbps) | [lb-test](lb-test.md) |
-| 4 | **Slurm TB nodes** | pool `sc26` and `daos_agent`, but **may have no `daos-devel`** (and no E2SAR) | `unit` and `integration` suites and the end-to-end path, using the podman image, which brings its own DAOS headers and E2SAR | [§3](../sites/slurm-tb.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel), [containers/slurm-tb](../../containers/slurm-tb/README.md) |
+| 4 | **Slurm TB nodes** | pool `sc26`, `daos_agent` and `daos-devel` 2.6.5, but no E2SAR | `unit` and `integration` suites and the end-to-end path, using the podman image, which brings its own DAOS headers and E2SAR | [§3](../sites/slurm-tb.md#3-slurm-tb-nodes), [containers/slurm-tb](../../containers/slurm-tb/README.md) |
 | 5 | **ALCF Aurora** (planned, not run yet) | pool `e2sar-daos` (100 TB), DAOS client on the compute nodes | `unit` and `integration` suites, then the end-to-end path and the n2n bench between Aurora compute nodes over the Slingshot network. Section 5 is the plan and the checks still open | [§5](../sites/aurora-plan.md#5-alcf-aurora-planned) |
 
 Scenario 1 needs only Docker. Scenarios 2 and 3 need SSH access to the ebpf nodes, and scenario 3 also needs an LB instance URI. Scenario 4 needs a Slurm TB allocation and podman. Scenario 5 needs an ALCF project with access to pool `e2sar-daos` and a PBS allocation on Aurora.
@@ -41,7 +41,7 @@ What each environment can check:
 |---|---|---|---|
 | [Mac (no DAOS)](../sites/mac-container.md#1-mac-without-daos) | in the Docker container | yes | no |
 | [ebpf2201 / ebpf2203](../sites/ebpf-testbed.md#2-ebpf2201--ebpf2203-daos-pool-and-daos-devel) | natively | yes | yes |
-| [Slurm TB nodes](../sites/slurm-tb.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel) | in a podman container (or on ebpf220x) | yes | yes |
+| [Slurm TB nodes](../sites/slurm-tb.md#3-slurm-tb-nodes) | in a podman container (or on ebpf220x) | yes | yes |
 | [ALCF Aurora](../sites/aurora-plan.md#5-alcf-aurora-planned) | natively on a compute node (planned) | to do | to do |
 
 The applications (`e2sar_daos_recv`, `e2sar_daos_read`) are tested end to end by hand. See [section 4](../sites/ebpf-testbed.md#4-applications-end-to-end-on-ebpf2203).

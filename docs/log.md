@@ -1,5 +1,9 @@
 # Directory Update Log
 
+## 2026-11-11
+* **Creation**: [2026-11-11-tb-nodes-fetch](results/2026-11-11-tb-nodes-fetch.md) (tagged `bug`, `proposal`): `e2sar_daos_read --fetch` from the Slurm TB nodes on LB 677 run 1. One reader is CPU-bound on one thread: 1.2–1.3 Gbps on tb16, 1.6 on tb18c07, 1.8 on tblogin1902; 16 nodes × 1 reader 14.8 Gbps together, half of them waiting on DAOS. After a 128-reader test every data read in sc26 timed out on engine rank 4 (daosfs2302). Seven bugs and failures (rank 4 timeouts, `--fetch` ignoring signals while reads hang, `--event` scanning the whole index, tb16c04's stale agent, Boost not found at run time, the stale `daos-devel` note) and nine proposals (`--part i/N`, a no-hash benchmark mode, IOR).
+* **Update**: [slurm-tb](sites/slurm-tb.md) is now titled *Slurm TB nodes*: the nodes have `daos-devel` 2.6.5. New section *The nodes* (CPU, Ethernet 1 Gbps, IPoIB FDR 56 Gbps, sc26's engines on daosfs2302, Slurm limits, MPI, tb16c04), and how to run the ebpf2201 build of the applications natively (`LD_LIBRARY_PATH` for Boost 1.89). [run-tests](howto/run-tests.md) and the [sites index](sites/index.md) follow.
+
 ## 2026-11-10
 * **Creation**: [2026-11-10-lb682-rate-sweep-ramp](results/2026-11-10-lb682-rate-sweep-ramp.md): one receiver, ~100 KB EVIO events through LB 682 at 20/15/10/5 Gbps for 90 s. Fastest lossless rate 10 Gbps without a ramp, 15 Gbps with `e2sar_evio_send --ramp 10`, which removes the start-up burst; every loss a NIC port discard. The monitor screenshot is now its 5 Gbps ramp run.
 * **Update**: `e2sar_evio_send --ramp S` (and `--ramp-from`, default 1 Gbps) raises the send rate linearly to `--rate` over the first S seconds ([e2e-bench](howto/e2e-bench.md)), to test start-up losses.

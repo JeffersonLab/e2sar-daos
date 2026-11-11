@@ -12,7 +12,7 @@ It is the [Rocky 9 dev image](../rocky-dev/) with e2sar-daos built and installed
 | `e2sar_evio_send` | this repo | send the frames of an EVIO file, for tests |
 | `e2sar_ft` | E2SAR RPM | send files (`-s`) from another node |
 
-Every option is in the [reference docs](../../docs/reference/index.md), and the DAOS data layout in [daos-layout](../../docs/concepts/daos-layout.md). For podman setup on the nodes (node-local image storage, the agent socket, SELinux, InfiniBand), see [docs/slurm-tb §3](../../docs/sites/slurm-tb.md#3-slurm-tb-nodes-daos-pool-but-no-daos-devel). Everything there applies here too.
+Every option is in the [reference docs](../../docs/reference/index.md), and the DAOS data layout in [daos-layout](../../docs/concepts/daos-layout.md). For podman setup on the nodes (node-local image storage, the agent socket, SELinux, InfiniBand), see [docs/slurm-tb §3](../../docs/sites/slurm-tb.md#3-slurm-tb-nodes). Everything there applies here too.
 
 ---
 
