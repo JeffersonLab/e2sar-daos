@@ -1,6 +1,7 @@
 #include "e2sar_daos/daos_handles.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 namespace e2sar_daos {
@@ -37,19 +38,62 @@ DaosPool::~DaosPool() {
 
 // ---------------------------------------------------------------------------
 
+namespace {
+
+/** daos_prop_t owner. */
+struct Props {
+    daos_prop_t* p;
+    explicit Props(uint32_t n) : p(daos_prop_alloc(n)) {
+        if (!p)
+            throw DaosError("daos_prop_alloc", -DER_NOMEM);
+    }
+    ~Props() { daos_prop_free(p); }
+    Props(const Props&) = delete;
+    Props& operator=(const Props&) = delete;
+};
+
+}  // namespace
+
 DaosContainer::DaosContainer(const DaosPool& pool, const std::string& label,
-                             bool createIfMissing, unsigned int flags)
+                             bool createIfMissing, unsigned int flags, Redundancy red)
     : label_(label) {
+    const std::string where = pool.label() + "/" + label_;
     int rc = daos_cont_open(pool.handle(), label_.c_str(), flags, &coh_, nullptr, nullptr);
     if (rc == -DER_NONEXIST && createIfMissing) {
-        rc = daos_cont_create_with_label(pool.handle(), label_.c_str(), nullptr, nullptr, nullptr);
+        std::unique_ptr<Props> props;
+        if (red.fac > 0) {
+            props = std::make_unique<Props>(2);
+            props->p->dpp_entries[0].dpe_type = DAOS_PROP_CO_REDUN_FAC;
+            props->p->dpp_entries[0].dpe_val = red.fac;  // DAOS_PROP_CO_REDUN_RF<n> == n
+            props->p->dpp_entries[1].dpe_type = DAOS_PROP_CO_REDUN_LVL;
+            props->p->dpp_entries[1].dpe_val = red.rankLevel ? DAOS_PROP_CO_REDUN_RANK : DAOS_PROP_CO_REDUN_NODE;
+        }
+        rc = daos_cont_create_with_label(pool.handle(), label_.c_str(), props ? props->p : nullptr, nullptr,
+                                         nullptr);
         if (rc == 0)
             created_ = true;
+        else if (rc == -DER_INVAL && red.fac > 0)
+            throw DaosError("daos_cont_create_with_label(" + where + ") with rd_fac " + std::to_string(red.fac) +
+                                " at " + (red.rankLevel ? "rank" : "node") + " level: the pool has fewer " +
+                                (red.rankLevel ? "engines" : "nodes") + " than copies",
+                            rc);
         else if (rc != -DER_EXIST)  // someone else created it first: fine
-            check(rc, "daos_cont_create_with_label(" + pool.label() + "/" + label_ + ")");
+            check(rc, "daos_cont_create_with_label(" + where + ")");
         rc = daos_cont_open(pool.handle(), label_.c_str(), flags, &coh_, nullptr, nullptr);
     }
-    check(rc, "daos_cont_open(" + pool.label() + "/" + label_ + ")");
+    check(rc, "daos_cont_open(" + where + ")");
+
+    Props q(2);
+    q.p->dpp_entries[0].dpe_type = DAOS_PROP_CO_REDUN_FAC;
+    q.p->dpp_entries[1].dpe_type = DAOS_PROP_CO_REDUN_LVL;
+    rc = daos_cont_query(coh_, nullptr, q.p, nullptr);
+    if (rc != 0) {
+        daos_cont_close(coh_, nullptr);
+        coh_ = DAOS_HDL_INVAL;
+        check(rc, "daos_cont_query(" + where + ")");
+    }
+    rdFac_ = static_cast<uint32_t>(q.p->dpp_entries[0].dpe_val);
+    rdRankLevel_ = q.p->dpp_entries[1].dpe_val == DAOS_PROP_CO_REDUN_RANK;
 }
 
 DaosContainer::~DaosContainer() {

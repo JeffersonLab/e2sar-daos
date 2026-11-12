@@ -96,6 +96,36 @@ BOOST_AUTO_TEST_CASE(RecordEdgeCases) {
     BOOST_CHECK(parseRecord("").empty());
 }
 
+BOOST_AUTO_TEST_CASE(RedundancyClasses) {
+    // rd_fac 0 keeps the classes every older run was written with
+    BOOST_CHECK_EQUAL(catalogClass(0), "S1");
+    BOOST_CHECK_EQUAL(defaultClasses(0).first, "SX");
+    BOOST_CHECK_EQUAL(defaultClasses(0).second, "S8");
+    BOOST_CHECK_EQUAL(catalogClass(1), "RP_2G1");
+    BOOST_CHECK_EQUAL(defaultClasses(1).first, "RP_2GX");
+    BOOST_CHECK_EQUAL(defaultClasses(1).second, "RP_2G8");
+    BOOST_CHECK_EQUAL(catalogClass(2), "RP_3G1");
+    BOOST_CHECK_EQUAL(defaultClasses(2).first, "RP_3GX");
+    BOOST_CHECK_THROW(catalogClass(kMaxRdFac + 1), std::out_of_range);
+    BOOST_CHECK_THROW(defaultClasses(kMaxRdFac + 1), std::out_of_range);
+
+    BOOST_CHECK_EQUAL(classFailuresTolerated("SX"), 0);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("S1"), 0);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("S32"), 0);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("RP_2GX"), 1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("RP_2G8"), 1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("RP_3G1"), 2);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("EC_2P1GX"), 1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("EC_16P2G1"), 2);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("UNKNOWN"), -1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("S"), -1);
+    for (uint32_t f = 0; f <= kMaxRdFac; f++) {  // the defaults always fit
+        BOOST_CHECK_EQUAL(classFailuresTolerated(defaultClasses(f).first), static_cast<int>(f));
+        BOOST_CHECK_EQUAL(classFailuresTolerated(defaultClasses(f).second), static_cast<int>(f));
+        BOOST_CHECK_EQUAL(classFailuresTolerated(catalogClass(f)), static_cast<int>(f));
+    }
+}
+
 BOOST_AUTO_TEST_CASE(CatalogRecords) {
     BOOST_CHECK_EQUAL(writerKey(3), "writer/3");
     BOOST_CHECK_EQUAL(wmKey(3), "wm/3");

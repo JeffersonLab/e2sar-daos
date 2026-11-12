@@ -64,8 +64,10 @@ DAOS options (the layout options must be the same on every receiver of a run; a 
 | `--pool` | `sc26` | Pool label (must exist) |
 | `--cont-name` | — (required unless `--dryrun`) | The run's container label (created if missing). Every receiver of a run uses the same one |
 | `--chunk` | 1024 | Array chunk size = batch size, in KiB |
-| `--oclass` | `SX` | Data array object class |
-| `--index-oclass` | `S8` | Seconds and index object class |
+| `--rd-fac` | 0 | Copies that may be lost (0–2), for runs worth keeping. A new container gets the property `rd_fac`, the default classes and the catalog store `rd_fac` + 1 copies. Every receiver of a run must pass the same; one that differs from the container stops with an error. See [Redundancy](../concepts/daos-layout.md#redundancy) |
+| `--rd-lvl` | `rank` | With `--rd-fac`: copies on different engines (`rank`) or servers (`node`). On sc26 only `rank` works |
+| `--oclass` | `SX`, or `RP_<n+1>GX` with `--rd-fac n` | Data array object class |
+| `--index-oclass` | `S8`, or `RP_<n+1>G8` with `--rd-fac n` | Seconds and index object class |
 | `--batch-threshold` | 0.9 | Events up to this fraction of a chunk are batched |
 | `--flush-us` | 5000 | Write a partly filled batch after this many µs |
 | `--batch-buffers` | 8 | Batch buffers (one chunk each) per dequeue thread |

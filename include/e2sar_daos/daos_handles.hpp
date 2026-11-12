@@ -59,15 +59,26 @@ private:
     daos_handle_t poh_ = DAOS_HDL_INVAL;
 };
 
+/** Redundancy properties a container is created with (container properties rd_fac, rd_lvl). */
+struct ContainerRedundancy {
+    uint32_t fac = 0;       // copies that may be lost; 0 = pool default (one copy on sc26)
+    bool rankLevel = true;  // copies on different engines (ranks) rather than different nodes
+};
+
 class DaosContainer {
 public:
+    using Redundancy = ContainerRedundancy;
+
     /**
         Open a container by label. If createIfMissing is set and the container does
-        not exist, create it with default properties first. A concurrent creator
-        winning the race (-DER_EXIST) is treated as success.
+        not exist, create it first: with default properties if red.fac is 0, else with
+        rd_fac = red.fac and rd_lvl = rank or node. A concurrent creator winning the race
+        (-DER_EXIST) is treated as success. The properties of an existing container are
+        never changed: compare rdFac() with what you asked for.
     */
     DaosContainer(const DaosPool& pool, const std::string& label,
-                  bool createIfMissing = true, unsigned int flags = DAOS_COO_RW);
+                  bool createIfMissing = true, unsigned int flags = DAOS_COO_RW,
+                  Redundancy red = {});
     ~DaosContainer();
     DaosContainer(const DaosContainer&) = delete;
     DaosContainer& operator=(const DaosContainer&) = delete;
@@ -76,11 +87,17 @@ public:
     const std::string& label() const noexcept { return label_; }
     /** True if this instance created the container. */
     bool created() const noexcept { return created_; }
+    /** The container's rd_fac (queried when it is opened). */
+    uint32_t rdFac() const noexcept { return rdFac_; }
+    /** The container's rd_lvl: true = rank, false = node. */
+    bool rdRankLevel() const noexcept { return rdRankLevel_; }
 
 private:
     std::string label_;
     daos_handle_t coh_ = DAOS_HDL_INVAL;
     bool created_ = false;
+    uint32_t rdFac_ = 0;
+    bool rdRankLevel_ = false;
 };
 
 /** A flat key-value object (DAOS_OT_KV_HASHED). */

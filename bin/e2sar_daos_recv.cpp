@@ -1022,7 +1022,8 @@ size_t parseSize(const std::string& s) {
 int main(int argc, char** argv) {
     po::options_description od("Command-line options");
 
-    std::string uriStr, source, recvIP, pool, contName, oclass, indexOclass, timingCsv, eventSizeStr, maxWriteStr;
+    std::string uriStr, source, recvIP, pool, contName, oclass, indexOclass, rdLvl, timingCsv, eventSizeStr, maxWriteStr;
+    uint32_t rdFac;
     uint16_t recvStartPort;
     size_t numRecvThreads, deqThreads, inflight, chunkKiB, batchBuffers;
     std::vector<int> coreList;
@@ -1054,8 +1055,12 @@ int main(int argc, char** argv) {
     opts("pool", po::value<std::string>(&pool)->default_value("sc26"), "DAOS pool label (must exist)");
     opts("cont-name", po::value<std::string>(&contName), "the run's container label (created if missing); required unless --dryrun. Every receiver of a run uses the same");
     opts("chunk", po::value<size_t>(&chunkKiB)->default_value(1024), "array chunk size = batch size, in KiB");
-    opts("oclass", po::value<std::string>(&oclass)->default_value("SX"), "data array object class");
-    opts("index-oclass", po::value<std::string>(&indexOclass)->default_value("S8"), "seconds and index object class");
+    opts("rd-fac", po::value<uint32_t>(&rdFac)->default_value(0),
+         "copies that may be lost (container property rd_fac, 0-2), for runs worth keeping: a new container is created with it, and the default classes and the catalog class store rd_fac+1 copies. An existing container must have the same");
+    opts("rd-lvl", po::value<std::string>(&rdLvl)->default_value("rank"),
+         "with --rd-fac: keep the copies on different engines (rank) or different servers (node)");
+    opts("oclass", po::value<std::string>(&oclass)->default_value(""), "data array object class (default SX, or RP_<rd-fac+1>GX)");
+    opts("index-oclass", po::value<std::string>(&indexOclass)->default_value(""), "seconds and index object class (default S8, or RP_<rd-fac+1>G8)");
     opts("batch-threshold", po::value<double>(&batchThreshold)->default_value(0.9), "events up to this fraction of a chunk are batched; larger ones are written on their own");
     opts("flush-us", po::value<int64_t>(&flushUs)->default_value(5000), "flush a partly filled batch after this many microseconds");
     opts("batch-buffers", po::value<size_t>(&batchBuffers)->default_value(8), "batch buffers (one chunk each) per dequeue thread");
@@ -1092,7 +1097,9 @@ int main(int argc, char** argv) {
                   << "Example without DAOS (receive and discard, to check the network side):\n"
                   << "  e2sar_daos_recv -u 'ejfat://...' --ip <recv ip> --dryrun\n"
                   << "Example without a sender (100,000 x 20 KB events, as fast as DAOS takes them):\n"
-                  << "  e2sar_daos_recv --synthetic 100000 --event-size 20K --pool sc26 --cont-name synth_1"
+                  << "  e2sar_daos_recv --synthetic 100000 --event-size 20K --pool sc26 --cont-name synth_1\n"
+                  << "Example of a run worth keeping (two copies of everything, on different engines):\n"
+                  << "  e2sar_daos_recv -c --ip <recv ip> --pool sc26 --cont-name e2sar_1793280000 --rd-fac 1"
                   << std::endl;
         return 0;
     }
@@ -1107,6 +1114,27 @@ int main(int argc, char** argv) {
     if (synthMode && (synthSize == 0 || synthGbps < 0)) {
         std::cerr << "--event-size must be a positive size (e.g. 95K, 1.5M) and --rate >= 0" << std::endl;
         return 1;
+    }
+    if (rdFac > L::kMaxRdFac || (rdLvl != "rank" && rdLvl != "node")) {
+        std::cerr << "--rd-fac must be 0 to " << L::kMaxRdFac << " and --rd-lvl rank or node" << std::endl;
+        return 1;
+    }
+    {
+        const auto [dataDefault, indexDefault] = L::defaultClasses(rdFac);
+        if (oclass.empty())
+            oclass = dataDefault;
+        if (indexOclass.empty())
+            indexOclass = indexDefault;
+        // before any container is created: DAOS accepts a class with fewer copies than rd_fac
+        for (const auto& name : {oclass, indexOclass}) {
+            const int t = L::classFailuresTolerated(name);
+            if (t >= 0 && t < static_cast<int>(rdFac)) {
+                std::cerr << "Object class " << name << " stores " << t + 1 << " cop" << (t ? "ies" : "y")
+                          << ": --rd-fac " << rdFac << " needs at least " << rdFac + 1 << " (e.g. RP_" << rdFac + 1
+                          << "GX), or leave --oclass/--index-oclass out" << std::endl;
+                return 1;
+            }
+        }
     }
     const bool withCP = vm["withcp"].as<bool>();
     const bool autoIP = vm["autoip"].as<bool>();
@@ -1203,8 +1231,17 @@ int main(int argc, char** argv) {
         } else {
             daos = std::make_unique<DaosRuntime>();
             daosPool = std::make_unique<DaosPool>(pool);
-            daosCont = std::make_unique<DaosContainer>(*daosPool, contName, /*createIfMissing=*/true);
+            daosCont = std::make_unique<DaosContainer>(*daosPool, contName, /*createIfMissing=*/true, DAOS_COO_RW,
+                                                       DaosContainer::Redundancy{rdFac, rdLvl == "rank"});
             logOut("DAOS pool/container:  " + pool + "/" + contName + (daosCont->created() ? " (created)" : " (existing)"));
+            if (daosCont->rdFac() != rdFac)
+                throw std::runtime_error("container " + contName + " has rd_fac " + std::to_string(daosCont->rdFac()) +
+                                         "; run every receiver of a run with the same --rd-fac (yours " +
+                                         std::to_string(rdFac) + ")");
+            logOut("Redundancy:           " +
+                   (rdFac == 0 ? std::string("none (rd_fac 0: one copy)")
+                               : "rd_fac " + std::to_string(rdFac) + ", " + std::to_string(rdFac + 1) + " copies on different " +
+                                     (daosCont->rdRankLevel() ? "engines" : "servers")));
 
             oclassId(oclass);  // check the class names before anything is written
             oclassId(indexOclass);
@@ -1238,7 +1275,7 @@ int main(int argc, char** argv) {
             logOut("Run:                  " + std::string(created ? "new, started " : "joined, started ") +
                    std::to_string(run.start));
             logOut("Writer slot:          " + std::to_string(slot) + ", source " + source);
-            logOut("Classes:              data " + oclass + ", index " + indexOclass + ", catalog " + L::kCatalogClass);
+            logOut("Classes:              data " + oclass + ", index " + indexOclass + ", catalog " + L::catalogClass(daosCont->rdFac()));
             logOut("Chunk / batch:        " + std::to_string(chunk) + " bytes; events <= " +
                    std::to_string(cfg.threshold) + " bytes batched, flush after " + std::to_string(flushUs) + " us");
             logOut("Large events:         written in pieces of <= " + std::to_string(maxWrite) + " bytes");
@@ -1350,6 +1387,9 @@ int main(int argc, char** argv) {
         return 1;
     } catch (const E2SARException& e) {
         logErr("E2SAR error: " + static_cast<std::string>(e));
+        return 1;
+    } catch (const std::exception& e) {
+        logErr(std::string("Error: ") + e.what());
         return 1;
     }
     return stats.eventsFailed == 0 ? 0 : 2;
