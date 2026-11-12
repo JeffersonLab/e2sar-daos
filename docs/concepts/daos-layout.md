@@ -43,6 +43,29 @@ pool sc26
 
 Reading is described in [e2sar_daos_read](../reference/e2sar_daos_read.md).
 
+### DAOS object types
+
+Every DAOS object has a type, fixed when its id is made (`enum daos_otype_t` in `daos_obj.h`, DAOS 2.6). Most types are key-value stores that differ in how many key levels they have and how the keys are ordered; the others are arrays and DAOS's own tables. The run uses three of them (**bold**).
+
+| # | Type | Kind | Keys or contents |
+|---|---|---|---|
+| 0 | `DAOS_OT_MULTI_HASHED` | multi-level KV (dkey → akey → value) | both keys hashed; the default type |
+| 2 | `DAOS_OT_DKEY_UINT64` | multi-level KV | integer dkey |
+| 3 | `DAOS_OT_AKEY_UINT64` | multi-level KV | integer akey |
+| 4 | **`DAOS_OT_MULTI_UINT64`** | multi-level KV | both keys integers, in order: **seconds, index[T]** |
+| 5 | `DAOS_OT_DKEY_LEXICAL` | multi-level KV | dkey in lexical order |
+| 6 | `DAOS_OT_AKEY_LEXICAL` | multi-level KV | akey in lexical order |
+| 7 | `DAOS_OT_MULTI_LEXICAL` | multi-level KV | both keys in lexical order |
+| 8 | **`DAOS_OT_KV_HASHED`** | flat KV, no akey (`daos_kv_*`) | hashed string key: **catalog** |
+| 9 | `DAOS_OT_KV_UINT64` | flat KV | integer key |
+| 10 | `DAOS_OT_KV_LEXICAL` | flat KV | key in lexical order |
+| 11 | `DAOS_OT_ARRAY` | array (`daos_array_*`) | cell and chunk size stored in the object |
+| 12 | `DAOS_OT_ARRAY_ATTR` | array | cell and chunk size given by the user at each open |
+| 13 | **`DAOS_OT_ARRAY_BYTE`** | byte array | no metadata, as DFS (POSIX) files use: **data[T, s]** |
+| 1, 14 | `DAOS_OT_OIT`, `DAOS_OT_OIT_V2` | internal | object id table made with a snapshot |
+
+The type is the top byte of `oid.hi` and the class the next 32 bits, so both read off `daos container list-objects` (ids in the [figure](#object-ids)): `0x08 01000001 …` is a flat KV in `S1` (catalog), `0x04 01000008 …` an integer-key object in `S8` (seconds, index), `0x0d 01000020 …` a byte array in `SX`, which on a 32-target pool is 32 groups (data).
+
 ## Writer–reader contract
 
 The DAOS container is the only way writers and readers communicate. There are no sockets, signals or shared files between them. The one rule outside the container is the start order: **start the writers first, then the reader.**
