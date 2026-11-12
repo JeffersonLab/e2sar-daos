@@ -14,7 +14,7 @@ sources:
 
 Two sweeps of the same sender at 20, 15, 10 and 5 Gbps, 90 s each, through LB 682 into one `e2sar_daos_recv` on ebpf2201. The second sweep differs only in `e2sar_evio_send --ramp 10`: the rate starts at 1 Gbps and rises linearly to the target over the first 10 s.
 
-![The DAOS monitor during the 5 Gbps run with the ramp: incoming rises from 1 to 5 Gbps over 10 s, 552,584 events, 0 missing](../images/sc26_daos_monitor.png)
+![The DAOS monitor during the 5 Gbps run with the ramp: incoming rises from 1 to 5 Gbps over 10 s, 552,584 events, 0 missing](../images/lb682_5gbps_ramp_daos_monitor.png)
 
 ## Setup
 

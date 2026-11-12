@@ -10,6 +10,8 @@ Bash and Python scripts that drive the [applications](../bin/README.md) on the J
 | [`e2sar_site2ebpf_recv.sh`](e2sar_site2ebpf_recv.sh) | Runs an ebpf node as a receiver for a remote sender (Perlmutter or another site) |
 | [`e2sar_live_pipeline.sh`](e2sar_live_pipeline.sh) | The live pipeline for a remote sender through an LB, from a machine that can SSH to every node: `start`, `stop`, `status`, `recycle` (replace a run that got no events for an hour) and `watch` (status and recycle every hour) |
 | [`e2sar_nicmon.sh`](e2sar_nicmon.sh) | 1 s samples of a receiver node's NIC, IP, UDP and TCP counters during a run: `start`, `stop`, `report` |
+| [`e2sar_loss_timeline.py`](e2sar_loss_timeline.py) | A run's receiver losses per minute, by cause matched from the `e2sar_nicmon.sh` samples (NIC port discard, kernel IP→UDP drop, upstream, ...), with the cumulative loss rate: a PNG and a table |
+| [`capture/`](capture/README.md) | Screenshots for the docs from the laptop: `shot_monitor.js` (the DAOS monitor, light theme on white) |
 | [`evio/evio_concat.py`](evio/evio_concat.py) | Joins EVIO v6 files and the reader's `.dat` files (bare records) into one EVIO v6 file, adding the file header: the step that makes a `.evio` file |
 | [`evio/evio_hit_compression.py`](evio/evio_hit_compression.py) | How far fADC250 time frames compress, by method |
 | [`utc.py`](utc.py) | Turns the UTC epoch times in run names, bundle names, DAOS object ids and log lines into dates (`-h` for usage; with no arguments it reads lines from stdin) |

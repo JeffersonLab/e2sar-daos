@@ -392,6 +392,8 @@ Repeat steps 5–9 with a new `RUNID` each time, raising `--rate`. Keep `-l 1048
 | 30 | 8 | | | | | | |
 | 40 | 8 | | | | | | |
 
+The 2026-10-27 Perlmutter runs at 10, 20, 40 and 80 Gbps aggregate (the old KV layout; sender settings not kept) are in [2026-10-27-perlmutter-rate-sweep](../results/2026-10-27-perlmutter-rate-sweep.md).
+
 What to look at:
 - 1 MiB events leave each send thread as ~10 Gbps line-rate bursts. More `--sockets` spread the rate over more threads.
 - If the sender reports its rate with 0 errors but both receivers see loss with 0 NIC discards, the loss is on the way: the LCF's egress, the WAN or the LB.
