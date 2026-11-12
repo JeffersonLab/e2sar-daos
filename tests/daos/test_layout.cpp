@@ -108,6 +108,22 @@ BOOST_AUTO_TEST_CASE(RedundancyClasses) {
     BOOST_CHECK_EQUAL(defaultClasses(2).first, "RP_3GX");
     BOOST_CHECK_THROW(catalogClass(kMaxRdFac + 1), std::out_of_range);
     BOOST_CHECK_THROW(defaultClasses(kMaxRdFac + 1), std::out_of_range);
+
+    BOOST_CHECK_EQUAL(classFailuresTolerated("SX"), 0);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("S1"), 0);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("S32"), 0);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("RP_2GX"), 1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("RP_2G8"), 1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("RP_3G1"), 2);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("EC_2P1GX"), 1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("EC_16P2G1"), 2);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("UNKNOWN"), -1);
+    BOOST_CHECK_EQUAL(classFailuresTolerated("S"), -1);
+    for (uint32_t f = 0; f <= kMaxRdFac; f++) {  // the defaults always fit
+        BOOST_CHECK_EQUAL(classFailuresTolerated(defaultClasses(f).first), static_cast<int>(f));
+        BOOST_CHECK_EQUAL(classFailuresTolerated(defaultClasses(f).second), static_cast<int>(f));
+        BOOST_CHECK_EQUAL(classFailuresTolerated(catalogClass(f)), static_cast<int>(f));
+    }
 }
 
 BOOST_AUTO_TEST_CASE(CatalogRecords) {

@@ -85,6 +85,35 @@ inline std::string catalogClass(uint32_t rdFac) {
     return rdFac == 0 ? "S1" : "RP_" + std::to_string(rdFac + 1) + "G1";
 }
 
+/**
+    How many failures a DAOS object class tolerates, from its name: S<n> and SX 0, RP_<n>... n - 1,
+    EC_<k>P<p>... p. -1 for a name of another form. DAOS itself accepts a class with fewer
+    copies than the container's rd_fac, so e2sar_daos_recv checks with this.
+*/
+inline int classFailuresTolerated(const std::string& name) {
+    auto digits = [&](size_t i, size_t& end) -> int {
+        end = i;
+        while (end < name.size() && name[end] >= '0' && name[end] <= '9')
+            end++;
+        return end > i && end - i < 6 ? std::stoi(name.substr(i, end - i)) : -1;
+    };
+    size_t e = 0;
+    if (name == "SX")
+        return 0;
+    if (name.size() > 1 && name[0] == 'S' && digits(1, e) >= 1 && e == name.size())
+        return 0;
+    if (name.rfind("RP_", 0) == 0) {
+        const int r = digits(3, e);
+        return r >= 1 ? r - 1 : -1;
+    }
+    if (name.rfind("EC_", 0) == 0) {
+        if (digits(3, e) < 1 || e >= name.size() || name[e] != 'P')
+            return -1;
+        return digits(e + 1, e);
+    }
+    return -1;
+}
+
 /** Default data and index classes for an rd_fac: SX/S8, or RP_<n+1>GX/RP_<n+1>G8. */
 inline std::pair<std::string, std::string> defaultClasses(uint32_t rdFac) {
     if (rdFac > kMaxRdFac)

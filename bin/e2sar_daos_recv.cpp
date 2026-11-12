@@ -45,7 +45,6 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
-#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -1126,6 +1125,16 @@ int main(int argc, char** argv) {
             oclass = dataDefault;
         if (indexOclass.empty())
             indexOclass = indexDefault;
+        // before any container is created: DAOS accepts a class with fewer copies than rd_fac
+        for (const auto& name : {oclass, indexOclass}) {
+            const int t = L::classFailuresTolerated(name);
+            if (t >= 0 && t < static_cast<int>(rdFac)) {
+                std::cerr << "Object class " << name << " stores " << t + 1 << " cop" << (t ? "ies" : "y")
+                          << ": --rd-fac " << rdFac << " needs at least " << rdFac + 1 << " (e.g. RP_" << rdFac + 1
+                          << "GX), or leave --oclass/--index-oclass out" << std::endl;
+                return 1;
+            }
+        }
     }
     const bool withCP = vm["withcp"].as<bool>();
     const bool autoIP = vm["autoip"].as<bool>();
@@ -1234,19 +1243,8 @@ int main(int argc, char** argv) {
                                : "rd_fac " + std::to_string(rdFac) + ", " + std::to_string(rdFac + 1) + " copies on different " +
                                      (daosCont->rdRankLevel() ? "engines" : "servers")));
 
-            // check the classes before anything is written: known names, and enough copies for the container
-            for (const auto& [name, kind, type] :
-                 {std::tuple{oclass, L::Kind::Data, DAOS_OT_ARRAY_BYTE}, std::tuple{indexOclass, L::Kind::Index, DAOS_OT_MULTI_UINT64}}) {
-                try {
-                    makeOid(*daosCont, L::oidLo(kind), type, name);
-                } catch (const DaosError& e) {
-                    if (e.rc() != -DER_INVAL)
-                        throw;
-                    throw std::runtime_error("object class " + name + " doesn't fit container rd_fac " +
-                                             std::to_string(rdFac) + ": it needs at least " + std::to_string(rdFac + 1) +
-                                             " copies, e.g. RP_" + std::to_string(rdFac + 1) + "GX");
-                }
-            }
+            oclassId(oclass);  // check the class names before anything is written
+            oclassId(indexOclass);
             catalog = std::make_unique<Catalog>(*daosCont);
             L::RunSettings mine;
             mine.start = utcSecond();
@@ -1389,6 +1387,9 @@ int main(int argc, char** argv) {
         return 1;
     } catch (const E2SARException& e) {
         logErr("E2SAR error: " + static_cast<std::string>(e));
+        return 1;
+    } catch (const std::exception& e) {
+        logErr(std::string("Error: ") + e.what());
         return 1;
     }
     return stats.eventsFailed == 0 ? 0 : 2;
