@@ -85,6 +85,10 @@ oid.lo = K SSSS TTTTTTTTTT     (decimal digits)
 
 Read an id from the right: the last 10 digits are the second, the 4 before them the slot, the first digit the kind. Slots go up to 9999, and 10-digit seconds last until the year 2286.
 
+![daos container list-objects on a 1,293-second run with one writer: 1 catalog, 1 seconds, 1,293 index and 1,293 data objects, and how a data id reads](../images/daos_object_ids.svg)
+
+The `oid.hi` part is the same for every object of the same class: here `seconds` and `index[T]` share `S8`.
+
 - **Placement.** DAOS picks an object's targets from a hash of the whole id, so consecutive seconds land on unrelated targets. Within an object, the hash of the top-level key (dkey) picks the group. The id bits only have to be unique; their decimal layout doesn't affect placement.
 - **Classes.** The data class sets throughput: `SX` stripes over all targets. For a run worth keeping, store copies: see [Redundancy](#redundancy). The index objects are small and each is read once, so `S8` is enough; use a wider class at very high batch rates.
 - **Same classes for the whole run.** The classes are stored in the catalog's `run` record. A receiver that joins a run with different classes, or a different chunk size, stops with an error.
