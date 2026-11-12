@@ -8,7 +8,7 @@
 #   e2sar_live_pipeline.sh start     a new run, container LABEL_<UTC epoch s>: on each receiver node the
 #                                    NIC monitor, then e2sar_daos_recv -c (the LB in EJFAT_URI from
 #                                    ENV_FILE); on the reader node e2sar_daos_monitor and its page,
-#                                    e2sar_daos_read --live, and the EVIO viewer. Refuses if a run is up
+#                                    e2sar_daos_read $READ_MODE (--live), and the EVIO viewer. Refuses if a run is up
 #   e2sar_live_pipeline.sh stop      stop the current run: receivers (Ctrl-C: they deregister and drain),
 #                                    reader, monitor, pages, NIC monitors. Its data stays; its logs move
 #                                    to LOGDIR/<run>/
@@ -33,7 +33,8 @@
 : "${POOL:=sc26}"
 : "${PORT:=20700}"                                            # first UDP port of each receiver
 : "${RECV_ARGS:=--threads 4 --deq 16 --report 10 --log-idle -b 1073741824}"   # keep -b 1 GiB: 3 MB drops ~10% at 1.5 Gbps
-: "${READ_ARGS:=--min-free 50}"                               # e2sar_daos_read --live: pauses below 50 GiB free in OUT
+: "${READ_MODE:=--live}"                                       # or --live-rm: remove read data from DAOS (--rm-after intervals behind)
+: "${READ_ARGS:=--min-free 50}"                               # e2sar_daos_read: pauses below 50 GiB free in OUT
 : "${OUT:=/scratch/$USER}"                                    # reader files: OUT/live_<run>; monitor: OUT/<run>_monitor.jsonl
 : "${LOGDIR:=e2sar_run/live}"
 : "${REPO:=daq/e2sar-daos}"                                   # built e2sar-daos checkout
@@ -57,8 +58,8 @@ say() { echo "[$(date -u +%T) UTC] $*"; }
 # comes on stdin (the login shell may be tcsh: no redirections in the ssh command line).
 on() {
     local h=$1; shift
-    { printf 'export POOL=%q PORT=%q RECV_ARGS=%q READ_ARGS=%q OUT=%q LOGDIR=%q REPO=%q VIEWER=%q ENV_FILE=%q MON_PORT=%q VIEW_PORT=%q\n' \
-          "$POOL" "$PORT" "$RECV_ARGS" "$READ_ARGS" "$OUT" "$LOGDIR" "$REPO" "$VIEWER" "$ENV_FILE" "$MON_PORT" "$VIEW_PORT"
+    { printf 'export POOL=%q PORT=%q RECV_ARGS=%q READ_MODE=%q READ_ARGS=%q OUT=%q LOGDIR=%q REPO=%q VIEWER=%q ENV_FILE=%q MON_PORT=%q VIEW_PORT=%q\n' \
+          "$POOL" "$PORT" "$RECV_ARGS" "$READ_MODE" "$READ_ARGS" "$OUT" "$LOGDIR" "$REPO" "$VIEWER" "$ENV_FILE" "$MON_PORT" "$VIEW_PORT"
       echo 'source ~/.bashrc >/dev/null 2>&1; L=$HOME/$LOGDIR; H=$(hostname -s); mkdir -p "$L"'
       cat; } | ssh -x "$h" bash -s -- "$@"
 }
@@ -114,7 +115,7 @@ cd "$HOME/$REPO" || exit 1
 setsid nohup ./build/bin/e2sar_daos_monitor --pool "$POOL" --cont "$1" -o "$OUT/$1_monitor.jsonl" > "$L/monitor.log" 2>&1 < /dev/null &
 sleep 2
 setsid nohup python3 viz/daos_monitor/serve.py "$OUT/$1_monitor.jsonl" --port "$MON_PORT" > "$L/monitor_serve.log" 2>&1 < /dev/null &
-setsid nohup ./build/bin/e2sar_daos_read --pool "$POOL" --cont "$1" -o "$D" --live $READ_ARGS > "$L/read.log" 2>&1 < /dev/null &
+setsid nohup ./build/bin/e2sar_daos_read --pool "$POOL" --cont "$1" -o "$D" $READ_MODE $READ_ARGS > "$L/read.log" 2>&1 < /dev/null &
 cd "$HOME/$VIEWER" || exit 1
 setsid nohup .venv/bin/python serve.py --live "$D" --port "$VIEW_PORT" --no-browser > "$L/viewer.log" 2>&1 < /dev/null &
 sleep 4

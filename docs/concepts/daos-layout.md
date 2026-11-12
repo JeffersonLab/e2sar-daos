@@ -1,7 +1,7 @@
 ---
 type: Concept
 title: "Data layout in DAOS"
-description: "One container per run, with a catalog, a seconds object, an index per UTC second and byte arrays per second and writer; the writer–reader contract."
+description: "One container per run, with a catalog, a seconds object, an index per UTC second and byte arrays per second and writer; the writer–reader contract; redundancy for runs worth keeping."
 tags: [daos, layout, e2sar_daos_recv, e2sar_daos_read]
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/DAOS_LAYOUT.md", title: "DAOS_LAYOUT.md at 0d85d00" }
@@ -78,16 +78,33 @@ oid.lo = K SSSS TTTTTTTTTT     (decimal digits)
 
 | Object | Kind | `oid.lo` | Example `oid.lo` | DAOS object type | Class (default) |
 |---|---|---|---|---|---|
-| catalog | 1 | `1 0000 0000000000` | `100000000000000` | `DAOS_OT_KV_HASHED` | `S1`, fixed: a reader opens it before it knows the run's classes |
+| catalog | 1 | `1 0000 0000000000` | `100000000000000` | `DAOS_OT_KV_HASHED` | `S1`, or `RP_<n+1>G1` in a container with `rd_fac` n ([Redundancy](#redundancy)): a reader opens it before it knows the run's classes |
 | seconds | 2 | `2 0000 0000000000` | `200000000000000` | `DAOS_OT_MULTI_UINT64` | `--index-oclass` |
-| index[T] | 3 | `3 0000 T` | `300001793280042` = index[1793280042] | `DAOS_OT_MULTI_UINT64` | `--index-oclass`, default `S8` |
-| data[T, s] | 4 | `4 ssss T` | `400011793280042` = data[1793280042, slot 1] | `DAOS_OT_ARRAY_BYTE` | `--oclass`, default `SX` |
+| index[T] | 3 | `3 0000 T` | `300001793280042` = index[1793280042] | `DAOS_OT_MULTI_UINT64` | `--index-oclass`, default `S8` (`RP_<n+1>G8` with `--rd-fac n`) |
+| data[T, s] | 4 | `4 ssss T` | `400011793280042` = data[1793280042, slot 1] | `DAOS_OT_ARRAY_BYTE` | `--oclass`, default `SX` (`RP_<n+1>GX` with `--rd-fac n`) |
 
 Read an id from the right: the last 10 digits are the second, the 4 before them the slot, the first digit the kind. Slots go up to 9999, and 10-digit seconds last until the year 2286.
 
 - **Placement.** DAOS picks an object's targets from a hash of the whole id, so consecutive seconds land on unrelated targets. Within an object, the hash of the top-level key (dkey) picks the group. The id bits only have to be unique; their decimal layout doesn't affect placement.
-- **Classes.** The data class sets throughput: `SX` stripes over all targets. If the container needs redundancy, use `RP_2GX` or an `EC_…GX` class, with a chunk size that is a multiple of a full EC stripe (data shards × EC cell size). The index objects are small and each is read once, so `S8` is enough; use a wider class at very high batch rates.
+- **Classes.** The data class sets throughput: `SX` stripes over all targets. For a run worth keeping, store copies: see [Redundancy](#redundancy). The index objects are small and each is read once, so `S8` is enough; use a wider class at very high batch rates.
 - **Same classes for the whole run.** The classes are stored in the catalog's `run` record. A receiver that joins a run with different classes, or a different chunk size, stops with an error.
+
+## Redundancy
+
+By default a run has one copy of everything (`S1`, `S8`, `SX`): if one target of the pool is lost, so is every object with a piece on it. Data is striped over all targets, so that means most of the run. For a run worth keeping, start every receiver with `--rd-fac 1`:
+
+- The first receiver creates the container with the properties `rd_fac:1` (one copy may be lost) and `rd_lvl:rank` (the copies go on different engines; `--rd-lvl node` puts them on different servers).
+- The default classes become `RP_2GX` (data) and `RP_2G8` (index), and the catalog's class `RP_2G1`. The catalog's class depends only on the container's `rd_fac`, which never changes, so a reader still opens the catalog before it knows the run's settings. Containers with `rd_fac` 0, including every run written before `--rd-fac` existed, keep `S1`.
+- A receiver whose `--rd-fac` differs from the container's, or whose `--oclass`/`--index-oclass` has fewer copies than the container needs, stops with an error before it writes anything.
+- `--rd-fac 2` stores three copies (`RP_3…`). EC classes need at least 3 fault domains and aren't chosen by default; pass them with `--oclass` on a pool that has them, with a chunk size that is a multiple of a full EC stripe (data shards × EC cell size).
+
+What copies do and don't do:
+
+- **They make losing a target safe.** An administrator can exclude a broken target (`dmg pool exclude`), and DAOS rebuilds its pieces from the copies. Without copies, excluding it loses the data on it.
+- **They don't keep writes going to a target that hangs but isn't excluded.** A replicated write waits for every copy. On 2026-11-11 a sc26 target (rank 4, target 8) stopped answering while the pool still reported it healthy; receivers and readers hung on it until it was excluded or its engine restarted. Copies would have changed only what excluding it costs.
+- **They cost space and write bandwidth:** `RP_2` writes every byte twice.
+
+On sc26 both engines are on one server (daosfs2302), so `rd_lvl:node` is impossible (`daos cont create --properties=rd_fac:1` fails with `DER_INVAL`) and only `RP_2` across the two ranks works: keep the default `--rd-lvl rank`.
 
 ## Catalog
 
@@ -211,8 +228,9 @@ Lines from several receivers can then be merged and sorted as numbers, and match
 |---|---|---|
 | `--pool`, `--cont-name` | required | pool, and the run's container (created if missing) |
 | `--chunk` | 1024 KiB | array chunk size = batch size |
-| `--oclass` | `SX` | data array class |
-| `--index-oclass` | `S8` | seconds and index class |
+| `--rd-fac`, `--rd-lvl` | 0, `rank` | copies that may be lost, and where copies go ([Redundancy](#redundancy)) |
+| `--oclass` | `SX` (`RP_<n+1>GX`) | data array class |
+| `--index-oclass` | `S8` (`RP_<n+1>G8`) | seconds and index class |
 | `--batch-threshold` | 0.9 | events ≤ θ × chunk are batched |
 | `--flush-us` | 5000 | flush a partly filled batch after this long |
 | `--batch-buffers` | 8 | batch buffers per dequeue thread |

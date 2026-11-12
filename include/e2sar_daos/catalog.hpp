@@ -1,7 +1,7 @@
 #pragma once
 /**
     The catalog of a run (docs/concepts/daos-layout.md#catalog): one KV object per container,
-    oid.lo = 1 0000 0000000000, fixed class layout::kCatalogClass.
+    oid.lo = 1 0000 0000000000, class layout::catalogClass(the container's rd_fac): S1, or RP_<n+1>G1.
 
         run            settings shared by every writer (start, chunk, classes, threshold)
         writer/<slot>  a writer exists (started, source: where its data comes from);

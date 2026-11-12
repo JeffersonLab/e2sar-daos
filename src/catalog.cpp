@@ -7,7 +7,7 @@ namespace e2sar_daos {
 using namespace layout;
 
 Catalog::Catalog(const DaosContainer& cont, unsigned int mode)
-    : kv_(cont, oidLo(Kind::Catalog), 0, kCatalogClass, mode) {}
+    : kv_(cont, oidLo(Kind::Catalog), 0, catalogClass(cont.rdFac()), mode) {}
 
 std::optional<std::string> Catalog::value(const std::string& key) {
     size_t size = kv_.valueSize(key);

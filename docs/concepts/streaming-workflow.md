@@ -12,7 +12,7 @@ sources:
 Implemented (2026-10-29): `e2sar_daos_recv` writes the layout of [daos-layout](daos-layout.md) and `e2sar_daos_read` reads it as in [e2sar_daos_read](../reference/e2sar_daos_read.md). This page covers the whole workflow, a [walkthrough](../howto/streaming-walkthrough.md#walkthrough---live-rm-streaming-of-an-evio-file) on the ebpf testbed, the two live monitors, the senders, and how the receiver settings will be tuned.
 ## The workflow
 
-![Streaming workflow: senders, EJFAT LB, two receivers writing one DAOS container, one live reader, and the two monitors viewed from the booth laptop through SSH tunnels](../images/streaming_workflow_demo-sc26.svg)
+![Streaming workflow as run on 2026-11-12: senders, EJFAT LB, one receiver on the writer node writing one DAOS container, and on the reader node the --live-rm reader (a file per 2 s, removing from DAOS 20 s behind), the DAOS monitor (every 2 s) and the EVIO viewer (newest file, every 2 s), seen from a laptop through an SSH tunnel](../images/streaming_workflow_demo-sc26.svg)
 
 The receivers (DAOS writers) and the reader communicate only through the DAOS container: no sockets or shared files. The one rule outside the container is the order: receivers first, then the reader ([writer–reader contract](daos-layout.md#writerreader-contract)). The sequence:
 

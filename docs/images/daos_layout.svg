@@ -14,7 +14,7 @@
 
   <!-- pool / container -->
   <rect x="20" y="50" width="1060" height="430" rx="10" fill="none" stroke="#8c959f" stroke-dasharray="6 4"/>
-  <text x="36" y="70" font-weight="bold" fill="#57606a">pool sc26</text>
+  <text x="36" y="70" font-weight="bold" fill="#57606a">DAOS pool</text>
   <rect x="40" y="80" width="1020" height="385" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
   <text x="56" y="102" font-weight="bold">container e2sar_1793280000</text>
   <text x="250" y="102" font-size="12" fill="#57606a">one run · plain DAOS container (not POSIX, no dfuse) · T = UTC second, s = writer slot</text>
@@ -22,7 +22,7 @@
   <!-- ============ catalog ============ -->
   <rect x="60" y="120" width="310" height="190" rx="8" fill="#ddf4ff" stroke="#0969da"/>
   <text x="74" y="142" font-weight="bold">catalog</text>
-  <text x="134" y="142" font-size="11" fill="#57606a">KV object · string keys · class S1</text>
+  <text x="134" y="142" font-size="11" fill="#57606a">KV object · string keys · S1 or RP_2G1</text>
   <g font-family="Menlo, Consolas, monospace" font-size="10.5">
     <text x="74" y="168" font-weight="bold">run</text>
     <text x="142" y="168">start=1793280000 chunk=1MiB</text>
@@ -204,7 +204,7 @@
     <text x="580" y="537">1</text>
     <text x="610" y="537" font-family="Menlo, Consolas, monospace" font-size="10.5">100000000000000</text>
     <text x="780" y="537">KV_HASHED</text>
-    <text x="970" y="537">S1 (fixed)</text>
+    <text x="970" y="537">S1 or RP_2G1</text>
 
     <rect x="440" y="551" width="12" height="12" rx="2" fill="#fbefff" stroke="#8250df"/>
     <text x="460" y="561">seconds</text>

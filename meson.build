@@ -20,11 +20,13 @@ daos_lib = cpp_compiler.find_library('daos', required: false, dirs: '/usr/lib64'
 dfs_lib = cpp_compiler.find_library('dfs', required: false, dirs: '/usr/lib64')
 # libgurt provides d_errstr() and other DAOS common runtime symbols
 gurt_lib = cpp_compiler.find_library('gurt', required: false, dirs: '/usr/lib64')
+# libdaos_common provides daos_prop_alloc() / daos_prop_free() (container properties)
+daos_common_lib = cpp_compiler.find_library('daos_common', required: false, dirs: '/usr/lib64')
 
-if daos_lib.found() and dfs_lib.found() and gurt_lib.found()
+if daos_lib.found() and dfs_lib.found() and gurt_lib.found() and daos_common_lib.found()
     daos_dep = declare_dependency(
         include_directories: [daos_include_dir],
-        dependencies: [daos_lib, dfs_lib, gurt_lib]
+        dependencies: [daos_lib, dfs_lib, gurt_lib, daos_common_lib]
     )
     message('  - DAOS manually linked.')
 else

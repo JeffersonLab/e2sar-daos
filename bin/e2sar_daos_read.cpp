@@ -658,7 +658,8 @@ int runLive(const Options& o) {
         W = o.from ? o.from : run.settings.start;
         W -= W % I;
     }
-    logOut("run " + o.cont + ": " + formatRecord(run.settings.toRecord()));
+    logOut("run " + o.cont + ": " + formatRecord(run.settings.toRecord()) + "; container rd_fac " +
+           std::to_string(run.cont->rdFac()));
     logOut(std::string(o.liveRm ? "--live-rm" : "--live") + ": one file per " + std::to_string(I) + " s from " +
            std::to_string(W) + " into " + o.dir +
            (o.liveRm ? "; removing from DAOS " + std::to_string(o.rmAfter) + " intervals behind" : ""));
@@ -1046,7 +1047,8 @@ int runFetch(const Options& o) {
 int runList(const Options& o) {
     Run run;
     run.open(o, false);
-    std::cout << "Run " << o.cont << ": " << formatRecord(run.settings.toRecord()) << std::endl;
+    std::cout << "Run " << o.cont << ": " << formatRecord(run.settings.toRecord()) << "; container rd_fac "
+              << run.cont->rdFac() << std::endl;
     for (uint32_t s : run.catalog->slots()) {
         const auto done = run.catalog->done(s);
         const auto wm = run.catalog->watermark(s);

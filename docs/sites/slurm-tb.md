@@ -27,7 +27,7 @@ Checked 2026-11-11 (`sinfo`, and a 1-CPU job per node).
 
 - Ethernet is 129.57.178.128/25 (DHCP, gateway .129), routed to the login node and ebpf2201/2203 (129.57.178.64/26). At 1 Gbps it can't take E2SAR traffic, and anything written to `$HOME` (NFS) goes through it.
 - IPoIB is 172.19.27.0/24, shared with the login node and the DAOS engines. DAOS uses `ofi+verbs;ofi_rxm` over it.
-- Pool `sc26` sits on two engines, ranks 4 and 5, both on daosfs2302 (`daosfs2302-ib3` 172.19.27.21 and `daosfs2302-ib1` 172.19.27.20).
+- Pool `sc26` sits on two engines, ranks 4 and 5, both on daosfs2302 (`daosfs2302-ib3` 172.19.27.21 and `daosfs2302-ib1` 172.19.27.20). So redundancy can only be across the two engines: `e2sar_daos_recv --rd-fac 1` with the default `--rd-lvl rank` ([Redundancy](../concepts/daos-layout.md#redundancy)); `rd_lvl:node` and EC classes are impossible.
 - All run the DAOS 2.6.5 client and `daos_agent`. On 2026-11-11 tb16c04's agent predated the 2.6.5 upgrade and every DAOS call failed with `DER_MISC`: use `--exclude=tb16c04` until it is restarted.
 - Partitions `cores` and `sockets`: 8 h default, 4 days at most, no preemption.
 - No IOR. Open MPI 4.1.1 (`openmpi-devel`, `module load mpi/openmpi-x86_64`) and MPICH 4.1.1 (no devel); `srun --mpi=pmix` works. No autotools.

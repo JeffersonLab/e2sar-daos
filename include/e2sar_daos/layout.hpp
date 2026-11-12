@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace e2sar_daos {
@@ -67,8 +68,32 @@ constexpr uint64_t kSlotMul = 10000000000ull;      // 10^10
 constexpr uint32_t kMaxSlot = 9999;
 constexpr uint64_t kMaxSecond = kSlotMul - 1;      // 10 digits: until the year 2286
 
-/** The catalog's object class is fixed, so a reader can open it before knowing the run's settings. */
-constexpr const char* kCatalogClass = "S1";
+/**
+    Redundancy factor (container property rd_fac): how many copies of an object may be lost
+    without losing data. 0 = one copy (every run written before --rd-fac existed). Up to 2 here.
+*/
+constexpr uint32_t kMaxRdFac = 2;
+
+/**
+    The catalog's object class depends only on the container's rd_fac, which is set when the
+    container is created. So a reader opens the catalog before it knows the run's settings:
+    rd_fac 0 -> S1 (as for every older run), n -> RP_<n+1>G1.
+*/
+inline std::string catalogClass(uint32_t rdFac) {
+    if (rdFac > kMaxRdFac)
+        throw std::out_of_range("rd_fac > " + std::to_string(kMaxRdFac));
+    return rdFac == 0 ? "S1" : "RP_" + std::to_string(rdFac + 1) + "G1";
+}
+
+/** Default data and index classes for an rd_fac: SX/S8, or RP_<n+1>GX/RP_<n+1>G8. */
+inline std::pair<std::string, std::string> defaultClasses(uint32_t rdFac) {
+    if (rdFac > kMaxRdFac)
+        throw std::out_of_range("rd_fac > " + std::to_string(kMaxRdFac));
+    if (rdFac == 0)
+        return {"SX", "S8"};
+    const std::string rp = "RP_" + std::to_string(rdFac + 1);
+    return {rp + "GX", rp + "G8"};
+}
 
 inline uint64_t oidLo(Kind kind, uint32_t slot = 0, uint64_t second = 0) {
     if (slot > kMaxSlot)

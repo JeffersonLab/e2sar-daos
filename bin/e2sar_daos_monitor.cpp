@@ -277,7 +277,8 @@ public:
             return false;
         reader_ = std::make_unique<RunReader>(*cont_, settings_, DAOS_OO_RO, 32, 16 << 20);
         started_ = true;
-        logOut("run " + o_.cont + ": " + formatRecord(settings_.toRecord()));
+        logOut("run " + o_.cont + ": " + formatRecord(settings_.toRecord()) + "; container rd_fac " +
+               std::to_string(cont_->rdFac()));
         return true;
     }
 
