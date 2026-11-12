@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="470" viewBox="0 0 1000 470" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#1f2328">
+  <rect width="1000" height="470" fill="#ffffff"/>
+
+  <!-- command -->
+  <rect x="20" y="16" width="960" height="34" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="34" y="38" font-family="Menlo, Consolas, monospace" font-size="13"><tspan fill="#57606a">$</tspan> daos container list-objects &lt;pool&gt; &lt;run container&gt;</text>
+  <text x="966" y="38" text-anchor="end" fill="#57606a" font-size="12">2,588 objects in a 1,293-second run, one writer</text>
+
+  <!-- header -->
+  <g font-weight="bold" fill="#57606a" font-size="12">
+    <text x="34" y="80">Example id printed as hi.lo</text>
+    <text x="350" y="80">Object</text>
+    <text x="530" y="80" text-anchor="end">Count</text>
+    <text x="560" y="80">Class</text>
+    <text x="620" y="80">Holds</text>
+  </g>
+  <line x1="20" y1="88" x2="980" y2="88" stroke="#d0d7de"/>
+
+  <!-- rows -->
+  <g font-family="Menlo, Consolas, monospace" font-size="13">
+    <text x="34" y="116"><tspan fill="#8c959f">576742231575101440.</tspan><tspan font-weight="bold" fill="#9a6700">1</tspan><tspan fill="#1a7f37">0000</tspan><tspan fill="#0969da">0000000000</tspan></text>
+    <text x="34" y="156"><tspan fill="#8c959f">288511885488160768.</tspan><tspan font-weight="bold" fill="#9a6700">2</tspan><tspan fill="#1a7f37">0000</tspan><tspan fill="#0969da">0000000000</tspan></text>
+    <text x="34" y="196"><tspan fill="#8c959f">288511885488160768.</tspan><tspan font-weight="bold" fill="#9a6700">3</tspan><tspan fill="#1a7f37">0000</tspan><tspan fill="#0969da">1794441650</tspan></text>
+    <text x="34" y="236"><tspan fill="#8c959f">937030334908727296.</tspan><tspan font-weight="bold" fill="#9a6700">4</tspan><tspan fill="#1a7f37">0000</tspan><tspan fill="#0969da">1794441650</tspan></text>
+  </g>
+
+  <rect x="342" y="99" width="104" height="24" rx="5" fill="#fff8c5" stroke="#9a6700"/>
+  <rect x="342" y="139" width="104" height="24" rx="5" fill="#f6f8fa" stroke="#57606a"/>
+  <rect x="342" y="179" width="104" height="24" rx="5" fill="#ddf4ff" stroke="#0969da"/>
+  <rect x="342" y="219" width="104" height="24" rx="5" fill="#dafbe1" stroke="#1a7f37"/>
+  <g font-weight="bold" text-anchor="middle">
+    <text x="394" y="116">catalog</text>
+    <text x="394" y="156">seconds</text>
+    <text x="394" y="196">index[T]</text>
+    <text x="394" y="236">data[T, s]</text>
+  </g>
+
+  <g text-anchor="end">
+    <text x="530" y="116">1</text>
+    <text x="530" y="156">1</text>
+    <text x="530" y="196">1,293</text>
+    <text x="530" y="236">1,293</text>
+  </g>
+  <g font-family="Menlo, Consolas, monospace">
+    <text x="560" y="116">S1</text>
+    <text x="560" y="156">S8</text>
+    <text x="560" y="196">S8</text>
+    <text x="560" y="236">SX</text>
+  </g>
+  <g font-size="12">
+    <text x="620" y="116">run settings, writer slots, watermarks</text>
+    <text x="620" y="156">which UTC seconds have data</text>
+    <text x="620" y="196">one per second: batch → event numbers</text>
+    <text x="620" y="236">one per second and slot: event bytes</text>
+  </g>
+  <g stroke="#eaeef2">
+    <line x1="20" y1="128" x2="980" y2="128"/>
+    <line x1="20" y1="168" x2="980" y2="168"/>
+    <line x1="20" y1="208" x2="980" y2="208"/>
+    <line x1="20" y1="248" x2="980" y2="248"/>
+  </g>
+
+  <!-- decoding -->
+  <text x="34" y="290" font-weight="bold" fill="#57606a">Reading the data id</text>
+  <g font-family="Menlo, Consolas, monospace" font-size="22">
+    <text x="60" y="336"><tspan fill="#8c959f">937030334908727296.</tspan><tspan font-weight="bold" fill="#9a6700">4</tspan><tspan fill="#1a7f37">0000</tspan><tspan fill="#0969da">1794441650</tspan></text>
+  </g>
+  <!-- character width ~13.2 px at 22 px Menlo: hi = 19 chars -> 60..311 -->
+  <g fill="none" stroke-width="1.5">
+    <path d="M62,346 v8 h247 v-8" stroke="#8c959f"/>
+    <path d="M313,346 v8 h11 v-8" stroke="#9a6700"/>
+    <path d="M328,346 v8 h49 v-8" stroke="#1a7f37"/>
+    <path d="M381,346 v8 h128 v-8" stroke="#0969da"/>
+  </g>
+  <g font-size="12">
+    <text x="185" y="374" text-anchor="middle" fill="#57606a">oid.hi: set by DAOS</text>
+    <text x="185" y="390" text-anchor="middle" fill="#57606a">(object type + class)</text>
+    <text x="318" y="374" text-anchor="middle" fill="#9a6700" font-weight="bold">kind</text>
+    <text x="318" y="390" text-anchor="middle" fill="#9a6700">4 = data</text>
+    <text x="352" y="408" text-anchor="middle" fill="#1a7f37" font-weight="bold">writer slot</text>
+    <text x="352" y="424" text-anchor="middle" fill="#1a7f37">0000</text>
+    <text x="445" y="374" text-anchor="middle" fill="#0969da" font-weight="bold">UTC second T</text>
+    <text x="445" y="390" text-anchor="middle" fill="#0969da">2026-11-12 00:00:50</text>
+  </g>
+
+  <rect x="580" y="300" width="400" height="128" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="596" y="324" font-weight="bold">oid.lo = kind × 10¹⁴ + slot × 10¹⁰ + T</text>
+  <text x="596" y="348" font-size="12">Read it from the right: 10 digits second, 4 digits slot,</text>
+  <text x="596" y="366" font-size="12">1 digit kind. Same second → same digits in index and data.</text>
+  <text x="596" y="390" font-size="12">Same class → same oid.hi (seconds and index share S8).</text>
+  <text x="596" y="414" font-size="12" fill="#57606a">Classes shown are the defaults (rd_fac 0).</text>
+</svg>
