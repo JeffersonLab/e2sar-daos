@@ -1,5 +1,8 @@
 # Directory Update Log
 
+## 2026-11-13
+* **Update**: [2026-11-12-rate-summary](results/2026-11-12-rate-summary.md)'s chart is now wide (~3.5:1): the E2SAR-only and node-to-node groups side by side on one line, the LB group on the next; `scripts/e2sar_rate_summary.py` puts up to 8 panels on a line.
+
 ## 2026-11-12
 * **Creation**: [2026-11-12-rate-summary](results/2026-11-12-rate-summary.md) (tagged `summary`, `rate-sweep`, `loss`): one chart (`e2sar_rate_summary.svg`, loss rate against rate, one panel per setting) and table of every measured rate and its loss per setting, 2026-10-19 to the LB 686 40.8 Gbps run. Lossless at most 35–40 Gbps (LB 638 95 KB; 1 MiB from 8 streams × 2 sockets), 20 Gbps every time through the LB; up to ~90 Gbps with E2SAR alone (3–6×10⁻⁴ loss) and ~80 into DAOS (2×10⁻⁵–2×10⁻⁴).
 * **Creation**: `scripts/e2sar_rate_summary.py` draws that chart from the numbers in the result pages ([scripts](reference/scripts.md)).

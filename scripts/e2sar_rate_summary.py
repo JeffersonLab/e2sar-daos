@@ -82,7 +82,7 @@ BLUE = "#2a78d6"
 INK, INK2, MUTED, GRID, AXIS = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
 # log loss axis; lossless and crashed runs sit in strips below it
 Y_ZERO, Y_CRASH, Y_BREAK, Y_MIN, Y_MAX = 2.2e-7, 6e-8, 6e-7, 3e-8, 2.0
-NCOL = 4
+NCOL = 8
 
 
 def spread(runs):
@@ -141,8 +141,8 @@ def panel(ax, label, best, runs, left, bottom):
 def main(out):
     plt.rcParams.update({"font.family": ["Helvetica", "Arial", "DejaVu Sans"], "svg.fonttype": "none",
                          "font.size": 10})
-    # lay out in inches: each group is a heading and lines of NCOL panels
-    HEAD, TITLE, PANEL, XAX, GAP, FOOT, LEFT, RIGHT = 0.4, 0.42, 1.7, 0.3, 0.25, 0.75, 0.75, 0.15
+    # lay out in inches, wide: groups side by side on a line while they fit in NCOL panel slots
+    HEAD, TITLE, PANEL, XAX, GAP, FOOT, LEFT, RIGHT, SEP = 0.4, 0.42, 1.7, 0.3, 0.25, 0.75, 0.75, 0.15, 0.35
     blocks, cur = [], None
     for group, label, best, runs in ROWS:
         if group:
@@ -150,22 +150,33 @@ def main(out):
             blocks.append(cur)
         else:
             cur[1].append((label, best, runs))
-    lines = sum((len(p) + NCOL - 1) // NCOL for _, p in blocks)
-    W = 14.0
-    H = len(blocks) * HEAD + lines * (TITLE + PANEL + XAX + GAP) + FOOT
+    lines, used = [[]], 0
+    for blk in blocks:
+        if used and used + len(blk[1]) > NCOL:
+            lines.append([])
+            used = 0
+        lines[-1].append(blk)
+        used += len(blk[1])
+    seps = max(len(line) - 1 for line in lines)
+    W = 26.0
+    H = len(lines) * (HEAD + TITLE + PANEL + XAX + GAP) + FOOT
     fig = plt.figure(figsize=(W, H))
     fig.patch.set_facecolor("white")
-    pw = (W - LEFT - RIGHT) / NCOL
+    pw = (W - LEFT - RIGHT - seps * SEP) / NCOL
     y = H  # inches from the bottom, going down
-    for group, panels in blocks:
+    for line in lines:
         y -= HEAD
-        fig.text(0.12 / W, (y + 0.1) / H, group, fontsize=11, fontweight="bold", color=INK, va="bottom")
-        for i, (label, best, runs) in enumerate(panels):
-            c = i % NCOL
-            if c == 0:
-                y -= TITLE + PANEL + XAX + GAP
-            ax = fig.add_axes([(LEFT + c * pw) / W, (y + XAX + GAP) / H, (pw - 0.45) / W, PANEL / H])
-            panel(ax, label, best, runs, left=True, bottom=True)
+        hy = y
+        y -= TITLE + PANEL + XAX + GAP
+        x = LEFT
+        for group, panels in line:
+            fig.text((x - 0.6) / W, (hy + 0.1) / H, group, fontsize=11, fontweight="bold", color=INK,
+                     va="bottom")
+            for label, best, runs in panels:
+                ax = fig.add_axes([x / W, (y + XAX + GAP) / H, (pw - 0.45) / W, PANEL / H])
+                panel(ax, label, best, runs, left=True, bottom=True)
+                x += pw
+            x += SEP
     fig.text(0.5, 0.48 / H, "Rate (Gbps): received, or sent where only that is known.   Vertical: share of "
              "events lost in the run (log).   ● one run with loss   ○ lossless run   × crashed, no result",
              ha="center", color=INK2, fontsize=9.5)
