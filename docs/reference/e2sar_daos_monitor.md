@@ -48,8 +48,8 @@ The cost per event is one 32-byte batch-table entry, read once, plus one `second
 ## Usage
 
 ```bash
-e2sar_daos_monitor --pool sc26 --cont <run> -o /scratch/$USER/<run>_monitor.jsonl
-python3 viz/daos_monitor/serve.py /scratch/$USER/<run>_monitor.jsonl          # http://localhost:8766
+e2sar_daos_monitor --pool sc26 --cont <run> -o /scratch/epsdaq/<run>_monitor.jsonl
+python3 viz/daos_monitor/serve.py /scratch/epsdaq/<run>_monitor.jsonl          # http://localhost:8766
 ```
 
 - Start it before or after the writers. If the container doesn't exist yet, it waits (`waiting for container …`).

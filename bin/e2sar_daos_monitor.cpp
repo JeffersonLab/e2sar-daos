@@ -542,8 +542,8 @@ int main(int argc, char** argv) {
     if (vm.count("help")) {
         std::cout << od << std::endl
                   << "Example:\n"
-                  << "  e2sar_daos_monitor --pool sc26 --cont e2sar_1793280000 -o /scratch/$USER/mon.jsonl\n"
-                  << "  python3 viz/daos_monitor/serve.py /scratch/$USER/mon.jsonl     # the dashboard\n";
+                  << "  e2sar_daos_monitor --pool sc26 --cont e2sar_1793280000 -o /scratch/epsdaq/mon.jsonl\n"
+                  << "  python3 viz/daos_monitor/serve.py /scratch/epsdaq/mon.jsonl     # the dashboard\n";
         return 0;
     }
     if (o.pool.empty() || o.cont.empty()) {

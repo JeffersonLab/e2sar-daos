@@ -26,7 +26,7 @@ Status: run on ebpf2203 on 2026-11-04 with the run of [2026-11-04-nersc-lb675-ev
 ```bash
 RUNC=e2sar_lb675_1793817098            # the run = the container name
 cd ~/daq/e2sar-daos
-python3 viz/daos_monitor/serve.py /scratch/$USER/${RUNC}_monitor.jsonl           # port 8766
+python3 viz/daos_monitor/serve.py /scratch/epsdaq/${RUNC}_monitor.jsonl           # port 8766
 ```
 
 In the page pick **Replay**: it plays the file from the start at 1–32× (space: play/pause, ←/→: one frame, or drag the slider). **Live** shows the last line, which for a finished run is the end. `serve.py` needs only Python ≥ 3.8, so a copy of the `.jsonl` file replays on a laptop too.
@@ -40,7 +40,7 @@ In the page pick **Replay**: it plays the file from the start at 1–32× (space
 Copy the bundles in manifest order, one per `--interval` seconds, and keep only the newest few:
 
 ```bash
-SRC=/scratch/$USER/live_$RUNC            # the reader's -o DIR
+SRC=/scratch/epsdaq/live_$RUNC            # the reader's -o DIR
 REPLAY=/tmp/$USER-replay_$RUNC; mkdir -p $REPLAY
 I=5; SPEED=1                              # I: the run's --interval; SPEED: 2 = twice as fast
 awk '{print $2}' $SRC/${RUNC}_manifest.txt | while read f; do
