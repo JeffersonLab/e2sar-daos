@@ -2,13 +2,16 @@
 # e2sar_live_pipeline.sh: run the live streaming pipeline of docs/concepts/streaming-workflow.md on the
 # ebpf nodes for a remote sender through an LB, and keep it ready for data: a run that gets no events
 # for IDLE_S seconds (no sender yet) is thrown away and replaced by a fresh one, so the run that does get
-# data starts close to when the data does. Drive it from a machine that can SSH to every node (the nodes
-# can't SSH to each other).
+# data starts close to when the data does. Drive it from a machine that can SSH to every node without a
+# password prompt: a laptop with ControlMaster connections, or a node itself when RECV and READER name only
+# that node (its commands run locally). To work on the nodes one by one instead: scripts/e2sar_workflow.sh.
 #
-#   e2sar_live_pipeline.sh start     a new run, container LABEL_<UTC epoch s>: on each receiver node the
+#   e2sar_live_pipeline.sh start     a new run, container LABEL_<UTC epoch s> (by default e2sar_lb<LB id>_<UTC epoch s>,
+#                                    the id from EJFAT_URI in ENV_FILE), named in LOGDIR/current: on each receiver node the
 #                                    NIC monitor, then e2sar_daos_recv -c (the LB in EJFAT_URI from
 #                                    ENV_FILE); on the reader node e2sar_daos_monitor and its page,
-#                                    e2sar_daos_read $READ_MODE (--live), and the EVIO viewer. Refuses if a run is up
+#                                    e2sar_daos_read $READ_MODE (--live), and the EVIO viewer. Refuses if a run is up,
+#                                    or if EJFAT_URI isn't a valid LB instance (lbadm --status fails)
 #   e2sar_live_pipeline.sh stop      stop the current run: receivers (Ctrl-C: they deregister and drain),
 #                                    reader, monitor, pages, NIC monitors. Its data stays; its logs move
 #                                    to LOGDIR/<run>/
@@ -29,13 +32,13 @@
 # Settings (environment):
 : "${RECV:=ebpf2201:129.57.178.85 ebpf2203:129.57.178.86}"   # receiver nodes as host:data IP, in start order
 : "${READER:=ebpf2203}"                                       # reader, monitor and viewer node
-: "${LABEL:=e2sar_live}"                                      # container = LABEL_<UTC epoch s>
+: "${LABEL:=}"                                                # container = LABEL_<UTC epoch s>; empty: e2sar_lb<id>, the LB id in EJFAT_URI
 : "${POOL:=sc26}"
 : "${PORT:=20700}"                                            # first UDP port of each receiver
 : "${RECV_ARGS:=--threads 4 --deq 16 --report 10 --log-idle -b 1073741824}"   # keep -b 1 GiB: 3 MB drops ~10% at 1.5 Gbps
 : "${READ_MODE:=--live}"                                       # or --live-rm: remove read data from DAOS (--rm-after intervals behind)
 : "${READ_ARGS:=--min-free 50}"                               # e2sar_daos_read: pauses below 50 GiB free in OUT
-: "${OUT:=/scratch/$USER}"                                    # reader files: OUT/live_<run>; monitor: OUT/<run>_monitor.jsonl
+: "${OUT:=/scratch/epsdaq}"                                   # reader files: OUT/live_<run>; monitor: OUT/<run>_monitor.jsonl (shared, group epsci)
 : "${LOGDIR:=e2sar_run/live}"
 : "${REPO:=daq/e2sar-daos}"                                   # built e2sar-daos checkout
 : "${VIEWER:=daq/evio-interactive-view}"                      # evio-interactive-view checkout (with .venv)
@@ -46,8 +49,9 @@
 : "${EVERY_S:=3600}"
 : "${MIN_FREE_GB:=150}"
 #
-# Example, LB 677 on 2026-11-05 (pages forwarded with ssh -L 8765:localhost:8765 -L 8767:localhost:8767):
-#   LABEL=e2sar_lb677 OUT=/scratch/epsdaq LOGDIR=e2sar_run/lb677 MON_PORT=8767 e2sar_live_pipeline.sh start
+# Example, LB 686 into sc-demo, runs named e2sar_lb686_<UTC epoch s> (pages forwarded with
+# ssh -O forward -L 8766:localhost:8766 -L 8765:localhost:8765 ebpf2203); every step in docs/howto/streaming-walkthrough.md:
+#   ENV_FILE=e2sar-lb686.env POOL=sc-demo LOGDIR=e2sar_run/lb686 e2sar_live_pipeline.sh start
 #   ... the same settings ... e2sar_live_pipeline.sh watch
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
@@ -55,13 +59,14 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 say() { echo "[$(date -u +%T) UTC] $*"; }
 
 # on HOST [ARGS...] <<'EOF' ... EOF: run a bash script on HOST with the settings exported. The script
-# comes on stdin (the login shell may be tcsh: no redirections in the ssh command line).
+# comes on stdin (the login shell may be tcsh: no redirections in the ssh command line). On HOST itself it
+# runs locally: an ebpf node can't SSH to itself.
 on() {
     local h=$1; shift
     { printf 'export POOL=%q PORT=%q RECV_ARGS=%q READ_MODE=%q READ_ARGS=%q OUT=%q LOGDIR=%q REPO=%q VIEWER=%q ENV_FILE=%q MON_PORT=%q VIEW_PORT=%q\n' \
           "$POOL" "$PORT" "$RECV_ARGS" "$READ_MODE" "$READ_ARGS" "$OUT" "$LOGDIR" "$REPO" "$VIEWER" "$ENV_FILE" "$MON_PORT" "$VIEW_PORT"
-      echo 'source ~/.bashrc >/dev/null 2>&1; L=$HOME/$LOGDIR; H=$(hostname -s); mkdir -p "$L"'
-      cat; } | ssh -x "$h" bash -s -- "$@"
+      echo 'cd; source ~/.bashrc >/dev/null 2>&1; L=$HOME/$LOGDIR; H=$(hostname -s); mkdir -p "$L"'
+      cat; } | if [ "$h" = "$(hostname -s)" ]; then bash -s -- "$@"; else ssh -x "$h" bash -s -- "$@"; fi
 }
 
 # reachable: every node answers over SSH (an SSH failure must never look like "no run")
@@ -90,7 +95,11 @@ cmd_start() {
     local c r first
     c=$(current)
     [ -n "$c" ] && [ "$(running "$c")" -gt 0 ] && die "run $c is running: stop it first"
-    RUN=${LABEL}_$(date -u +%s)
+    # the LB: EJFAT_URI must be a live instance (not the node-to-node placeholder, not freed or expired);
+    # its id names the run unless LABEL is set
+    lbid=$(on "$READER" <<<'source "$HOME/$ENV_FILE" >/dev/null 2>&1 && "$E2SAR_BIN/lbadm" --status >/dev/null 2>&1 && echo "$EJFAT_URI" | grep -oE "/lb/[0-9]+" | cut -d/ -f3')
+    [ -n "$lbid" ] || die "~/$ENV_FILE on $READER: no EJFAT_URI, or lbadm --status fails on it (not a valid LB instance)"
+    RUN=${LABEL:-e2sar_lb$lbid}_$(date -u +%s)
     on "$READER" "$RUN" <<'EOF'
 echo "$1" > "$L/current"
 EOF

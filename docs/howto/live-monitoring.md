@@ -30,7 +30,7 @@ The NIC monitor on each receiver node, then the receivers, then the reader, as i
 ```bash
 RUNC=sc26_1793500000                  # the run = the container; the same in every terminal
 ~/daq/e2sar-daos/scripts/e2sar_nicmon.sh start ~/e2sar_run/$RUNC     # on each receiver node, before its receiver
-OUT=/scratch/$USER/live_$RUNC
+OUT=/scratch/epsdaq/live_$RUNC
 ./build/bin/e2sar_daos_read --pool sc26 --cont $RUNC -o $OUT --live-rm --interval 2 --rm-after 2
 ```
 
@@ -39,8 +39,8 @@ OUT=/scratch/$USER/live_$RUNC
 Two terminals (or `tmux`). The monitor can start before the receivers; it waits for the container. The page shows each receiver's source (`LB <id>` with `-c`, `node-to-node` without; set your own with `e2sar_daos_recv --source TEXT`). Receivers and monitors built before 2026-11-10 don't have it, and the header then starts at the run name.
 
 ```bash
-./build/bin/e2sar_daos_monitor --pool sc26 --cont $RUNC -o /scratch/$USER/${RUNC}_monitor.jsonl
-python3 viz/daos_monitor/serve.py /scratch/$USER/${RUNC}_monitor.jsonl          # port 8766
+./build/bin/e2sar_daos_monitor --pool sc26 --cont $RUNC -o /scratch/epsdaq/${RUNC}_monitor.jsonl
+python3 viz/daos_monitor/serve.py /scratch/epsdaq/${RUNC}_monitor.jsonl          # port 8766
 ```
 
 ## 3. The EVIO live viewer, on the reader node
@@ -79,7 +79,7 @@ On each receiver node, after its receiver has stopped:
 The monitor exits once a `--live-rm` run's container is destroyed (otherwise Ctrl-C). The JSON lines file stays, and `serve.py` replays it at any time, without DAOS:
 
 ```bash
-python3 viz/daos_monitor/serve.py /scratch/$USER/${RUNC}_monitor.jsonl
+python3 viz/daos_monitor/serve.py /scratch/epsdaq/${RUNC}_monitor.jsonl
 ```
 
 To replay the EVIO viewer too, from the reader's files or one EVIO file: [replay-run](replay-run.md). To turn the reader's `.dat` files into one EVIO file: [streaming-workflow](../concepts/streaming-workflow.md#the-workflow) (`scripts/evio/evio_concat.py`).
@@ -90,10 +90,12 @@ When the sender side starts sending isn't known (a remote frame builder), keep t
 
 ```bash
 cd ~/Documents/DAQ/e2sar-daos            # the laptop's checkout; the nodes use ~/daq/e2sar-daos
-export LABEL=e2sar_lb677 OUT=/scratch/epsdaq LOGDIR=e2sar_run/lb677 MON_PORT=8767
+export ENV_FILE=e2sar-lb686.env POOL=sc-demo LOGDIR=e2sar_run/lb686
 scripts/e2sar_live_pipeline.sh start     # NIC monitors and receivers on both nodes, then reader, monitor and viewer
 scripts/e2sar_live_pipeline.sh watch     # every hour: status, and recycle a run with no events for 1 h
 ```
+
+`start` first checks the LB: it sources `~/$ENV_FILE` on the reader node and runs `lbadm --status`, and refuses to start if that fails (no `EJFAT_URI`, the node-to-node placeholder, or a freed or expired instance). It names each run after the LB id in that URI, `e2sar_lb686_<UTC epoch s>`; set `LABEL` to use `LABEL_<UTC epoch s>` instead. Every step the script does, and the ones it doesn't (sending, the port forward, checking, making an EVIO file): [streaming-walkthrough](streaming-walkthrough.md#the-quick-path-from-a-laptop-the-pipeline-script). To run the same workflow from the nodes themselves, one node at a time, with no laptop SSH: [`scripts/e2sar_workflow.sh`](streaming-walkthrough.md#the-quick-path-on-the-nodes-the-workflow-script).
 
 `recycle` deletes a run only if it is at least an hour old (`IDLE_S`) and every receiver log says `in 0 evts` and the reader wrote no file; it checks the receivers' final statistics again before destroying the container. A run that got data is never deleted: `watch` keeps it and reports it. `watch` stops nothing when it can't reach a node, and warns when the reader node has less than 150 GB free (`MIN_FREE_GB`). Below 50 GiB the reader itself pauses and catches up once space is freed (`READ_ARGS`, [e2sar_daos_read --min-free](../reference/e2sar_daos_read.md#a-full-disk---min-free)); at R Gbps the files take R × 7.5 GB a minute. It never frees the LB. The laptop must stay awake while `watch` runs (`caffeinate -ims` on a Mac). The pipeline itself runs on the nodes and keeps storing data whether `watch` runs or not.
 
