@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-13
+* **Update**: [2026-11-12-045334UTC-lb686-two-workers-10tb](results/2026-11-12-045334UTC-lb686-two-workers-10tb.md): its DAOS container was destroyed on 2026-11-12 at 19:37 UTC (logs and monitor lines kept). [2026-11-12-004630UTC-lb686-live-rm](results/2026-11-12-004630UTC-lb686-live-rm.md): the container of the run before it, `e2sar_lb686_1794441647`, was destroyed on 2026-11-13.
 * **Update**: [2026-11-12-rate-summary](results/2026-11-12-rate-summary.md)'s chart is now wide (~3.5:1): the E2SAR-only and node-to-node groups side by side on one line, the LB group on the next; `scripts/e2sar_rate_summary.py` puts up to 8 panels on a line.
 
 ## 2026-11-12
