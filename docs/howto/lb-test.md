@@ -2,7 +2,7 @@
 type: How-To
 title: "Testing through the ESnet EJFAT load balancer"
 description: "Send files with e2sar_ft from ebpf2201 through the ESnet EJFAT LB to e2sar_daos_recv on ebpf2203, verify the restored files, and clean up."
-tags: [lb, ejfat, e2sar_ft, ebpf-testbed]
+tags: [lb, ejfat, e2sar_ft, ebpf-testbed, mtu]
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/ESNET_LB_TESTING.md", title: "ESNET_LB_TESTING.md at 0d85d00" }
 ---

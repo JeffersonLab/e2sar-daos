@@ -13,7 +13,7 @@ sources:
 This sweep uses E2SAR's own `e2sar_perf` at both ends, so there is **no DAOS and no `e2sar_daos_recv`**. It measures only the E2SAR transport into ebpf2203, with and without the `recvmmsg` receive optimization.
 
 Settings, the same on both days:
-- Sender on ebpf2201: 16 sockets, 1 MiB events, rate × 1000 events per run (about 8.5 s of sending), `--smooth`, 1 GiB socket buffer.
+- Sender on ebpf2201: `--mtu 9000` (every send log says `Using MTU 9,000`), 16 sockets, 1 MiB events, rate × 1000 events per run (about 8.5 s of sending), `--smooth`, 1 GiB socket buffer.
   A second sender adds a 2 Gbps keep-alive stream (data id 1111), started 3 s before the main stream (data id 4321) and running past its end.
 - Receiver on ebpf2203: `e2sar_perf -r` with 32 threads (ports 20600–20631), `--deq 4`, 1 GiB socket buffer, 500 ms reassembly timeout.
 - Two modes: plain, and `-o recvmmsg --rcviovecsize 1024`.
