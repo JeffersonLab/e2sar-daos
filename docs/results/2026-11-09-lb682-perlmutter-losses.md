@@ -2,7 +2,7 @@
 type: Result
 title: "LB 682: Perlmutter EVIO time frames, receiver crashes and losses (2026-11-09)"
 description: "Eleven runs on LB 682 (19:21–22:22 UTC): EVIO time frames of 28–45 kB at 3.4–3.8 Gbps (~11k events/s). The DAOS receiver was never the sender's bottleneck (no back-pressure over UDP; 0 enqueue loss, 0 failed writes, ~1/5 of its tested capacity). Losses: 3 MB socket buffers (~10%, fixed with -b 1 GiB); from 20:33, receiver crashes in E2SAR's reassembly when two senders send different events with the same event number and data id (LUX and Perlmutter, then several Perlmutter frame builders); and 26–32% of event numbers that never arrive (a 65.536 µs frame counter, not all frames sent)."
-tags: [bug, lb, ejfat, nersc, lux, e2sar, e2sar_daos_recv, ebpf-testbed, loss, crash]
+tags: [bug, lb, ejfat, nersc, lux, e2sar, e2sar_daos_recv, ebpf-testbed, loss, crash, perlmutter, olcf]
 sources:
   - { id: recv, resource: "../reference/e2sar_daos_recv.md", title: "e2sar_daos_recv" }
   - { id: monitor, resource: "../reference/e2sar_daos_monitor.md", title: "e2sar_daos_monitor and its dashboard" }

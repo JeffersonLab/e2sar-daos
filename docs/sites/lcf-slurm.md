@@ -2,7 +2,7 @@
 type: Site
 title: "LCFs using Slurm (Perlmutter, LUX): one sender, two receivers, through the ESnet LB into DAOS"
 description: "Send e2sar_perf events from a compute node of an LCF using Slurm (Perlmutter at NERSC, LUX at OLCF) through the ESnet LB to two e2sar_daos_recv receivers at JLab, verify in DAOS, and clean up."
-tags: [perlmutter, nersc, lux, olcf, lcf, lb]
+tags: [perlmutter, nersc, lux, olcf, lcf, lb, mtu]
 stale_after: 2027-01-31T00:00:00Z
 sources:
   - { id: origin, resource: "https://github.com/JeffersonLab/e2sar-daos/blob/0d85d00/docs/LCF2JLAB_GUIDE.md", title: "LCF2JLAB_GUIDE.md at 0d85d00" }
@@ -171,6 +171,21 @@ Ping the data plane in **your instance's URI** (`data=` in `cut -d@ -f2 ~/e2sar_
 - If the 8972-byte ping fails but the 1472-byte one works, use `--mtu 1500` in step 6 *(check)*. Throughput per send thread is then much lower.
 - If the pings get no answer at all, ICMP may be filtered. The first real test is step 6 with a small number of events.
 - Write down the RTT. Through the LB, an event's latency is mostly this round trip.
+
+### LUX (OLCF)
+
+Checked on 2026-11-23 ([the path LUX → LB → JLab](../results/2026-11-23-lux-lb-path.md)).
+
+- **Login:** laptop → `home.ccs.ornl.gov` (PIN + RSA token) → `lux.olcf.ornl.gov`. LUX refuses a second session on a shared SSH connection, so a second terminal needs its own login.
+- **Project and node:** project `csc741`, 10,000 hours per allocation period (`showusage`; `showproj` doesn't exist on LUX). The project isn't listed in myOLCF. Get a node from the reservation `ejfat_demo` (26 nodes, `lux[281-304,358,452]`, `Accounts=csc741`, until 2027-10-23 14:35):
+
+  ```bash
+  srun -A csc741 --reservation=ejfat_demo -p batch -N 1 -t 01:00:00 --gpus=1 --pty bash
+  scontrol show reservation ejfat_demo      # its nodes, end time and accounts
+  ```
+
+- **Sender IP:** the LB is reached on `frontend.4`, MTU 9000. `ip route get <LB data IP>` gives the `src` to put on the LB's sender list (198.124.49.31 on lux281; look it up on each node). Traffic to JLab's 129.57.x goes out `bond0` instead (private 10.139.x, MTU 1500), so there is no direct jumbo path from LUX to the receivers, only through the LB.
+- **Path:** MTU 9000 passes to the LB data plane 192.188.29.11 and .12, RTT 60.5 ms. `tracepath` gets no answer after the gateway 198.124.48.1.
 
 ## The receiver script
 
