@@ -1,6 +1,7 @@
 # Directory Update Log
 
 ## 2026-11-24
+* **Creation**: [find-docs-by-tag](howto/find-docs-by-tag.md) (tagged `docs`, `tags`, `agents`): how agents find files by tag; the tag groups and markers; example searches; tagging rules. `scripts/docs_tags.py` lists tags and finds files by tags ([scripts](reference/scripts.md)). [index](index.md) and `AGENTS.md` point to it, and the index names `tags` among the header fields.
 * **Creation**: [2026-11-24-perlmutter-vs-lux-upper-bound](results/2026-11-24-perlmutter-vs-lux-upper-bound.md) (tagged `upper-bound`, `parallelism`, `sockets`, `analysis`, `todo`): confirms Perlmutter 78.3/79.8 Gbps and LUX 51.4/45.9 Gbps; R = min(sockets × r₁, sender NIC, path, receivers); r₁ ≈ 2.5 Gbps per in-flight 1 MiB event at both sites from Little's law on the completion order; the receivers didn't cap LUX; the LUX arrivals had gaps, so the LUX ceiling wasn't reached; the runs that would settle it.
 * **Creation**: `scripts/e2sar_arrival_stats.py` ([scripts](reference/scripts.md)): arrival statistics from `--timing-csv` files.
 * **Update**: [throughput-from-latency](howto/throughput-from-latency.md) has the sender parallelism term (R ≤ sockets × r₁), a sender row in the worked table, and §7: the analysis method for any sender site (what to record, arrival gaps, events in flight and r₁ by Little's law, the bound term by term, the runs that measure each term, loss).
