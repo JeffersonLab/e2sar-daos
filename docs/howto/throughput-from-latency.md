@@ -1,8 +1,8 @@
 ---
 type: How-To
 title: "The upper limit of LCF → LB → JLab streaming, from latency, RTT and buffer measurements"
-description: "How to compute the highest rate Perlmutter or LUX → ESnet LB → e2sar_daos_recv at JLab can carry: Little's law (rate = in flight / latency) per stage, why the WAN RTT doesn't cap UDP streaming but does cap TCP (BDP, Mathis), how stalls and buffers set the lossless rate (rate × stall ≤ buffer), packet and event rate ceilings, and a worked table with the measured numbers: the receivers' NIC port, not the WAN, is the limit today (~25–35 Gbps lossless per receiver node)."
-tags: [throughput, latency, rtt, bdp, mtu, littles-law, perlmutter, lux, lb, ejfat, analysis]
+description: "How to compute the highest rate Perlmutter or LUX → ESnet LB → e2sar_daos_recv at JLab can carry: Little's law (rate = in flight / latency) per stage, why the WAN RTT doesn't cap UDP streaming but does cap TCP (BDP, Mathis), sender parallelism (R ≤ sockets × per-event rate), how stalls and buffers set the lossless rate (rate × stall ≤ buffer), packet and event rate ceilings, a step-by-step analysis method for any sender site (record, gaps, events in flight, bound, runs to measure each term), and a worked table with the measured numbers: the receivers' NIC port, not the WAN, is the limit today (~25–35 Gbps lossless per receiver node)."
+tags: [throughput, latency, rtt, bdp, mtu, littles-law, parallelism, sockets, perlmutter, lux, lb, ejfat, analysis]
 sources:
   - { id: path, resource: "../results/2026-11-23-lux-lb-path.md", title: "The network path LUX → ESnet LB → JLab" }
   - { id: metrics, resource: "../concepts/throughput-metrics.md", title: "Throughput and latency metrics" }
@@ -61,6 +61,16 @@ Two things follow:
 - **Small events hit the event ceilings first.** The LB 677 frame builders' 9.5 KB events can't exceed ~6.5 Gbps per receiver however good the network is; the cure is more receivers (the LB spreads events over them) or bigger events.
 - The DAOS latency is not the limit at these rates. A latency that *looks* fine can hide a bottleneck one stage earlier: with too few dequeue threads, events wait up to a second in the Reassembler's queue while each DAOS write still takes 0.3 ms ([throughput metrics](../concepts/throughput-metrics.md)).
 
+### Sender parallelism: sockets × per-event rate
+
+The sender is a fixed-concurrency stage too. E2SAR's Segmenter gives each event to one send thread, which sends all its frames at the thread's speed `r₁`. `--rate` only adds a wait *between* events. With `N_s` sockets (threads), at most `N_s` events are in flight, and Little's law gives
+
+> **events in flight K = R / r₁ ≤ N_s**, so **R ≤ N_s · r₁**
+
+`r₁` can be measured on the receivers: each event completes up to `T_evt` away from its place in event-number order, so `r₁ = 8·S / T_evt` ([`scripts/e2sar_arrival_stats.py`](../../scripts/e2sar_arrival_stats.py)). Example: for 1 MiB events from Perlmutter and LUX, `T_evt` ≈ 3.3 ms, so `r₁` ≈ 2.5 Gbps at both sites. 80 Gbps then needs ~32 events in flight, and 16 sockets cap at ~40 Gbps. Measure it directly with a `--sockets 1…32` sweep at `--rate -1`. The full method is in §7; the worked example is [Perlmutter ~80 vs LUX ~46–51 Gbps](../results/2026-11-24-perlmutter-vs-lux-upper-bound.md).
+
+A sender at its ceiling leaves no gaps: every thread is busy. Gaps in the arrivals (idle 1 ms bins) mean the sender was paced below its ceiling, and that the run didn't measure it.
+
 ## 4. Stalls and buffers set the lossless rate
 
 UDP doesn't slow the sender down when a stage stalls. A buffer in front of the stage absorbs the stall, and the stream is lossless only if
@@ -98,7 +108,8 @@ Two receivers (ebpf2201, ebpf2203), pool sc-demo, ~381 KB events (LB 686):
 
 | Stage | Limit | Value | Binding? |
 |---|---|---|---|
-| WAN + LB | measured, no ceiling found | ≥ 80 Gbps from one Perlmutter node (78.3 Gbps, 1.7×10⁻⁵ lost), 51.4 Gbps from one LUX node (5.6×10⁻³ lost, losses not split by cause) | no |
+| Sender, `N_s · r₁` | sockets × ~2.5 Gbps per in-flight 1 MiB event | Perlmutter ≥ 80 (~32 in flight); LUX ≥ 51.4, sent with gaps, so its ceiling wasn't reached | sets the rate when there are too few sockets |
+| WAN + LB | measured, no ceiling found | ≥ 80 Gbps from one Perlmutter node (78.3 Gbps, 1.7×10⁻⁵ lost), 51.4 Gbps from one LUX node (5.6×10⁻³ lost, all with NIC port discards at JLab) | no |
 | WAN RTT | doesn't apply to UDP | – | no |
 | Receiver NIC port, per node | measured lossless ceiling | **~25–35 Gbps per node**, so ~50–70 Gbps for two | **yes** |
 | Reassembler, per node | 85k ev/s × 381 KB | 259 Gbps | no |
@@ -120,9 +131,74 @@ Measured: 40.8 Gbps with 1.09×10⁻³ lost, 79% at the NIC port ([40 Gbps run](
 | Stalls and drops | `nic_*.log`: `rx_discards_phy`, `rx_out_of_buffer`, `Udp.RcvbufErrors`; [`scripts/e2sar_loss_timeline.py`](../reference/scripts.md) for loss by cause |
 | WAN TCP baseline | `iperf3 -P 16` (the nightly job: `~/daq/iperf3-nightly/history.csv`) |
 
-## 7. Finding the upper limit by experiment
+## 7. The analysis method, for any sender site
 
-1. Compute the ceilings above from your event size, MTU and measured latencies; the smallest is the prediction.
-2. Ramp the sender (e.g. 10, 20, 40, 60, 80 Gbps, 60 s each, `e2sar_perf --mtu 9000`), with the NIC sampler running on every receiver.
-3. At each step, compare the measured rate with the prediction. Where loss starts, read the loss cause: NIC port → add receivers or cut pps; sockets → bigger `-b`; reassembly → `--timeout` or `--threads`; upstream (no host drop) → the LCF, the WAN or the LB.
-4. Write the result up with the RTT, MTU, event size and the binding stage.
+This works the same for any sender (an LCF node, a JLab host, a frame builder) through the LB to any set of receivers. Two result pages show it worked through: [Perlmutter vs LUX](../results/2026-11-24-perlmutter-vs-lux-upper-bound.md) for steps C–F, and this page's §5 for step G.
+
+### A. Record, for every run
+
+| Side | What | Why |
+|---|---|---|
+| Sender | node, `--rate`, `--sockets`, `--mtu`, event size `S`, event count, the sender log (`Estimated goodput`) | `N_s`, and whether the sender reached its request |
+| Sender host | NIC speed (`/sys/class/net/<if>/speed`), `ethtool -S` TX drops | `C_sender` |
+| Path | `ping -M do -s 8972` RTT and jitter, `tracepath` path MTU, to the LB data plane | latency and MTU; not a rate limit for UDP (§2) |
+| Each receiver | `--timing-csv`, `recv_*.log`, 1 s NIC sampler (`nic_*.log`), NIC before/after | arrivals, losses and their causes |
+
+Without the sender's `--rate` and `--sockets`, steps C–D can only infer them.
+
+### B. Rates and losses
+
+Per receiver and in total: rate `R = 8·S·events / receive window`, events lost (reassembly), and the drop counters: `rx_discards_phy`, `rx_out_of_buffer`, `Udp.RcvbufErrors`. Every loss is placed at the NIC port, the ring, the socket, or upstream if no host counter moved.
+
+### C. Was the sender at its ceiling? (arrival gaps)
+
+Bin each receiver's completions in 1 ms bins ([`e2sar_arrival_stats.py`](../../scripts/e2sar_arrival_stats.py): `idle%`, `gapmax`).
+
+- **Near 0% idle bins, gaps of a few ms or less:** continuous. All send threads were busy, so **the run measured the sender's ceiling** (or the ceiling was the request).
+- **Idle bins of several % or more, gaps of 10 ms or more:** paced. The sender waited between events, so **its ceiling is above this rate** and wasn't measured.
+- A rate below the request, with continuous arrivals, is a ceiling somewhere in the chain. Steps D–F find which.
+
+### D. Events in flight and the rate per event (Little's law)
+
+From the same files, per receiver (own clock only):
+
+```
+lag(e)  = | completion time of e − completion time at e's place in event-number order |
+T_evt   = p90 of lag                  # time over which one event's packets arrive
+λ       = events / receive window
+K       = λ · T_evt                   # events in flight on this receiver
+r₁      = 8·S / T_evt = R / K         # rate of one in-flight event
+K_total = Σ K over receivers = R_total / r₁
+```
+
+- `T_evt` constant across rates means `r₁` is a property of one event's trip (send thread, path), not of the load.
+- `T_evt` includes time the event waits at the receiver before it is recorded, so `r₁` is a **lower bound**. Check it once with a `--sockets 1 --rate -1` run (step F).
+
+### E. The bound
+
+```
+R_max = min( N_s · r₁ ,  C_sender ,  C_WAN+LB ,  Σ_receivers C_recv )
+```
+
+| Term | From | Shown by |
+|---|---|---|
+| `N_s · r₁` | `--sockets` × `r₁` from D | a continuous run (C) at `K_total ≈ N_s` |
+| `C_sender` | NIC speed, site egress | the plateau of the socket sweep (F) |
+| `C_WAN+LB` | – | the highest rate any sender pushed through it |
+| `C_recv` per node | the highest **continuous** per-node rate with ≤ 10⁻⁴ loss | runs at step C's "continuous" |
+
+A term is **shown** when a run reached it, and only a **lower bound** (≥ measured) otherwise. Compare sites term by term. A difference in `R` that is explained by a lower-bound term (e.g. a paced sender) is not a site limit.
+
+### F. Runs that measure the terms directly
+
+1. **Socket sweep:** `e2sar_perf --mtu 9000 -l <S> --rate -1 --sockets 1, 2, 4, 8, 16, 32`, 10–20k events each, sender log kept. `R(N_s)` rises as `N_s · r₁` and flattens at `C_sender` (or at the next term).
+2. **Continuous run at the plateau** with enough sockets (`N_s ≥ R / r₁`), to measure loss without pacing bursts.
+3. **Receivers:** if loss starts at the NIC ports in continuous runs, add receivers. Each adds about its `C_recv`.
+
+### G. Loss and the lossless rate
+
+The rate is not the whole answer: a rate counts if its loss is acceptable. For the binding stage, check `R × T_stall ≤ B` (§4) with the tail of the latency (p99.99, max) and the burst size. Paced (gappy) sending sends events in bursts after each gap, and it loses more at the NIC port than continuous sending at a higher rate.
+
+### H. Write it up
+
+A result page with the A–G tables, the bound (each term shown or ≥), what binds, and the runs still to do. Example: [Perlmutter vs LUX](../results/2026-11-24-perlmutter-vs-lux-upper-bound.md).

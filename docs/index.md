@@ -3,7 +3,7 @@ okf_version: 0.2
 ---
 # e2sar-daos documentation
 
-The docs for [e2sar-daos](../README.md), as an [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. Each file covers one topic and starts with a YAML header: `type`, `title`, `description`, and where it applies `status` (`draft`: not run yet) and `stale_after` (check the file before use once this date has passed). Changes to the bundle are in [log.md](log.md).
+The docs for [e2sar-daos](../README.md), as an [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) bundle. Each file covers one topic and starts with a YAML header: `type`, `title`, `description`, `tags`, and where it applies `status` (`draft`: not run yet) and `stale_after` (check the file before use once this date has passed). Changes to the bundle are in [log.md](log.md).
 
 # Folders
 
@@ -15,6 +15,7 @@ The docs for [e2sar-daos](../README.md), as an [Open Knowledge Format (OKF) v0.2
 
 # Start here
 
+* [Find docs by tag (for agents)](howto/find-docs-by-tag.md) - `scripts/docs_tags.py TAG ...` lists the files with those tags; what the tags mean
 * [Build e2sar-daos](howto/build.md) - Prerequisites, pointing Meson at E2SAR and its Boost, configure, compile, test
 * [Data layout in DAOS](concepts/daos-layout.md) - What a run looks like in DAOS, and the writer–reader contract
 * [Streaming workflow](concepts/streaming-workflow.md) - Senders → LB → DAOS → live reader
